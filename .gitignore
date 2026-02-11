@@ -1,0 +1,11 @@
+# Audio files
+*.mp3
+*.wav
+*.flac
+*.aac
+*.ogg
+*.m4a
+*.wma
+
+# Audio testing directory
+audio_trace_for_testing/
