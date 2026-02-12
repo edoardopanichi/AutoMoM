@@ -36,11 +36,16 @@ class Settings:
     uploads_dir: Path = DATA_DIR / "uploads"
 
     ffmpeg_bin: str = os.getenv("AUTOMOM_FFMPEG_BIN", "ffmpeg")
+    compute_device: str = os.getenv("AUTOMOM_COMPUTE_DEVICE", "auto")
+    cuda_device_id: int = int(os.getenv("AUTOMOM_CUDA_DEVICE_ID", "0"))
     diarization_backend: str = os.getenv("AUTOMOM_DIARIZATION_BACKEND", "auto")
     diarization_model_path: str = os.getenv(
         "AUTOMOM_DIARIZATION_MODEL",
-        str(DATA_DIR / "models" / "diarization" / "model.bin"),
+        str(DATA_DIR / "models" / "diarization" / "pyannote-speaker-diarization-community-1" / "config.yaml"),
     )
+    diarization_pipeline_path: str = os.getenv("AUTOMOM_DIARIZATION_PIPELINE", "")
+    diarization_min_speakers: int = int(os.getenv("AUTOMOM_DIARIZATION_MIN_SPEAKERS", "0"))
+    diarization_max_speakers: int = int(os.getenv("AUTOMOM_DIARIZATION_MAX_SPEAKERS", "0"))
     diarization_embedding_model: str = os.getenv(
         "AUTOMOM_DIARIZATION_EMBEDDING_MODEL",
         "pyannote/wespeaker-voxceleb-resnet34-LM",
@@ -50,11 +55,13 @@ class Settings:
         "AUTOMOM_VOXTRAL_MODEL",
         str(DATA_DIR / "models" / "voxtral" / "model.gguf"),
     )
+    voxtral_gpu_layers: int = int(os.getenv("AUTOMOM_VOXTRAL_GPU_LAYERS", "99"))
     formatter_command: str = os.getenv("AUTOMOM_FORMATTER_COMMAND", "")
     formatter_model_path: str = os.getenv(
         "AUTOMOM_FORMATTER_MODEL",
         str(DATA_DIR / "models" / "formatter" / "model.gguf"),
     )
+    formatter_gpu_layers: int = int(os.getenv("AUTOMOM_FORMATTER_GPU_LAYERS", "99"))
     formatter_timeout_s: int = int(os.getenv("AUTOMOM_FORMATTER_TIMEOUT_S", "120"))
     diarization_max_chunk_s: float = float(os.getenv("AUTOMOM_DIARIZATION_MAX_CHUNK_S", "18.0"))
     transcription_max_segments: int = int(os.getenv("AUTOMOM_TRANSCRIPTION_MAX_SEGMENTS", "0"))
@@ -80,10 +87,10 @@ def required_models() -> list[ModelSpec]:
         ModelSpec(
             model_id="diarization",
             name="Offline Diarization Model",
-            size_mb=120,
-            source="Local package / pyannote-compatible weights",
-            required_disk_mb=150,
-            file_path=SETTINGS.models_dir / "diarization" / "model.bin",
+            size_mb=900,
+            source="Local pyannote speaker diarization pipeline",
+            required_disk_mb=1200,
+            file_path=Path(SETTINGS.diarization_model_path),
             download_url=os.getenv("AUTOMOM_DIARIZATION_URL"),
             checksum_sha256=os.getenv("AUTOMOM_DIARIZATION_SHA256"),
         ),

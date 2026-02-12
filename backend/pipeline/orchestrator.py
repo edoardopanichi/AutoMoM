@@ -73,13 +73,19 @@ class PipelineOrchestrator:
             self._ensure_not_cancelled(job_id)
             self._set_stage(job_id, 2)
             JOB_STORE.append_log(job_id, "Stage 3/9: speaker diarization")
+            min_speakers = SETTINGS.diarization_min_speakers if SETTINGS.diarization_min_speakers > 0 else None
+            max_speakers = SETTINGS.diarization_max_speakers if SETTINGS.diarization_max_speakers > 0 else None
             diarization_result = diarize(
                 normalized_audio_path,
                 speech_regions,
+                min_speakers=min_speakers,
+                max_speakers=max_speakers,
                 max_chunk_s=SETTINGS.diarization_max_chunk_s,
                 backend=SETTINGS.diarization_backend,
                 model_path=Path(SETTINGS.diarization_model_path),
                 embedding_model=SETTINGS.diarization_embedding_model,
+                compute_device=SETTINGS.compute_device,
+                cuda_device_id=SETTINGS.cuda_device_id,
             )
             write_json(job_dir / "diarization.json", diarization_result.to_json())
             JOB_STORE.set_artifact(job_id, "diarization", job_dir / "diarization.json")
@@ -144,10 +150,24 @@ class PipelineOrchestrator:
             JOB_STORE.append_log(job_id, "Stage 6/9: transcribing diarized segments")
             transcription_dir = ensure_job_artifact_dir(job_id, "transcription_segments")
             segment_jobs: list[dict[str, object]] = []
-            transcriber = VoxtralTranscriber(SETTINGS.voxtral_binary, SETTINGS.voxtral_model_path)
+            transcriber = VoxtralTranscriber(
+                SETTINGS.voxtral_binary,
+                SETTINGS.voxtral_model_path,
+                compute_device=SETTINGS.compute_device,
+                cuda_device_id=SETTINGS.cuda_device_id,
+                gpu_layers=SETTINGS.voxtral_gpu_layers,
+            )
             transcriber_available = transcriber.available()
 
-            segments_for_transcription = diarization_result.segments
+            segments_for_transcription = self._collapse_labeled_segments(diarization_result.segments, speaker_map)
+            if len(segments_for_transcription) != len(diarization_result.segments):
+                JOB_STORE.append_log(
+                    job_id,
+                    (
+                        "Post-label diarization consolidation applied: "
+                        f"{len(diarization_result.segments)} -> {len(segments_for_transcription)} segments"
+                    ),
+                )
             if (
                 SETTINGS.transcription_max_segments > 0
                 and len(segments_for_transcription) > SETTINGS.transcription_max_segments
@@ -160,23 +180,29 @@ class PipelineOrchestrator:
 
             for idx, segment in enumerate(segments_for_transcription, start=1):
                 padding = 0.2
-                start_s = max(0.0, segment.start_s - padding)
-                end_s = segment.end_s + padding
+                start_s = max(0.0, float(segment["start_s"]) - padding)
+                end_s = float(segment["end_s"]) + padding
                 segment_path = transcription_dir / f"segment_{idx:04d}.wav"
                 if transcriber_available:
                     extract_segment(normalized_audio_path, segment_path, start_s, end_s, ffmpeg_bin=SETTINGS.ffmpeg_bin)
                 segment_jobs.append(
                     {
                         "segment_path": str(segment_path),
-                        "speaker_id": segment.speaker_id,
-                        "speaker_name": speaker_map.get(segment.speaker_id, segment.speaker_id),
-                        "start_s": segment.start_s,
-                        "end_s": segment.end_s,
+                        "speaker_id": str(segment["speaker_id"]),
+                        "speaker_name": str(segment["speaker_name"]),
+                        "start_s": float(segment["start_s"]),
+                        "end_s": float(segment["end_s"]),
                     }
                 )
 
             if transcriber_available:
-                JOB_STORE.append_log(job_id, "ASR runtime detected; transcription uses external binary")
+                JOB_STORE.append_log(
+                    job_id,
+                    (
+                        "ASR runtime detected; transcription uses external binary "
+                        f"(compute={transcriber.compute_mode()})"
+                    ),
+                )
             else:
                 JOB_STORE.append_log(
                     job_id,
@@ -199,6 +225,21 @@ class PipelineOrchestrator:
                 )
 
             transcript_segments = transcribe_segments(transcriber, segment_jobs, progress_callback=_segment_progress)
+            fallback_segments = sum(
+                1
+                for item in transcript_segments
+                if str(item.get("text", "")).startswith("[Offline fallback transcript")
+            )
+            if fallback_segments:
+                JOB_STORE.append_log(
+                    job_id,
+                    f"ASR fallback segments: {fallback_segments}/{len(transcript_segments)}",
+                )
+                if fallback_segments == len(transcript_segments):
+                    JOB_STORE.append_log(
+                        job_id,
+                        "Warning: ASR produced only fallback text; check ASR binary/model compatibility.",
+                    )
             write_json(job_dir / "segments_transcript.json", transcript_segments)
             JOB_STORE.set_artifact(job_id, "segments_transcript", job_dir / "segments_transcript.json")
             JOB_STORE.set_stage_percent(job_id, 100.0, overall_percent=self._overall(5, 100.0))
@@ -220,6 +261,9 @@ class PipelineOrchestrator:
             formatter = Formatter(
                 command_template=SETTINGS.formatter_command,
                 model_path=SETTINGS.formatter_model_path,
+                compute_device=SETTINGS.compute_device,
+                cuda_device_id=SETTINGS.cuda_device_id,
+                gpu_layers=SETTINGS.formatter_gpu_layers,
             )
             title = runtime.title or runtime.audio_path.stem
             speakers = transcript_payload["speakers"]
@@ -306,6 +350,43 @@ class PipelineOrchestrator:
         for segment in segments:
             grouped.setdefault(segment.speaker_id, []).append((segment.start_s, segment.end_s))
         return grouped
+
+    @staticmethod
+    def _collapse_labeled_segments(
+        segments: list[DiarizationSegment],
+        speaker_map: dict[str, str],
+        max_gap_s: float = 0.6,
+    ) -> list[dict[str, object]]:
+        if not segments:
+            return []
+
+        canonical_ids_by_name: dict[str, str] = {}
+        normalized: list[dict[str, object]] = []
+        for segment in sorted(segments, key=lambda item: (item.start_s, item.end_s)):
+            mapped_name = (speaker_map.get(segment.speaker_id, segment.speaker_id) or segment.speaker_id).strip()
+            if not mapped_name:
+                mapped_name = segment.speaker_id
+            canonical_id = canonical_ids_by_name.setdefault(mapped_name, segment.speaker_id)
+            normalized.append(
+                {
+                    "speaker_id": canonical_id,
+                    "speaker_name": mapped_name,
+                    "start_s": float(segment.start_s),
+                    "end_s": float(segment.end_s),
+                }
+            )
+
+        collapsed: list[dict[str, object]] = [normalized[0]]
+        for segment in normalized[1:]:
+            current = collapsed[-1]
+            if (
+                str(segment["speaker_id"]) == str(current["speaker_id"])
+                and float(segment["start_s"]) - float(current["end_s"]) <= max_gap_s
+            ):
+                current["end_s"] = float(segment["end_s"])
+            else:
+                collapsed.append(segment.copy())
+        return collapsed
 
     def _set_stage(self, job_id: str, stage_index: int) -> None:
         JOB_STORE.set_stage(job_id, STAGES[stage_index], overall_percent=self._overall(stage_index, 0.0))

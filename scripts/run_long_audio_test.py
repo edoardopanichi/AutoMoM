@@ -14,7 +14,10 @@ from backend.pipeline.template_manager import TemplateManager
 
 def prepare_mock_models() -> None:
     targets = [
-        (SETTINGS.models_dir / "diarization" / "model.bin", b"mock"),
+        (
+            Path(SETTINGS.diarization_model_path),
+            b"version: 3.1\npipeline:\n  name: mock\n",
+        ),
         (SETTINGS.models_dir / "voxtral" / "model.gguf", b"mock"),
         (SETTINGS.models_dir / "formatter" / "model.gguf", b"mock"),
     ]

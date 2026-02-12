@@ -4,10 +4,12 @@ from dataclasses import asdict, dataclass
 from functools import lru_cache
 import os
 from pathlib import Path
+import warnings
 
 import numpy as np
 import soundfile as sf
 
+from backend.pipeline.compute import resolve_torch_device
 from backend.pipeline.vad import SpeechRegion
 
 
@@ -34,12 +36,21 @@ class DiarizationResult:
 def diarize(
     audio_path: Path,
     speech_regions: list[SpeechRegion],
-    max_speakers: int = 20,
+    min_speakers: int | None = None,
+    max_speakers: int | None = None,
     max_chunk_s: float = 18.0,
     backend: str = "auto",
     model_path: Path | None = None,
     embedding_model: str | None = None,
+    compute_device: str = "auto",
+    cuda_device_id: int = 0,
 ) -> DiarizationResult:
+    normalized_min = int(min_speakers) if min_speakers is not None else 0
+    normalized_max = int(max_speakers) if max_speakers is not None else 0
+    min_speakers = normalized_min if normalized_min > 0 else None
+    max_speakers = normalized_max if normalized_max > 0 else None
+    if min_speakers is not None and max_speakers is not None and min_speakers > max_speakers:
+        min_speakers, max_speakers = max_speakers, min_speakers
     normalized_backend = (backend or "auto").strip().lower()
     if normalized_backend not in {"auto", "heuristic", "pyannote", "embedding"}:
         normalized_backend = "auto"
@@ -48,8 +59,11 @@ def diarize(
     if normalized_backend in {"auto", "pyannote"}:
         pyannote_result, error = _diarize_with_pyannote(
             audio_path=audio_path,
+            min_speakers=min_speakers,
             max_speakers=max_speakers,
             model_path=model_path,
+            compute_device=compute_device,
+            cuda_device_id=cuda_device_id,
         )
         if pyannote_result is not None:
             return pyannote_result
@@ -58,6 +72,7 @@ def diarize(
             return _diarize_heuristic(
                 audio_path=audio_path,
                 speech_regions=speech_regions,
+                min_speakers=min_speakers,
                 max_speakers=max_speakers,
                 max_chunk_s=max_chunk_s,
                 details=f"pyannote_forced_fallback: {error}",
@@ -68,9 +83,12 @@ def diarize(
         embedding_result, error = _diarize_with_embeddings(
             audio_path=audio_path,
             speech_regions=speech_regions,
+            min_speakers=min_speakers,
             max_speakers=max_speakers,
             max_chunk_s=max_chunk_s,
             model_ref=embedding_model,
+            compute_device=compute_device,
+            cuda_device_id=cuda_device_id,
         )
         if embedding_result is not None:
             return embedding_result
@@ -79,6 +97,7 @@ def diarize(
             return _diarize_heuristic(
                 audio_path=audio_path,
                 speech_regions=speech_regions,
+                min_speakers=min_speakers,
                 max_speakers=max_speakers,
                 max_chunk_s=max_chunk_s,
                 details=f"embedding_forced_fallback: {error}",
@@ -98,6 +117,7 @@ def diarize(
     return _diarize_heuristic(
         audio_path=audio_path,
         speech_regions=speech_regions,
+        min_speakers=min_speakers,
         max_speakers=max_speakers,
         max_chunk_s=max_chunk_s,
         details=details,
@@ -106,8 +126,11 @@ def diarize(
 
 def _diarize_with_pyannote(
     audio_path: Path,
-    max_speakers: int,
+    min_speakers: int | None,
+    max_speakers: int | None,
     model_path: Path | None,
+    compute_device: str,
+    cuda_device_id: int,
 ) -> tuple[DiarizationResult | None, str | None]:
     pipeline_ref = _resolve_pyannote_pipeline_ref(model_path)
     if not pipeline_ref:
@@ -115,7 +138,13 @@ def _diarize_with_pyannote(
 
     try:
         import torch
-        from pyannote.audio import Pipeline
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                category=UserWarning,
+                module=r"pyannote\.audio\.core\.io",
+            )
+            from pyannote.audio import Pipeline
     except Exception as exc:
         return None, f"pyannote_import_error:{exc.__class__.__name__}"
 
@@ -126,11 +155,21 @@ def _diarize_with_pyannote(
 
     try:
         pipeline = Pipeline.from_pretrained(pipeline_ref, **kwargs)
+        target_device = resolve_torch_device(compute_device, cuda_device_id)
+        active_device = target_device
         try:
-            pipeline.to(torch.device("cpu"))
+            pipeline.to(torch.device(target_device))
         except Exception:
-            # Some pipeline variants do not expose .to()
-            pass
+            if target_device == "cuda":
+                try:
+                    pipeline.to(torch.device("cpu"))
+                    active_device = "cpu"
+                except Exception:
+                    # Some pipeline variants do not expose .to()
+                    pass
+            else:
+                # Some pipeline variants do not expose .to()
+                pass
 
         audio, sample_rate = sf.read(str(audio_path), dtype="float32", always_2d=False)
         if isinstance(audio, np.ndarray) and audio.ndim > 1:
@@ -139,16 +178,22 @@ def _diarize_with_pyannote(
             waveform = np.ascontiguousarray(np.atleast_2d(audio))
         input_payload = {"waveform": torch.from_numpy(waveform), "sample_rate": int(sample_rate)}
 
+        pipeline_kwargs: dict[str, int] = {}
+        if min_speakers is not None:
+            pipeline_kwargs["min_speakers"] = min_speakers
+        if max_speakers is not None:
+            pipeline_kwargs["max_speakers"] = max_speakers
         try:
-            diarization = pipeline(input_payload, min_speakers=1, max_speakers=max_speakers)
+            diarization = pipeline(input_payload, **pipeline_kwargs)
         except TypeError:
             diarization = pipeline(input_payload)
     except Exception as exc:
         return None, f"pyannote_runtime_error:{exc.__class__.__name__}"
 
+    annotation = diarization.speaker_diarization if hasattr(diarization, "speaker_diarization") else diarization
     raw_segments: list[DiarizationSegment] = []
     try:
-        for turn, _, speaker in diarization.itertracks(yield_label=True):
+        for turn, _, speaker in annotation.itertracks(yield_label=True):
             raw_segments.append(
                 DiarizationSegment(
                     speaker_id=str(speaker),
@@ -170,7 +215,7 @@ def _diarize_with_pyannote(
             segments=remapped,
             speaker_count=len({segment.speaker_id for segment in remapped}),
             mode="pyannote",
-            details="pyannote_pipeline",
+            details=f"pyannote_pipeline:device:{active_device}",
         ),
         None,
     )
@@ -179,9 +224,12 @@ def _diarize_with_pyannote(
 def _diarize_with_embeddings(
     audio_path: Path,
     speech_regions: list[SpeechRegion],
-    max_speakers: int,
+    min_speakers: int | None,
+    max_speakers: int | None,
     max_chunk_s: float,
     model_ref: str | None,
+    compute_device: str,
+    cuda_device_id: int,
 ) -> tuple[DiarizationResult | None, str | None]:
     try:
         import torch
@@ -193,8 +241,14 @@ def _diarize_with_embeddings(
         resolved_model_ref = "pyannote/wespeaker-voxceleb-resnet34-LM"
 
     token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN") or None
+    target_device = resolve_torch_device(compute_device, cuda_device_id)
     try:
-        inference = _load_embedding_inference(resolved_model_ref, token)
+        inference, active_device = _load_embedding_inference(
+            resolved_model_ref,
+            token,
+            target_device,
+            cuda_device_id,
+        )
     except Exception as exc:
         return None, f"embedding_model_load_error:{exc.__class__.__name__}"
 
@@ -240,7 +294,9 @@ def _diarize_with_embeddings(
         return None, "embedding_no_segments"
 
     feature_matrix = np.vstack(features)
-    speaker_count = _estimate_speaker_count(feature_matrix, max_speakers=max_speakers)
+    effective_max = len(feature_matrix) if max_speakers is None else max(1, min(max_speakers, len(feature_matrix)))
+    min_allowed = 1 if min_speakers is None else max(1, min(min_speakers, effective_max))
+    speaker_count = max(min_allowed, _estimate_speaker_count(feature_matrix, max_speakers=effective_max))
     labels = _cluster(feature_matrix, speaker_count)
 
     raw_segments: list[DiarizationSegment] = []
@@ -261,22 +317,76 @@ def _diarize_with_embeddings(
             segments=remapped,
             speaker_count=len({segment.speaker_id for segment in remapped}),
             mode="embedding",
-            details=f"embedding_model:{resolved_model_ref}",
+            details=f"embedding_model:{resolved_model_ref};device:{active_device}",
         ),
         None,
     )
 
 
 @lru_cache(maxsize=3)
-def _load_embedding_inference(model_ref: str, token: str | None):
-    from pyannote.audio import Inference, Model
+def _load_embedding_inference(
+    model_ref: str,
+    token: str | None,
+    target_device: str,
+    cuda_device_id: int,
+):
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            category=UserWarning,
+            module=r"pyannote\.audio\.core\.io",
+        )
+        import torch
+        from pyannote.audio import Inference, Model
 
     kwargs: dict[str, object] = {}
     if token:
         kwargs["token"] = token
 
     embedding_model = Model.from_pretrained(model_ref, **kwargs)
-    return Inference(embedding_model, window="whole")
+    active_device = target_device
+    if target_device == "cuda":
+        try:
+            embedding_model = embedding_model.to(torch.device(f"cuda:{max(0, int(cuda_device_id))}"))
+        except Exception:
+            active_device = "cpu"
+    if active_device == "cpu":
+        try:
+            embedding_model = embedding_model.to(torch.device("cpu"))
+        except Exception:
+            pass
+
+    try:
+        inference = Inference(
+            embedding_model,
+            window="whole",
+            device=torch.device("cpu" if active_device == "cpu" else f"cuda:{max(0, int(cuda_device_id))}"),
+        )
+        return inference, active_device
+    except TypeError:
+        inference = Inference(embedding_model, window="whole")
+        if hasattr(inference, "to"):
+            try:
+                inference.to(torch.device("cpu" if active_device == "cpu" else f"cuda:{max(0, int(cuda_device_id))}"))
+            except Exception:
+                if active_device == "cuda":
+                    active_device = "cpu"
+        return inference, active_device
+    except Exception:
+        if active_device != "cuda":
+            raise
+        active_device = "cpu"
+        try:
+            inference = Inference(embedding_model, window="whole", device=torch.device("cpu"))
+            return inference, active_device
+        except TypeError:
+            inference = Inference(embedding_model, window="whole")
+            if hasattr(inference, "to"):
+                try:
+                    inference.to(torch.device("cpu"))
+                except Exception:
+                    pass
+            return inference, active_device
 
 
 def _resolve_pyannote_pipeline_ref(model_path: Path | None) -> str | None:
@@ -305,7 +415,8 @@ def _resolve_pyannote_pipeline_ref(model_path: Path | None) -> str | None:
 def _diarize_heuristic(
     audio_path: Path,
     speech_regions: list[SpeechRegion],
-    max_speakers: int,
+    min_speakers: int | None,
+    max_speakers: int | None,
     max_chunk_s: float,
     details: str | None = None,
 ) -> DiarizationResult:
@@ -329,7 +440,9 @@ def _diarize_heuristic(
     )
 
     features = np.array([_segment_features(audio, sample_rate, start, end) for start, end in chunks], dtype=np.float32)
-    speaker_count = _estimate_speaker_count(features, max_speakers=max_speakers)
+    effective_max = len(features) if max_speakers is None else max(1, min(max_speakers, len(features)))
+    min_allowed = 1 if min_speakers is None else max(1, min(min_speakers, effective_max))
+    speaker_count = max(min_allowed, _estimate_speaker_count(features, max_speakers=effective_max))
     labels = _cluster(features, speaker_count)
 
     raw_segments: list[DiarizationSegment] = []
@@ -501,7 +614,7 @@ def _merge_segments(segments: list[DiarizationSegment], max_gap_s: float = 0.6) 
 
 def merge_transcript_segments(
     segments: list[dict[str, object]],
-    max_gap_s: float = 1.0,
+    max_gap_s: float | None = None,
 ) -> list[dict[str, object]]:
     if not segments:
         return []
@@ -509,8 +622,12 @@ def merge_transcript_segments(
     for segment in segments[1:]:
         current = merged[-1]
         same_speaker = segment["speaker_name"] == current["speaker_name"]
-        small_gap = float(segment["start_s"]) - float(current["end_s"]) <= max_gap_s
-        if same_speaker and small_gap:
+        if max_gap_s is None:
+            should_merge = same_speaker
+        else:
+            small_gap = float(segment["start_s"]) - float(current["end_s"]) <= max_gap_s
+            should_merge = same_speaker and small_gap
+        if should_merge:
             current["end_s"] = segment["end_s"]
             current["text"] = (str(current["text"]).rstrip() + " " + str(segment["text"]).lstrip()).strip()
         else:

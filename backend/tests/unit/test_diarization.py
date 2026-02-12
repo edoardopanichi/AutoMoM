@@ -64,8 +64,11 @@ def test_pyannote_import_skipped_when_pipeline_missing(monkeypatch, tmp_path: Pa
     monkeypatch.setattr(builtins, "__import__", guarded_import)
     result, error = diarization_module._diarize_with_pyannote(
         audio_path=tmp_path / "dummy.wav",
+        min_speakers=1,
         max_speakers=2,
         model_path=tmp_path / "missing.bin",
+        compute_device="auto",
+        cuda_device_id=0,
     )
 
     assert result is None
@@ -98,7 +101,8 @@ def test_diarize_auto_uses_embedding_backend_when_pyannote_unavailable(monkeypat
     result = diarization_module.diarize(path, regions, max_speakers=2, max_chunk_s=0.5, backend="auto")
 
     assert result.mode == "embedding"
-    assert result.details == "embedding_model:test"
+    assert result.details is not None
+    assert result.details.startswith("embedding_model:test")
 
 
 def test_diarize_forced_embedding_falls_back_to_heuristic(monkeypatch, tmp_path: Path) -> None:
@@ -129,6 +133,20 @@ def test_merge_transcript_segments_merges_adjacent() -> None:
 
     assert len(merged) == 2
     assert merged[0]["text"] == "Hello there"
+
+
+def test_merge_transcript_segments_default_merges_same_speaker_with_large_gap() -> None:
+    segments = [
+        {"speaker_name": "Alice", "start_s": 0.0, "end_s": 1.0, "text": "Hello"},
+        {"speaker_name": "Alice", "start_s": 6.5, "end_s": 7.2, "text": "again"},
+        {"speaker_name": "Bob", "start_s": 7.3, "end_s": 8.0, "text": "Hi"},
+    ]
+
+    merged = merge_transcript_segments(segments)
+
+    assert len(merged) == 2
+    assert merged[0]["speaker_name"] == "Alice"
+    assert merged[0]["text"] == "Hello again"
 
 
 def test_estimate_speaker_count_penalizes_singleton_heavy_clusterings(monkeypatch) -> None:

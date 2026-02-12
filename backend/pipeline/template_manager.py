@@ -140,9 +140,7 @@ class TemplateManager:
         title: str,
     ) -> str:
         template = self.load(template_id)
-        transcript_text = "\n".join(
-            f"[{seg['start_s']:.2f}-{seg['end_s']:.2f}] {seg['speaker_name']}: {seg['text']}" for seg in transcript
-        )
+        transcript_text = "\n".join(f"{seg['speaker_name']}: {seg['text']}" for seg in transcript)
         prompt = (
             f"{template.prompt_block}\n\n"
             "Requirements:\n"

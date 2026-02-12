@@ -14,7 +14,7 @@ def test_permission_gated_download_flow(isolated_settings, monkeypatch, tmp_path
     source_path.write_bytes(source_bytes)
     checksum = hashlib.sha256(source_bytes).hexdigest()
 
-    model_path = SETTINGS.models_dir / "diarization" / "model.bin"
+    model_path = SETTINGS.models_dir / "diarization" / "test_model.bin"
 
     manager = ModelManager()
     manager._consent = {}

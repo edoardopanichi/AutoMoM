@@ -4,10 +4,14 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-mkdir -p data/models/diarization data/models/voxtral data/models/formatter
+mkdir -p data/models/diarization/pyannote-speaker-diarization-community-1 data/models/voxtral data/models/formatter
 
-if [[ ! -f data/models/diarization/model.bin ]]; then
-  printf 'mock-diarization' > data/models/diarization/model.bin
+if [[ ! -f data/models/diarization/pyannote-speaker-diarization-community-1/config.yaml ]]; then
+  cat > data/models/diarization/pyannote-speaker-diarization-community-1/config.yaml <<'YAML'
+version: 3.1
+pipeline:
+  name: mock
+YAML
 fi
 if [[ ! -f data/models/voxtral/model.gguf ]]; then
   printf 'mock-voxtral' > data/models/voxtral/model.gguf

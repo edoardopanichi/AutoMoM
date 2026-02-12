@@ -46,6 +46,36 @@ def test_formatter_prompt_assembly(isolated_settings) -> None:
     assert "Final output must be in English" in prompt
     assert "Sprint Review" in prompt
     assert "Alice" in prompt
+    assert "[0.00-1.20]" not in prompt
+
+
+def test_formatter_heuristic_transcript_markdown_has_no_timestamps() -> None:
+    formatter = Formatter(command_template="", model_path="")
+    markdown, structured, _ = formatter.build_structured_summary(
+        transcript=[
+            {
+                "speaker_name": "Alice",
+                "start_s": 0.0,
+                "end_s": 1.2,
+                "text": "We aligned on scope.",
+            },
+            {
+                "speaker_name": "Bob",
+                "start_s": 1.3,
+                "end_s": 2.1,
+                "text": "I will share the plan.",
+            },
+        ],
+        speakers=["Alice", "Bob"],
+        title="Sync",
+        template_id="default",
+    )
+
+    transcript_md = str(structured["transcript_markdown"])
+    assert "- **Alice**: We aligned on scope." in transcript_md
+    assert "- **Bob**: I will share the plan." in transcript_md
+    assert "[0.00-1.20]" not in transcript_md
+    assert "## Transcript (optional)" in markdown
 
 
 def test_formatter_llama_command_is_forced_non_interactive(monkeypatch, tmp_path: Path) -> None:
@@ -89,3 +119,46 @@ def test_formatter_timeout_falls_back_to_heuristic(monkeypatch, tmp_path: Path) 
 
     assert result is None
     assert formatter.last_mode == "heuristic_command_timeout"
+
+
+def test_formatter_injects_gpu_layers_when_gpu_available(monkeypatch, tmp_path: Path) -> None:
+    model_path = tmp_path / "formatter.gguf"
+    model_path.write_text("model", encoding="utf-8")
+    monkeypatch.setattr("backend.pipeline.formatter.should_enable_native_gpu", lambda *_: True)
+
+    captured: dict[str, object] = {}
+
+    def fake_run(command, input, capture_output, text, timeout):
+        captured["command"] = command
+        return SimpleNamespace(returncode=0, stdout='{"executive_summary":"ok"}', stderr="")
+
+    monkeypatch.setattr("backend.pipeline.formatter.subprocess.run", fake_run)
+
+    formatter = Formatter(command_template="llama-cli -m {model}", model_path=str(model_path), gpu_layers=99)
+    formatter.run_model("hello")
+
+    command = captured["command"]  # type: ignore[index]
+    assert "--single-turn" in command
+    assert "-ngl" in command
+
+
+def test_formatter_retries_without_gpu_on_rc0_stderr_error(monkeypatch, tmp_path: Path) -> None:
+    model_path = tmp_path / "formatter.gguf"
+    model_path.write_text("model", encoding="utf-8")
+    monkeypatch.setattr("backend.pipeline.formatter.should_enable_native_gpu", lambda *_: True)
+
+    calls: list[list[str]] = []
+
+    def fake_run(command, input, capture_output, text, timeout):
+        calls.append(command)
+        if "-ngl" in command:
+            return SimpleNamespace(returncode=0, stdout="", stderr="error: unknown argument: -ngl")
+        return SimpleNamespace(returncode=0, stdout='{"executive_summary":"ok"}', stderr="")
+
+    monkeypatch.setattr("backend.pipeline.formatter.subprocess.run", fake_run)
+
+    formatter = Formatter(command_template="llama-cli -m {model}", model_path=str(model_path), gpu_layers=99)
+    result = formatter.run_model("hello")
+
+    assert result == {"executive_summary": "ok"}
+    assert any("-ngl" in call for call in calls)
