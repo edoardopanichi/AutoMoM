@@ -5,26 +5,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from backend.app.config import SETTINGS
-from backend.app.schemas import TemplateDefinition
 from backend.pipeline.formatter import Formatter
 from backend.pipeline.template_manager import TemplateManager
-
-
-def test_template_rendering(isolated_settings) -> None:
-    manager = TemplateManager()
-    manager.save(
-        TemplateDefinition(
-            template_id="brief",
-            name="Brief",
-            version="1.0.0",
-            description="Test template",
-            prompt_block="Write concise minutes in English.",
-            content="# Summary\n{{ executive_summary }}\n",
-        )
-    )
-
-    rendered = manager.render("brief", {"executive_summary": "Team aligned on scope."})
-    assert "Team aligned on scope." in rendered
 
 
 def test_formatter_prompt_assembly(isolated_settings) -> None:
@@ -75,7 +57,7 @@ def test_formatter_heuristic_transcript_markdown_has_no_timestamps() -> None:
     assert "- **Alice**: We aligned on scope." in transcript_md
     assert "- **Bob**: I will share the plan." in transcript_md
     assert "[0.00-1.20]" not in transcript_md
-    assert "## Transcript (optional)" in markdown
+    assert markdown == ""
 
 
 def test_formatter_llama_command_is_forced_non_interactive(monkeypatch, tmp_path: Path) -> None:
@@ -87,7 +69,7 @@ def test_formatter_llama_command_is_forced_non_interactive(monkeypatch, tmp_path
     def fake_run(command, input, capture_output, text, timeout):
         captured["command"] = command
         captured["timeout"] = timeout
-        return SimpleNamespace(returncode=0, stdout='{"executive_summary":"ok"}', stderr="")
+        return SimpleNamespace(returncode=0, stdout='{"decisions":["ok"]}', stderr="")
 
     monkeypatch.setattr("backend.pipeline.formatter.subprocess.run", fake_run)
 
@@ -98,7 +80,7 @@ def test_formatter_llama_command_is_forced_non_interactive(monkeypatch, tmp_path
 
     result = formatter.run_model("hello")
 
-    assert result == {"executive_summary": "ok"}
+    assert result == {"decisions": ["ok"]}
     assert formatter.last_mode == "model_json"
     assert captured["timeout"] == SETTINGS.formatter_timeout_s
     script = str(captured["command"][2])  # type: ignore[index]
@@ -130,7 +112,7 @@ def test_formatter_injects_gpu_layers_when_gpu_available(monkeypatch, tmp_path: 
 
     def fake_run(command, input, capture_output, text, timeout):
         captured["command"] = command
-        return SimpleNamespace(returncode=0, stdout='{"executive_summary":"ok"}', stderr="")
+        return SimpleNamespace(returncode=0, stdout='{"decisions":["ok"]}', stderr="")
 
     monkeypatch.setattr("backend.pipeline.formatter.subprocess.run", fake_run)
 
@@ -153,14 +135,14 @@ def test_formatter_retries_without_gpu_on_rc0_stderr_error(monkeypatch, tmp_path
         calls.append(command)
         if "-ngl" in command:
             return SimpleNamespace(returncode=0, stdout="", stderr="error: unknown argument: -ngl")
-        return SimpleNamespace(returncode=0, stdout='{"executive_summary":"ok"}', stderr="")
+        return SimpleNamespace(returncode=0, stdout='{"decisions":["ok"]}', stderr="")
 
     monkeypatch.setattr("backend.pipeline.formatter.subprocess.run", fake_run)
 
     formatter = Formatter(command_template="llama-cli -m {model}", model_path=str(model_path), gpu_layers=99)
     result = formatter.run_model("hello")
 
-    assert result == {"executive_summary": "ok"}
+    assert result == {"decisions": ["ok"]}
     assert any("-ngl" in call for call in calls)
 
 
@@ -192,8 +174,8 @@ def test_formatter_preserves_model_markdown_output(monkeypatch, tmp_path: Path) 
     model_path.write_text("model", encoding="utf-8")
     markdown = (
         "# Meeting Info\n"
-        "## Executive Summary\n"
-        "- Team aligned.\n"
+        "## Agenda\n"
+        "- Budget review.\n"
         "## Decisions\n"
         "- Ship on Friday.\n"
     )
@@ -217,7 +199,7 @@ def test_formatter_preserves_model_markdown_output(monkeypatch, tmp_path: Path) 
 
     assert formatter.last_mode == "model_markdown"
     assert rendered == markdown
-    assert "executive_summary" in structured
+    assert "decisions" in structured
 
 
 def test_formatter_preserves_model_plaintext_output(monkeypatch, tmp_path: Path) -> None:
@@ -246,7 +228,7 @@ def test_formatter_preserves_model_plaintext_output(monkeypatch, tmp_path: Path)
 
     assert formatter.last_mode == "model_plaintext"
     assert rendered == plaintext
-    assert "executive_summary" in structured
+    assert "decisions" in structured
 
 
 def test_formatter_preserves_raw_stdout_even_with_runtime_prefix(monkeypatch, tmp_path: Path) -> None:
@@ -316,3 +298,69 @@ def test_formatter_uses_markdown_from_stderr_when_stdout_empty(monkeypatch, tmp_
     )
 
     assert rendered == stderr_output
+
+
+def test_formatter_treats_prefixed_stderr_markdown_as_valid_output(monkeypatch, tmp_path: Path) -> None:
+    model_path = tmp_path / "formatter.gguf"
+    model_path.write_text("model", encoding="utf-8")
+    stderr_output = (
+        "main: ## Minutes of Meeting\n"
+        "main: ## Agenda\n"
+        "main: - Remove item 6.3\n"
+        "main: ## Decisions\n"
+        "main: - Postpone development agreement\n"
+    )
+
+    def fake_run(command, input, capture_output, text, timeout):
+        return SimpleNamespace(returncode=0, stdout="", stderr=stderr_output)
+
+    monkeypatch.setattr("backend.pipeline.formatter.subprocess.run", fake_run)
+
+    formatter = Formatter(command_template="llama-cli -m {model}", model_path=str(model_path))
+    rendered, _structured, _ = formatter.build_structured_summary(
+        transcript=[{"speaker_name": "Alice", "text": "We postpone item 6.3."}],
+        speakers=["Alice"],
+        title="Sync",
+        template_id="default",
+    )
+
+    assert formatter.last_mode == "model_plaintext"
+    assert rendered == stderr_output
+    assert formatter.last_raw_output == stderr_output
+    assert formatter.last_stdout == ""
+    assert formatter.last_stderr == stderr_output
+
+
+def test_formatter_preserves_output_even_when_process_returncode_nonzero(monkeypatch, tmp_path: Path) -> None:
+    model_path = tmp_path / "formatter.gguf"
+    model_path.write_text("model", encoding="utf-8")
+    stdout_output = "# Minutes\n## Decisions\n- Keep shipping\n"
+
+    def fake_run(command, input, capture_output, text, timeout):
+        return SimpleNamespace(returncode=1, stdout=stdout_output, stderr="error: partial failure")
+
+    monkeypatch.setattr("backend.pipeline.formatter.subprocess.run", fake_run)
+
+    formatter = Formatter(command_template="llama-cli -m {model}", model_path=str(model_path))
+    rendered, _structured, _ = formatter.build_structured_summary(
+        transcript=[{"speaker_name": "Alice", "text": "Keep shipping."}],
+        speakers=["Alice"],
+        title="Sync",
+        template_id="default",
+    )
+
+    assert rendered == stdout_output
+    assert formatter.last_mode == "model_markdown"
+    assert formatter.last_raw_output == stdout_output
+
+
+def test_formatter_fallback_markdown_contains_no_executive_summary() -> None:
+    formatter = Formatter(command_template="", model_path="")
+    markdown, _structured, _ = formatter.build_structured_summary(
+        transcript=[{"speaker_name": "Alice", "text": "We aligned on scope."}],
+        speakers=["Alice"],
+        title="Sync",
+        template_id="default",
+    )
+
+    assert markdown == ""

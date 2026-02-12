@@ -3,9 +3,6 @@
 - **Date/Time:** {{ date_time }}
 - **Participants:** {{ participants | join(', ') if participants else 'Unknown' }}
 
-## Executive Summary
-{{ executive_summary }}
-
 ## Agenda
 {% for item in agenda %}- {{ item }}
 {% else %}- Not detected

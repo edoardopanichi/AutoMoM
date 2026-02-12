@@ -20,9 +20,6 @@ DEFAULT_TEMPLATE_CONTENT = """# Meeting Info
 - **Date/Time:** {{ date_time }}
 - **Participants:** {{ participants | join(', ') if participants else 'Unknown' }}
 
-## Executive Summary
-{{ executive_summary }}
-
 ## Agenda
 {% for item in agenda %}- {{ item }}
 {% else %}- Not detected
@@ -145,7 +142,6 @@ class TemplateManager:
             f"{template.prompt_block}\n\n"
             "Requirements:\n"
             "- Final output must be in English.\n"
-            "- Follow the template sections.\n"
             "- Capture decisions/action items/open questions when present.\n\n"
             f"Title: {title}\n"
             f"Speakers: {', '.join(speakers)}\n\n"

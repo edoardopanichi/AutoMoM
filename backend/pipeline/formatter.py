@@ -26,13 +26,14 @@ RUNTIME_LOG_PREFIXES = (
     "warning: consult docs/build.md for compilation instructions",
     "llama_",
     "ggml_",
-    "main:",
     "build:",
     "load_tensors:",
     "model_loader:",
     "common_init_from_params:",
     "system_info:",
     "print_info:",
+    "error: unknown argument",
+    "error: invalid argument",
 )
 
 
@@ -53,16 +54,22 @@ class Formatter:
         self._gpu_requested = should_enable_native_gpu(compute_device, self._cuda_device_id)
         self._gpu_retry_disabled = False
         self.last_raw_output: str = ""
+        self.last_stdout: str = ""
+        self.last_stderr: str = ""
         self.last_mode: str = "heuristic"
 
     def run_model(self, prompt: str) -> dict[str, object] | None:
         if not self.command_template:
             self.last_raw_output = ""
+            self.last_stdout = ""
+            self.last_stderr = ""
             self.last_mode = "heuristic_no_command"
             return None
 
         if not self.model_path or not Path(self.model_path).exists():
             self.last_raw_output = ""
+            self.last_stdout = ""
+            self.last_stderr = ""
             self.last_mode = "heuristic_missing_model_path"
             return None
 
@@ -81,8 +88,9 @@ class Formatter:
                 text=True,
                 timeout=SETTINGS.formatter_timeout_s,
             )
+            output = _extract_model_text(process.stdout, process.stderr)
             invocation_failed = _invocation_failed(process)
-            if invocation_failed and use_gpu:
+            if use_gpu and _should_retry_without_gpu(process):
                 retry_args = _ensure_non_interactive_llama_command(
                     shlex.split(command),
                     use_gpu=False,
@@ -95,26 +103,37 @@ class Formatter:
                     text=True,
                     timeout=SETTINGS.formatter_timeout_s,
                 )
-                if not _invocation_failed(retry_process):
+                retry_output = _extract_model_text(retry_process.stdout, retry_process.stderr)
+                if retry_output:
                     self._gpu_retry_disabled = True
                     process = retry_process
+                    output = retry_output
+                    invocation_failed = False
+                elif not _invocation_failed(retry_process):
+                    self._gpu_retry_disabled = True
+                    process = retry_process
+                    output = retry_output
                     invocation_failed = False
         except subprocess.TimeoutExpired:
             self.last_raw_output = ""
+            self.last_stdout = ""
+            self.last_stderr = ""
             self.last_mode = "heuristic_command_timeout"
             return None
         except (OSError, ValueError):
             self.last_raw_output = ""
+            self.last_stdout = ""
+            self.last_stderr = ""
             self.last_mode = "heuristic_command_error"
             return None
 
-        if invocation_failed:
-            self.last_raw_output = ""
-            self.last_mode = "heuristic_command_nonzero"
-            return None
-
-        output = _extract_model_text(process.stdout, process.stderr)
+        self.last_stdout = process.stdout or ""
+        self.last_stderr = process.stderr or ""
         if not output:
+            if invocation_failed:
+                self.last_raw_output = ""
+                self.last_mode = "heuristic_command_nonzero"
+                return None
             self.last_raw_output = ""
             self.last_mode = "heuristic_empty_output"
             return None
@@ -141,16 +160,10 @@ class Formatter:
         template_id: str,
     ) -> tuple[str, dict[str, object], str]:
         prompt = TEMPLATE_MANAGER.build_formatter_prompt(template_id, transcript, speakers, title)
-        model_output = self.run_model(prompt)
-        if model_output is not None and self.last_raw_output:
-            markdown = self.last_raw_output
-            structured = self._heuristic_structuring(transcript, speakers, title)
-            return markdown, structured, prompt
-        if model_output is None:
-            model_output = self._heuristic_structuring(transcript, speakers, title)
-
-        markdown = TEMPLATE_MANAGER.render(template_id, model_output)
-        return markdown, model_output, prompt
+        self.run_model(prompt)
+        structured = self._heuristic_structuring(transcript, speakers, title)
+        markdown = self.last_raw_output if self.last_raw_output else ""
+        return markdown, structured, prompt
 
     @staticmethod
     def _parse_json_output(output: str) -> dict[str, object] | None:
@@ -182,11 +195,6 @@ class Formatter:
         statements = [str(seg["text"]).strip() for seg in transcript if str(seg["text"]).strip()]
         statements = [item for item in statements if not item.startswith("[Offline fallback transcript")]
 
-        if statements:
-            summary = " ".join(statements[:3])
-        else:
-            summary = "Discussion captured from the meeting audio."
-
         discussion_summary = _discussion_bullets(transcript)
         decisions = _keyword_extract(statements, ["decide", "approved", "agreed", "resolution"])
         open_items = _keyword_extract(statements, ["risk", "issue", "question", "blocker"])[:8]
@@ -201,7 +209,6 @@ class Formatter:
             "title": title,
             "date_time": datetime.now(timezone.utc).isoformat(timespec="minutes"),
             "participants": speakers,
-            "executive_summary": summary,
             "agenda": ["Inferred from discussion context"],
             "discussion_summary": discussion_summary,
             "decisions": decisions,
@@ -325,19 +332,22 @@ def _invocation_failed(process: subprocess.CompletedProcess[str]) -> bool:
     return False
 
 
+def _should_retry_without_gpu(process: subprocess.CompletedProcess[str]) -> bool:
+    if process.returncode != 0:
+        return False
+    stderr = process.stderr.lower()
+    if "unknown argument" not in stderr:
+        return False
+    return any(token in stderr for token in LLAMA_GPU_FLAG_TOKENS)
+
+
 def _extract_model_text(stdout: str, stderr: str) -> str:
     raw_stdout = stdout or ""
-    if raw_stdout.strip():
+    if raw_stdout != "":
         return raw_stdout
     raw_stderr = stderr or ""
-    cleaned_stderr = _strip_runtime_logs(raw_stderr)
-    if cleaned_stderr:
-        if raw_stderr.strip() == cleaned_stderr:
-            return raw_stderr
-        return cleaned_stderr
-
-    if _looks_like_markdown_document(raw_stderr):
-        return raw_stderr
+    if raw_stderr != "":
+        return _strip_runtime_logs(raw_stderr)
     return ""
 
 
@@ -345,24 +355,45 @@ def _strip_runtime_logs(text: str) -> str:
     if not text:
         return ""
 
-    normalized = ANSI_ESCAPE_RE.sub("", text).replace("\r", "\n")
     kept_lines: list[str] = []
-    for line in normalized.splitlines():
-        stripped = line.strip()
+    for line in text.splitlines(keepends=True):
+        stripped = ANSI_ESCAPE_RE.sub("", line).strip()
         if not stripped:
+            kept_lines.append(line)
             continue
-        lower = stripped.lower()
-        if any(lower.startswith(prefix) for prefix in RUNTIME_LOG_PREFIXES):
+        if _is_runtime_log_line(stripped):
             continue
-        if lower.startswith("| memory breakdown"):
-            continue
-        if lower.startswith("|   - host"):
-            continue
-        if lower.startswith("|   - cpu_repack"):
-            continue
-        kept_lines.append(stripped)
+        kept_lines.append(line)
 
-    return "\n".join(kept_lines).strip()
+    cleaned = "".join(kept_lines)
+    if cleaned.strip() == "":
+        return ""
+    return cleaned
+
+
+def _is_runtime_log_line(stripped_line: str) -> bool:
+    lower = stripped_line.lower()
+    if lower.startswith("main:"):
+        remainder = stripped_line.split(":", 1)[1].strip()
+        if _looks_like_structured_content(remainder):
+            return False
+        return True
+
+    if any(lower.startswith(prefix) for prefix in RUNTIME_LOG_PREFIXES):
+        return True
+    if lower.startswith("| memory breakdown"):
+        return True
+    if lower.startswith("|   - host"):
+        return True
+    if lower.startswith("|   - cpu_repack"):
+        return True
+    return False
+
+
+def _looks_like_structured_content(text: str) -> bool:
+    if not text:
+        return False
+    return bool(re.match(r"^(#{1,6}\s+\S+|[-*]\s+\S+|\d+\.\s+\S+|\|.+\|)", text))
 
 
 def _looks_like_markdown_document(text: str) -> bool:

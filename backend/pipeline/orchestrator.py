@@ -274,6 +274,12 @@ class PipelineOrchestrator:
                 template_id=runtime.template_id,
             )
             JOB_STORE.append_log(job_id, f"Formatter mode: {formatter.last_mode}")
+            if formatter.last_stdout:
+                (job_dir / "formatter_stdout.txt").write_text(formatter.last_stdout, encoding="utf-8")
+                JOB_STORE.set_artifact(job_id, "formatter_stdout", job_dir / "formatter_stdout.txt")
+            if formatter.last_stderr:
+                (job_dir / "formatter_stderr.txt").write_text(formatter.last_stderr, encoding="utf-8")
+                JOB_STORE.set_artifact(job_id, "formatter_stderr", job_dir / "formatter_stderr.txt")
             if formatter.last_raw_output:
                 (job_dir / "formatter_raw_output.txt").write_text(formatter.last_raw_output, encoding="utf-8")
                 JOB_STORE.set_artifact(job_id, "formatter_raw_output", job_dir / "formatter_raw_output.txt")
