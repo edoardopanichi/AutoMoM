@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 from pathlib import Path
 
 import numpy as np
@@ -49,6 +50,26 @@ def test_diarize_forced_pyannote_falls_back_when_not_configured(monkeypatch, tmp
     assert result.mode == "heuristic"
     assert result.details is not None
     assert "pyannote_forced_fallback" in result.details
+
+
+def test_pyannote_import_skipped_when_pipeline_missing(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("AUTOMOM_DIARIZATION_PIPELINE", raising=False)
+    original_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name.startswith("pyannote"):
+            raise AssertionError("pyannote import should not happen without pipeline configuration")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    result, error = diarization_module._diarize_with_pyannote(
+        audio_path=tmp_path / "dummy.wav",
+        max_speakers=2,
+        model_path=tmp_path / "missing.bin",
+    )
+
+    assert result is None
+    assert error == "pyannote_pipeline_not_configured"
 
 
 def test_diarize_auto_uses_embedding_backend_when_pyannote_unavailable(monkeypatch, tmp_path: Path) -> None:
@@ -108,3 +129,46 @@ def test_merge_transcript_segments_merges_adjacent() -> None:
 
     assert len(merged) == 2
     assert merged[0]["text"] == "Hello there"
+
+
+def test_estimate_speaker_count_penalizes_singleton_heavy_clusterings(monkeypatch) -> None:
+    features = np.zeros((10, 4), dtype=np.float32)
+    labels_by_k = {
+        2: np.array([0, 0, 0, 0, 0, 1, 1, 1, 1, 1]),
+        3: np.array([0, 0, 0, 0, 0, 0, 0, 0, 1, 2]),
+        4: np.array([0, 0, 0, 0, 0, 0, 0, 1, 2, 3]),
+        5: np.array([0, 0, 0, 0, 0, 0, 1, 2, 3, 4]),
+    }
+    raw_scores = {2: 0.20, 3: 0.27, 4: 0.33, 5: 0.38}
+
+    monkeypatch.setattr(diarization_module, "_cluster", lambda _features, k: labels_by_k[k])
+    monkeypatch.setattr(
+        diarization_module,
+        "_silhouette",
+        lambda labels, _distances: raw_scores[len(np.unique(labels))],
+    )
+
+    result = diarization_module._estimate_speaker_count(features, max_speakers=5)
+
+    assert result == 2
+
+
+def test_estimate_speaker_count_can_pick_higher_k_when_clusters_are_stable(monkeypatch) -> None:
+    features = np.zeros((12, 4), dtype=np.float32)
+    labels_by_k = {
+        2: np.array([0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1]),
+        3: np.array([0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2]),
+        4: np.array([0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3]),
+    }
+    raw_scores = {2: 0.21, 3: 0.41, 4: 0.33}
+
+    monkeypatch.setattr(diarization_module, "_cluster", lambda _features, k: labels_by_k[k])
+    monkeypatch.setattr(
+        diarization_module,
+        "_silhouette",
+        lambda labels, _distances: raw_scores[len(np.unique(labels))],
+    )
+
+    result = diarization_module._estimate_speaker_count(features, max_speakers=4)
+
+    assert result == 3

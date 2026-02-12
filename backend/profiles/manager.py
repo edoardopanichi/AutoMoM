@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Sequence
 from uuid import uuid4
 
 import numpy as np
@@ -20,6 +20,13 @@ DEFAULT_THRESHOLD = 0.82
 class VoiceProfileManager:
     def __init__(self) -> None:
         SETTINGS.profiles_dir.mkdir(parents=True, exist_ok=True)
+
+    def load_mono_audio(self, audio_path: Path) -> tuple[np.ndarray, int]:
+        audio, sample_rate = sf.read(str(audio_path), always_2d=False)
+        mono = np.asarray(audio, dtype=np.float32)
+        if mono.ndim > 1:
+            mono = mono.mean(axis=1)
+        return mono, int(sample_rate)
 
     def list_profiles(self) -> list[VoiceProfile]:
         profiles: list[VoiceProfile] = []
@@ -65,16 +72,18 @@ class VoiceProfileManager:
         self,
         audio_path: Path,
         segments: Iterable[tuple[float, float]],
+        *,
+        audio_data: np.ndarray | None = None,
+        sample_rate: int | None = None,
     ) -> np.ndarray:
-        audio, sample_rate = sf.read(str(audio_path), always_2d=False)
-        if audio.ndim > 1:
-            audio = audio.mean(axis=1)
+        if audio_data is None or sample_rate is None:
+            audio_data, sample_rate = self.load_mono_audio(audio_path)
 
         embeddings: list[np.ndarray] = []
         for start_s, end_s in segments:
             start_idx = int(max(0.0, start_s) * sample_rate)
             end_idx = int(max(start_s, end_s) * sample_rate)
-            segment_audio = audio[start_idx:end_idx]
+            segment_audio = audio_data[start_idx:end_idx]
             emb = self._compute_embedding_from_array(segment_audio)
             if emb.size:
                 embeddings.append(emb)
@@ -83,17 +92,24 @@ class VoiceProfileManager:
         stacked = np.vstack(embeddings)
         return self._normalize(stacked.mean(axis=0))
 
-    def compute_embedding(self, audio_path: Path, start_s: float | None = None, end_s: float | None = None) -> np.ndarray:
-        audio, sample_rate = sf.read(str(audio_path), always_2d=False)
-        if audio.ndim > 1:
-            audio = audio.mean(axis=1)
+    def compute_embedding(
+        self,
+        audio_path: Path,
+        start_s: float | None = None,
+        end_s: float | None = None,
+        *,
+        audio_data: np.ndarray | None = None,
+        sample_rate: int | None = None,
+    ) -> np.ndarray:
+        if audio_data is None or sample_rate is None:
+            audio_data, sample_rate = self.load_mono_audio(audio_path)
 
         if start_s is not None or end_s is not None:
             start_idx = int((start_s or 0.0) * sample_rate)
-            end_idx = int((end_s if end_s is not None else len(audio) / sample_rate) * sample_rate)
-            audio = audio[max(0, start_idx) : max(0, end_idx)]
+            end_idx = int((end_s if end_s is not None else len(audio_data) / sample_rate) * sample_rate)
+            audio_data = audio_data[max(0, start_idx) : max(0, end_idx)]
 
-        return self._compute_embedding_from_array(audio)
+        return self._compute_embedding_from_array(audio_data)
 
     def _compute_embedding_from_array(self, audio: np.ndarray) -> np.ndarray:
         if audio.size == 0:
@@ -107,11 +123,17 @@ class VoiceProfileManager:
         features[0] = features[0] + energy
         return self._normalize(features)
 
-    def match(self, embedding: np.ndarray, threshold: float = DEFAULT_THRESHOLD) -> MatchResponse:
+    def match(
+        self,
+        embedding: np.ndarray,
+        threshold: float = DEFAULT_THRESHOLD,
+        profiles: Sequence[VoiceProfile] | None = None,
+    ) -> MatchResponse:
         embedding = self._normalize(embedding)
         scored: list[MatchResult] = []
 
-        for profile in self.list_profiles():
+        candidates = profiles if profiles is not None else self.list_profiles()
+        for profile in candidates:
             profile_embedding = np.array(profile.embedding, dtype=np.float32)
             score = float(np.dot(embedding, self._normalize(profile_embedding)))
             if score >= threshold:

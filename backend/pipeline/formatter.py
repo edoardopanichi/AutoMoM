@@ -8,11 +8,15 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
+from backend.app.config import SETTINGS
 from backend.pipeline.template_manager import TEMPLATE_MANAGER
 
 
 ACTION_OWNER_PATTERN = re.compile(r"(?P<owner>[A-Z][a-z]+) will (?P<task>[^.]+)", re.IGNORECASE)
 DATE_PATTERN = re.compile(r"\b(\d{4}-\d{2}-\d{2}|tomorrow|next week|monday|tuesday|wednesday|thursday|friday)\b", re.IGNORECASE)
+LLAMA_FLAGS = ("--single-turn",)
+LLAMA_BINARY_PATTERN = re.compile(r"(^|[\s;|&()])(?P<cmd>(?:[^\s;|&()]+/)?llama-cli)(?=$|[\s;|&()])")
+SHELL_WRAPPERS = {"bash", "sh", "zsh"}
 
 
 class Formatter:
@@ -31,9 +35,18 @@ class Formatter:
             return None
 
         command = self.command_template.format(model=self.model_path)
-        args = shlex.split(command)
+        args = _ensure_non_interactive_llama_command(shlex.split(command))
         try:
-            process = subprocess.run(args, input=prompt, capture_output=True, text=True)
+            process = subprocess.run(
+                args,
+                input=prompt,
+                capture_output=True,
+                text=True,
+                timeout=SETTINGS.formatter_timeout_s,
+            )
+        except subprocess.TimeoutExpired:
+            self.last_mode = "heuristic_command_timeout"
+            return None
         except (OSError, ValueError):
             self.last_mode = "heuristic_command_error"
             return None
@@ -206,3 +219,38 @@ def _extract_actions(statements: list[str]) -> list[dict[str, str]]:
             }
         )
     return actions[:12]
+
+
+def _ensure_non_interactive_llama_command(args: list[str]) -> list[str]:
+    if not args:
+        return args
+
+    if _is_shell_wrapper(args):
+        script = args[2]
+        missing_flags = [flag for flag in LLAMA_FLAGS if flag not in script]
+        if not missing_flags or "llama-cli" not in script:
+            return args
+        flags = " ".join(missing_flags)
+
+        def _inject(match: re.Match[str]) -> str:
+            return f"{match.group(1)}{match.group('cmd')} {flags}"
+
+        updated_script, replacements = LLAMA_BINARY_PATTERN.subn(_inject, script, count=1)
+        if replacements == 0:
+            return args
+        updated = args.copy()
+        updated[2] = updated_script
+        return updated
+
+    llama_index = next((idx for idx, token in enumerate(args) if Path(token).name == "llama-cli"), None)
+    if llama_index is None:
+        return args
+
+    missing_flags = [flag for flag in LLAMA_FLAGS if flag not in args]
+    if not missing_flags:
+        return args
+    return args[: llama_index + 1] + missing_flags + args[llama_index + 1 :]
+
+
+def _is_shell_wrapper(args: list[str]) -> bool:
+    return len(args) >= 3 and Path(args[0]).name in SHELL_WRAPPERS and args[1] in {"-c", "-lc"}

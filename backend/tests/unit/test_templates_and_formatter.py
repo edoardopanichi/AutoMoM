@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+from types import SimpleNamespace
+
+from backend.app.config import SETTINGS
 from backend.app.schemas import TemplateDefinition
+from backend.pipeline.formatter import Formatter
 from backend.pipeline.template_manager import TemplateManager
 
 
@@ -40,3 +46,46 @@ def test_formatter_prompt_assembly(isolated_settings) -> None:
     assert "Final output must be in English" in prompt
     assert "Sprint Review" in prompt
     assert "Alice" in prompt
+
+
+def test_formatter_llama_command_is_forced_non_interactive(monkeypatch, tmp_path: Path) -> None:
+    model_path = tmp_path / "formatter.gguf"
+    model_path.write_text("model", encoding="utf-8")
+
+    captured: dict[str, object] = {}
+
+    def fake_run(command, input, capture_output, text, timeout):
+        captured["command"] = command
+        captured["timeout"] = timeout
+        return SimpleNamespace(returncode=0, stdout='{"executive_summary":"ok"}', stderr="")
+
+    monkeypatch.setattr("backend.pipeline.formatter.subprocess.run", fake_run)
+
+    formatter = Formatter(
+        command_template='bash -lc "cat >/tmp/prompt; llama-cli -m \\"{model}\\" -n 128 -f /tmp/prompt"',
+        model_path=str(model_path),
+    )
+
+    result = formatter.run_model("hello")
+
+    assert result == {"executive_summary": "ok"}
+    assert formatter.last_mode == "model_json"
+    assert captured["timeout"] == SETTINGS.formatter_timeout_s
+    script = str(captured["command"][2])  # type: ignore[index]
+    assert "--single-turn" in script
+
+
+def test_formatter_timeout_falls_back_to_heuristic(monkeypatch, tmp_path: Path) -> None:
+    model_path = tmp_path / "formatter.gguf"
+    model_path.write_text("model", encoding="utf-8")
+
+    def fake_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="llama-cli", timeout=1.0)
+
+    monkeypatch.setattr("backend.pipeline.formatter.subprocess.run", fake_run)
+
+    formatter = Formatter(command_template="llama-cli -m {model}", model_path=str(model_path))
+    result = formatter.run_model("hello")
+
+    assert result is None
+    assert formatter.last_mode == "heuristic_command_timeout"

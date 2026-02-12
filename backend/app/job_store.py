@@ -102,6 +102,22 @@ class JobStore:
         runtime.state.updated_at = datetime.now(timezone.utc)
         self._persist_state(job_id)
 
+    def set_transcription_progress(
+        self,
+        job_id: str,
+        stage_percent: float,
+        completed: int,
+        total: int,
+        overall_percent: float | None = None,
+    ) -> None:
+        runtime = self.get_runtime(job_id)
+        runtime.state.stage_percent = max(0.0, min(100.0, stage_percent))
+        if overall_percent is not None:
+            runtime.state.overall_percent = max(0.0, min(100.0, overall_percent))
+        runtime.state.transcript_segment_progress = f"{completed} of {total}"
+        runtime.state.updated_at = datetime.now(timezone.utc)
+        self._persist_state(job_id)
+
     def append_log(self, job_id: str, message: str) -> None:
         runtime = self.get_runtime(job_id)
         timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")

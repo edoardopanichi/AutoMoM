@@ -55,6 +55,7 @@ class Settings:
         "AUTOMOM_FORMATTER_MODEL",
         str(DATA_DIR / "models" / "formatter" / "model.gguf"),
     )
+    formatter_timeout_s: int = int(os.getenv("AUTOMOM_FORMATTER_TIMEOUT_S", "120"))
     diarization_max_chunk_s: float = float(os.getenv("AUTOMOM_DIARIZATION_MAX_CHUNK_S", "18.0"))
     transcription_max_segments: int = int(os.getenv("AUTOMOM_TRANSCRIPTION_MAX_SEGMENTS", "0"))
 

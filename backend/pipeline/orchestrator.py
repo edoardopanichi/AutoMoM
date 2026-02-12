@@ -117,7 +117,8 @@ class PipelineOrchestrator:
             self._ensure_not_cancelled(job_id)
             self._set_stage(job_id, 4)
             JOB_STORE.append_log(job_id, "Stage 5/9: waiting for speaker naming")
-            speaker_info = self._build_speaker_info(job_id, normalized_audio_path, diarization_result.segments, snippets)
+            segments_by_speaker = self._group_segments_by_speaker(diarization_result.segments)
+            speaker_info = self._build_speaker_info(job_id, normalized_audio_path, segments_by_speaker, snippets)
             JOB_STORE.set_waiting_for_speaker_input(job_id, speaker_info)
             mapping_items = JOB_STORE.wait_for_mapping(job_id)
             if mapping_items is None:
@@ -133,11 +134,7 @@ class PipelineOrchestrator:
             for mapping in mapping_items:
                 if not mapping.save_voice_profile:
                     continue
-                segments = [
-                    (segment.start_s, segment.end_s)
-                    for segment in diarization_result.segments
-                    if segment.speaker_id == mapping.speaker_id
-                ][:8]
+                segments = segments_by_speaker.get(mapping.speaker_id, [])[:8]
                 embedding = VOICE_PROFILE_MANAGER.compute_embedding_from_segments(normalized_audio_path, segments)
                 VOICE_PROFILE_MANAGER.upsert_profile(mapping.name, embedding)
                 JOB_STORE.append_log(job_id, f"Saved voice profile for {mapping.name}")
@@ -147,6 +144,8 @@ class PipelineOrchestrator:
             JOB_STORE.append_log(job_id, "Stage 6/9: transcribing diarized segments")
             transcription_dir = ensure_job_artifact_dir(job_id, "transcription_segments")
             segment_jobs: list[dict[str, object]] = []
+            transcriber = VoxtralTranscriber(SETTINGS.voxtral_binary, SETTINGS.voxtral_model_path)
+            transcriber_available = transcriber.available()
 
             segments_for_transcription = diarization_result.segments
             if (
@@ -164,7 +163,8 @@ class PipelineOrchestrator:
                 start_s = max(0.0, segment.start_s - padding)
                 end_s = segment.end_s + padding
                 segment_path = transcription_dir / f"segment_{idx:04d}.wav"
-                extract_segment(normalized_audio_path, segment_path, start_s, end_s, ffmpeg_bin=SETTINGS.ffmpeg_bin)
+                if transcriber_available:
+                    extract_segment(normalized_audio_path, segment_path, start_s, end_s, ffmpeg_bin=SETTINGS.ffmpeg_bin)
                 segment_jobs.append(
                     {
                         "segment_path": str(segment_path),
@@ -175,14 +175,14 @@ class PipelineOrchestrator:
                     }
                 )
 
-            transcriber = VoxtralTranscriber(SETTINGS.voxtral_binary, SETTINGS.voxtral_model_path)
-            if transcriber.available():
+            if transcriber_available:
                 JOB_STORE.append_log(job_id, "ASR runtime detected; transcription uses external binary")
             else:
                 JOB_STORE.append_log(
                     job_id,
                     (
                         "ASR runtime unavailable; using fallback transcription. "
+                        "Skipping per-segment audio extraction. "
                         f"binary='{SETTINGS.voxtral_binary or '<unset>'}' "
                         f"model='{SETTINGS.voxtral_model_path or '<unset>'}'"
                     ),
@@ -190,8 +190,13 @@ class PipelineOrchestrator:
 
             def _segment_progress(done: int, total: int) -> None:
                 stage_percent = (done / max(1, total)) * 100
-                JOB_STORE.set_stage_percent(job_id, stage_percent, overall_percent=self._overall(5, stage_percent))
-                JOB_STORE.set_segment_progress(job_id, done, total)
+                JOB_STORE.set_transcription_progress(
+                    job_id,
+                    stage_percent=stage_percent,
+                    completed=done,
+                    total=total,
+                    overall_percent=self._overall(5, stage_percent),
+                )
 
             transcript_segments = transcribe_segments(transcriber, segment_jobs, progress_callback=_segment_progress)
             write_json(job_dir / "segments_transcript.json", transcript_segments)
@@ -254,7 +259,7 @@ class PipelineOrchestrator:
         self,
         job_id: str,
         normalized_audio_path: Path,
-        segments: list[DiarizationSegment],
+        segments_by_speaker: dict[str, list[tuple[float, float]]],
         snippets,
     ) -> JobSpeakerInfo:
         snippet_by_speaker: dict[str, list[SpeakerSnippet]] = {}
@@ -268,15 +273,18 @@ class PipelineOrchestrator:
                 )
             )
 
+        audio_data, sample_rate = VOICE_PROFILE_MANAGER.load_mono_audio(normalized_audio_path)
+        profiles = VOICE_PROFILE_MANAGER.list_profiles()
         speakers: list[SpeakerState] = []
-        for speaker_id in sorted({item.speaker_id for item in segments}):
-            speaker_segments = [
-                (item.start_s, item.end_s)
-                for item in segments
-                if item.speaker_id == speaker_id
-            ][:8]
-            embedding = VOICE_PROFILE_MANAGER.compute_embedding_from_segments(normalized_audio_path, speaker_segments)
-            match = VOICE_PROFILE_MANAGER.match(embedding)
+        for speaker_id in sorted(segments_by_speaker):
+            speaker_segments = segments_by_speaker[speaker_id][:8]
+            embedding = VOICE_PROFILE_MANAGER.compute_embedding_from_segments(
+                normalized_audio_path,
+                speaker_segments,
+                audio_data=audio_data,
+                sample_rate=sample_rate,
+            )
+            match = VOICE_PROFILE_MANAGER.match(embedding, profiles=profiles)
             suggested_name = None
             if match.best_match and not match.ambiguous_matches:
                 suggested_name = match.best_match.name
@@ -291,6 +299,13 @@ class PipelineOrchestrator:
             )
 
         return JobSpeakerInfo(detected_speakers=len(speakers), speakers=speakers)
+
+    @staticmethod
+    def _group_segments_by_speaker(segments: list[DiarizationSegment]) -> dict[str, list[tuple[float, float]]]:
+        grouped: dict[str, list[tuple[float, float]]] = {}
+        for segment in segments:
+            grouped.setdefault(segment.speaker_id, []).append((segment.start_s, segment.end_s))
+        return grouped
 
     def _set_stage(self, job_id: str, stage_index: int) -> None:
         JOB_STORE.set_stage(job_id, STAGES[stage_index], overall_percent=self._overall(stage_index, 0.0))

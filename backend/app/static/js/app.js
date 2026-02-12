@@ -4,6 +4,7 @@ const state = {
   latestJobState: null,
   modelDownloads: {},
   modelDownloadPoller: null,
+  speakerFormFingerprint: null,
 };
 
 const qs = (selector) => document.querySelector(selector);
@@ -240,11 +241,35 @@ function updateProgressView(jobState) {
   qs("#logs").textContent = (jobState.logs || []).join("\n");
 }
 
+function speakerFormFingerprint(jobState) {
+  const speakerInfo = jobState.speaker_info;
+  if (!speakerInfo) {
+    return null;
+  }
+  const speakers = speakerInfo.speakers.map((speaker) => ({
+    speaker_id: speaker.speaker_id,
+    suggested_name: speaker.suggested_name || "",
+    snippets: (speaker.snippets || []).map((snippet) => snippet.snippet_path),
+  }));
+  return JSON.stringify({
+    job_id: jobState.job_id,
+    detected_speakers: speakerInfo.detected_speakers,
+    speakers,
+  });
+}
+
 function renderSpeakerForm(jobState) {
   const speakerInfo = jobState.speaker_info;
   if (!speakerInfo) {
     return;
   }
+
+  const existingNames = new Map(
+    qsa(".speaker-name").map((input) => [input.dataset.speakerId, input.value]),
+  );
+  const existingSaveProfile = new Map(
+    qsa(".speaker-save-profile").map((input) => [input.dataset.speakerId, input.checked]),
+  );
 
   qs("#speaker-count").textContent = `Detected speakers: ${speakerInfo.detected_speakers}`;
   const form = qs("#speaker-form");
@@ -259,7 +284,10 @@ function renderSpeakerForm(jobState) {
 
     const input = document.createElement("input");
     input.type = "text";
-    input.value = speaker.suggested_name || speaker.speaker_id;
+    input.value =
+      existingNames.get(speaker.speaker_id) ||
+      speaker.suggested_name ||
+      speaker.speaker_id;
     input.dataset.speakerId = speaker.speaker_id;
     input.className = "speaker-name";
 
@@ -270,6 +298,7 @@ function renderSpeakerForm(jobState) {
     toggle.type = "checkbox";
     toggle.dataset.speakerId = speaker.speaker_id;
     toggle.className = "speaker-save-profile";
+    toggle.checked = Boolean(existingSaveProfile.get(speaker.speaker_id));
     toggleWrap.append(toggle, "Save as voice profile");
 
     const snippets = document.createElement("div");
@@ -330,10 +359,16 @@ function openJobEventStream(jobId) {
     updateProgressView(jobState);
 
     if (jobState.status === "waiting_speaker_input") {
-      renderSpeakerForm(jobState);
+      const nextFingerprint = speakerFormFingerprint(jobState);
+      if (nextFingerprint !== state.speakerFormFingerprint) {
+        renderSpeakerForm(jobState);
+        state.speakerFormFingerprint = nextFingerprint;
+      }
       switchTab("speaker");
       return;
     }
+
+    state.speakerFormFingerprint = null;
 
     if (jobState.status === "completed") {
       await loadResult(jobId);

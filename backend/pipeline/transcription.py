@@ -12,29 +12,33 @@ class VoxtralTranscriber:
     def __init__(self, binary_path: str | None, model_path: str | None) -> None:
         self.binary_path = binary_path or ""
         self.model_path = model_path or ""
+        self._resolved_binary_path = self._resolve_binary_path(self.binary_path)
+        self._runtime_available = bool(
+            self._resolved_binary_path and self.model_path and Path(self.model_path).exists()
+        )
 
     def available(self) -> bool:
-        return bool(self._resolved_binary() and self.model_path and Path(self.model_path).exists())
+        return self._runtime_available
 
     def transcribe(self, segment_path: Path) -> str:
-        binary = self._resolved_binary()
-        if not binary or not self.model_path or not Path(self.model_path).exists():
+        if not self._runtime_available or not self._resolved_binary_path:
             return self._fallback_transcription(segment_path)
 
-        command = [binary, "-m", self.model_path, "-f", str(segment_path)]
+        command = [self._resolved_binary_path, "-m", self.model_path, "-f", str(segment_path)]
         process = subprocess.run(command, capture_output=True, text=True)
         if process.returncode != 0:
             return self._fallback_transcription(segment_path)
         text = process.stdout.strip()
         return text or self._fallback_transcription(segment_path)
 
-    def _resolved_binary(self) -> str | None:
-        if not self.binary_path:
+    @staticmethod
+    def _resolve_binary_path(binary_path: str) -> str | None:
+        if not binary_path:
             return None
-        as_path = Path(self.binary_path)
+        as_path = Path(binary_path)
         if as_path.exists():
             return str(as_path)
-        which_path = shutil.which(self.binary_path)
+        which_path = shutil.which(binary_path)
         if which_path:
             return which_path
         return None

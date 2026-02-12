@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from functools import lru_cache
 import os
 from pathlib import Path
 
@@ -108,15 +109,15 @@ def _diarize_with_pyannote(
     max_speakers: int,
     model_path: Path | None,
 ) -> tuple[DiarizationResult | None, str | None]:
+    pipeline_ref = _resolve_pyannote_pipeline_ref(model_path)
+    if not pipeline_ref:
+        return None, "pyannote_pipeline_not_configured"
+
     try:
         import torch
         from pyannote.audio import Pipeline
     except Exception as exc:
         return None, f"pyannote_import_error:{exc.__class__.__name__}"
-
-    pipeline_ref = _resolve_pyannote_pipeline_ref(model_path)
-    if not pipeline_ref:
-        return None, "pyannote_pipeline_not_configured"
 
     token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN") or None
     kwargs: dict[str, object] = {}
@@ -184,7 +185,6 @@ def _diarize_with_embeddings(
 ) -> tuple[DiarizationResult | None, str | None]:
     try:
         import torch
-        from pyannote.audio import Inference, Model
     except Exception as exc:
         return None, f"embedding_import_error:{exc.__class__.__name__}"
 
@@ -193,13 +193,8 @@ def _diarize_with_embeddings(
         resolved_model_ref = "pyannote/wespeaker-voxceleb-resnet34-LM"
 
     token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN") or None
-    kwargs: dict[str, object] = {}
-    if token:
-        kwargs["token"] = token
-
     try:
-        embedding_model = Model.from_pretrained(resolved_model_ref, **kwargs)
-        inference = Inference(embedding_model, window="whole")
+        inference = _load_embedding_inference(resolved_model_ref, token)
     except Exception as exc:
         return None, f"embedding_model_load_error:{exc.__class__.__name__}"
 
@@ -270,6 +265,18 @@ def _diarize_with_embeddings(
         ),
         None,
     )
+
+
+@lru_cache(maxsize=3)
+def _load_embedding_inference(model_ref: str, token: str | None):
+    from pyannote.audio import Inference, Model
+
+    kwargs: dict[str, object] = {}
+    if token:
+        kwargs["token"] = token
+
+    embedding_model = Model.from_pretrained(model_ref, **kwargs)
+    return Inference(embedding_model, window="whole")
 
 
 def _resolve_pyannote_pipeline_ref(model_path: Path | None) -> str | None:
@@ -400,17 +407,23 @@ def _estimate_speaker_count(features: np.ndarray, max_speakers: int) -> int:
     if len(features) <= 1:
         return 1
 
+    distances = np.linalg.norm(features[:, None, :] - features[None, :, :], axis=2)
     max_k = min(max_speakers, max(2, len(features)))
     best_k = 1
-    best_score = -1.0
+    best_adjusted_score = -1.0
     for k in range(2, max_k + 1):
         labels = _cluster(features, k)
-        score = _silhouette(features, labels)
-        if score > best_score:
-            best_score = score
+        raw_score = _silhouette(labels, distances)
+        _, cluster_sizes = np.unique(labels, return_counts=True)
+        singleton_ratio = float((cluster_sizes == 1).sum()) / max(1, len(features))
+
+        # Favor compact, stable clusterings and avoid over-fragmenting into many tiny clusters.
+        adjusted_score = raw_score - (0.015 * (k - 1)) - (0.35 * singleton_ratio)
+        if adjusted_score > best_adjusted_score:
+            best_adjusted_score = adjusted_score
             best_k = k
 
-    if best_score < 0.08:
+    if best_adjusted_score < 0.08:
         return min(2, len(features))
     return best_k
 
@@ -444,15 +457,15 @@ def _cluster(features: np.ndarray, k: int, iterations: int = 25) -> np.ndarray:
 
 
 
-def _silhouette(features: np.ndarray, labels: np.ndarray) -> float:
-    if len(set(labels.tolist())) <= 1:
+def _silhouette(labels: np.ndarray, distances: np.ndarray) -> float:
+    unique_labels = np.unique(labels)
+    if len(unique_labels) <= 1:
         return -1.0
 
-    distances = np.linalg.norm(features[:, None, :] - features[None, :, :], axis=2)
-    values = []
-    for idx in range(len(features)):
+    values: list[float] = []
+    for idx in range(len(labels)):
         same = labels == labels[idx]
-        other_labels = [label for label in set(labels.tolist()) if label != labels[idx]]
+        other_labels = [label for label in unique_labels if label != labels[idx]]
 
         a = float(distances[idx][same].mean()) if same.sum() > 1 else 0.0
         b = min(float(distances[idx][labels == label].mean()) for label in other_labels)

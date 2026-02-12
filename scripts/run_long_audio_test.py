@@ -13,12 +13,15 @@ from backend.pipeline.template_manager import TemplateManager
 
 
 def prepare_mock_models() -> None:
-    (SETTINGS.models_dir / "diarization").mkdir(parents=True, exist_ok=True)
-    (SETTINGS.models_dir / "voxtral").mkdir(parents=True, exist_ok=True)
-    (SETTINGS.models_dir / "formatter").mkdir(parents=True, exist_ok=True)
-    (SETTINGS.models_dir / "diarization" / "model.bin").write_bytes(b"mock")
-    (SETTINGS.models_dir / "voxtral" / "model.gguf").write_bytes(b"mock")
-    (SETTINGS.models_dir / "formatter" / "model.gguf").write_bytes(b"mock")
+    targets = [
+        (SETTINGS.models_dir / "diarization" / "model.bin", b"mock"),
+        (SETTINGS.models_dir / "voxtral" / "model.gguf", b"mock"),
+        (SETTINGS.models_dir / "formatter" / "model.gguf", b"mock"),
+    ]
+    for path, payload in targets:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.write_bytes(payload)
 
 
 def main() -> int:
