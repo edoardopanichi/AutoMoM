@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from backend.app.config import SETTINGS
-from backend.pipeline.formatter import Formatter
+from backend.pipeline.formatter import Formatter, _strip_runtime_logs
 from backend.pipeline.template_manager import TemplateManager
 
 
@@ -329,6 +329,51 @@ def test_formatter_treats_prefixed_stderr_markdown_as_valid_output(monkeypatch, 
     assert formatter.last_raw_output == stderr_output
     assert formatter.last_stdout == ""
     assert formatter.last_stderr == stderr_output
+
+
+def test_formatter_treats_prefixed_stderr_plaintext_as_valid_output(monkeypatch, tmp_path: Path) -> None:
+    model_path = tmp_path / "formatter.gguf"
+    model_path.write_text("model", encoding="utf-8")
+    stderr_output = (
+        "main: Minutes of Meeting\n"
+        "main: Agenda item 6.3 removed.\n"
+        "main: Decision: postpone development agreement.\n"
+    )
+
+    def fake_run(command, input, capture_output, text, timeout):
+        return SimpleNamespace(returncode=0, stdout="", stderr=stderr_output)
+
+    monkeypatch.setattr("backend.pipeline.formatter.subprocess.run", fake_run)
+
+    formatter = Formatter(command_template="llama-cli -m {model}", model_path=str(model_path))
+    rendered, _structured, _ = formatter.build_structured_summary(
+        transcript=[{"speaker_name": "Alice", "text": "We postpone item 6.3."}],
+        speakers=["Alice"],
+        title="Sync",
+        template_id="default",
+    )
+
+    assert rendered == stderr_output
+    assert formatter.last_mode == "model_plaintext"
+    assert formatter.last_raw_output == stderr_output
+
+
+def test_strip_runtime_logs_removes_main_runtime_lines_but_keeps_model_content() -> None:
+    stderr_output = (
+        "main: build = 8006\n"
+        "main: available commands:\n"
+        "main: /exit or Ctrl+C\n"
+        "main: Minutes of Meeting\n"
+        "main: Agenda item 6.3 removed.\n"
+    )
+
+    cleaned = _strip_runtime_logs(stderr_output)
+
+    assert "build = 8006" not in cleaned
+    assert "available commands" not in cleaned
+    assert "/exit or Ctrl+C" not in cleaned
+    assert "Minutes of Meeting" in cleaned
+    assert "Agenda item 6.3 removed." in cleaned
 
 
 def test_formatter_preserves_output_even_when_process_returncode_nonzero(monkeypatch, tmp_path: Path) -> None:

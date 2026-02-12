@@ -35,6 +35,29 @@ RUNTIME_LOG_PREFIXES = (
     "error: unknown argument",
     "error: invalid argument",
 )
+MAIN_RUNTIME_REMAINDER_PREFIXES = (
+    "build =",
+    "build:",
+    "seed =",
+    "seed:",
+    "llama backend init",
+    "load the model and apply lora adapter",
+    "n_ctx =",
+    "n_batch =",
+    "n_ubatch =",
+    "n_predict =",
+    "n_keep =",
+    "n_parallel =",
+    "n_examples =",
+    "interactive mode",
+    "sampling",
+    "available commands:",
+    "/exit",
+    "/regen",
+    "/clear",
+    "/read",
+    ">",
+)
 
 
 class Formatter:
@@ -375,9 +398,16 @@ def _is_runtime_log_line(stripped_line: str) -> bool:
     lower = stripped_line.lower()
     if lower.startswith("main:"):
         remainder = stripped_line.split(":", 1)[1].strip()
+        remainder_lower = remainder.lower()
+        if not remainder:
+            return True
+        if any(remainder_lower.startswith(prefix) for prefix in MAIN_RUNTIME_REMAINDER_PREFIXES):
+            return True
+        if any(remainder_lower.startswith(prefix) for prefix in RUNTIME_LOG_PREFIXES):
+            return True
         if _looks_like_structured_content(remainder):
             return False
-        return True
+        return False
 
     if any(lower.startswith(prefix) for prefix in RUNTIME_LOG_PREFIXES):
         return True
