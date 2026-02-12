@@ -338,7 +338,11 @@ async function submitSpeakerMapping() {
 async function loadResult(jobId) {
   qs("#download-link").href = `/api/jobs/${jobId}/download/mom`;
   try {
-    const response = await fetch(`/api/jobs/${jobId}/download/mom`);
+    let response = await fetch(`/api/jobs/${jobId}/mom`, { cache: "no-store" });
+    if (!response.ok) {
+      response = await fetch(`/api/jobs/${jobId}/download/mom`, { cache: "no-store" });
+    }
+    if (!response.ok) throw new Error(`Unable to fetch markdown preview (${response.status})`);
     const text = await response.text();
     qs("#mom-preview").textContent = text;
   } catch (error) {

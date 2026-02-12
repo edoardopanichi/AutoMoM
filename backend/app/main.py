@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.app.config import SETTINGS, ensure_directories
@@ -260,8 +260,7 @@ def get_snippet(job_id: str, snippet_name: str) -> FileResponse:
     return FileResponse(path, media_type="audio/wav", filename=path.name)
 
 
-@app.get("/api/jobs/{job_id}/download/mom")
-def download_mom(job_id: str) -> FileResponse:
+def _resolve_mom_export_path(job_id: str) -> Path:
     try:
         state = JOB_STORE.get_state(job_id)
     except KeyError as exc:
@@ -274,7 +273,19 @@ def download_mom(job_id: str) -> FileResponse:
     path = Path(export_path)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Export file missing")
+    return path
 
+
+@app.get("/api/jobs/{job_id}/mom")
+def get_mom(job_id: str) -> PlainTextResponse:
+    path = _resolve_mom_export_path(job_id)
+    markdown = path.read_text(encoding="utf-8")
+    return PlainTextResponse(markdown, media_type="text/markdown")
+
+
+@app.get("/api/jobs/{job_id}/download/mom")
+def download_mom(job_id: str) -> FileResponse:
+    path = _resolve_mom_export_path(job_id)
     return FileResponse(path, media_type="text/markdown", filename=f"{job_id}_mom.md")
 
 

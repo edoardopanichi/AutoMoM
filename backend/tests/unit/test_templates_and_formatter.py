@@ -162,3 +162,157 @@ def test_formatter_retries_without_gpu_on_rc0_stderr_error(monkeypatch, tmp_path
 
     assert result == {"executive_summary": "ok"}
     assert any("-ngl" in call for call in calls)
+
+
+def test_formatter_ignores_runtime_warnings_when_output_is_empty(monkeypatch, tmp_path: Path) -> None:
+    model_path = tmp_path / "formatter.gguf"
+    model_path.write_text("model", encoding="utf-8")
+
+    def fake_run(command, input, capture_output, text, timeout):
+        return SimpleNamespace(
+            returncode=0,
+            stdout="",
+            stderr=(
+                "warning: no usable GPU found, --gpu-layers option will be ignored\n"
+                "llama_memory_breakdown_print: | memory breakdown [MiB] |\n"
+            ),
+        )
+
+    monkeypatch.setattr("backend.pipeline.formatter.subprocess.run", fake_run)
+
+    formatter = Formatter(command_template="llama-cli -m {model}", model_path=str(model_path))
+    result = formatter.run_model("hello")
+
+    assert result is None
+    assert formatter.last_mode == "heuristic_empty_output"
+
+
+def test_formatter_preserves_model_markdown_output(monkeypatch, tmp_path: Path) -> None:
+    model_path = tmp_path / "formatter.gguf"
+    model_path.write_text("model", encoding="utf-8")
+    markdown = (
+        "# Meeting Info\n"
+        "## Executive Summary\n"
+        "- Team aligned.\n"
+        "## Decisions\n"
+        "- Ship on Friday.\n"
+    )
+
+    def fake_run(command, input, capture_output, text, timeout):
+        return SimpleNamespace(
+            returncode=0,
+            stdout=markdown,
+            stderr="warning: no usable GPU found, --gpu-layers option will be ignored\n",
+        )
+
+    monkeypatch.setattr("backend.pipeline.formatter.subprocess.run", fake_run)
+
+    formatter = Formatter(command_template="llama-cli -m {model}", model_path=str(model_path))
+    rendered, structured, _ = formatter.build_structured_summary(
+        transcript=[{"speaker_name": "Alice", "text": "We decided to ship on Friday."}],
+        speakers=["Alice"],
+        title="Sync",
+        template_id="default",
+    )
+
+    assert formatter.last_mode == "model_markdown"
+    assert rendered == markdown
+    assert "executive_summary" in structured
+
+
+def test_formatter_preserves_model_plaintext_output(monkeypatch, tmp_path: Path) -> None:
+    model_path = tmp_path / "formatter.gguf"
+    model_path.write_text("model", encoding="utf-8")
+    plaintext = (
+        "Meeting Info:\n"
+        "Agenda:\n"
+        "- Budget review\n"
+        "Decisions:\n"
+        "- Approve hiring plan\n"
+    )
+
+    def fake_run(command, input, capture_output, text, timeout):
+        return SimpleNamespace(returncode=0, stdout=plaintext, stderr="")
+
+    monkeypatch.setattr("backend.pipeline.formatter.subprocess.run", fake_run)
+
+    formatter = Formatter(command_template="llama-cli -m {model}", model_path=str(model_path))
+    rendered, structured, _ = formatter.build_structured_summary(
+        transcript=[{"speaker_name": "Alice", "text": "We approve the hiring plan."}],
+        speakers=["Alice"],
+        title="Sync",
+        template_id="default",
+    )
+
+    assert formatter.last_mode == "model_plaintext"
+    assert rendered == plaintext
+    assert "executive_summary" in structured
+
+
+def test_formatter_preserves_raw_stdout_even_with_runtime_prefix(monkeypatch, tmp_path: Path) -> None:
+    model_path = tmp_path / "formatter.gguf"
+    model_path.write_text("model", encoding="utf-8")
+    raw_output = "main: processing\rAgenda:\r- Budget review\rDecisions:\r- Approve hiring plan\r"
+
+    def fake_run(command, input, capture_output, text, timeout):
+        return SimpleNamespace(returncode=0, stdout=raw_output, stderr="")
+
+    monkeypatch.setattr("backend.pipeline.formatter.subprocess.run", fake_run)
+
+    formatter = Formatter(command_template="llama-cli -m {model}", model_path=str(model_path))
+    rendered, _structured, _ = formatter.build_structured_summary(
+        transcript=[{"speaker_name": "Alice", "text": "We approve the hiring plan."}],
+        speakers=["Alice"],
+        title="Sync",
+        template_id="default",
+    )
+
+    assert rendered == raw_output
+
+
+def test_formatter_passthrough_even_for_json_output(monkeypatch, tmp_path: Path) -> None:
+    model_path = tmp_path / "formatter.gguf"
+    model_path.write_text("model", encoding="utf-8")
+    raw_json = '{"title":"Team Sync","agenda":["Budget review"],"decisions":["Approve hiring plan"]}'
+
+    def fake_run(command, input, capture_output, text, timeout):
+        return SimpleNamespace(returncode=0, stdout=raw_json, stderr="")
+
+    monkeypatch.setattr("backend.pipeline.formatter.subprocess.run", fake_run)
+
+    formatter = Formatter(command_template="llama-cli -m {model}", model_path=str(model_path))
+    rendered, _structured, _ = formatter.build_structured_summary(
+        transcript=[{"speaker_name": "Alice", "text": "We approve the hiring plan."}],
+        speakers=["Alice"],
+        title="Sync",
+        template_id="default",
+    )
+
+    assert rendered == raw_json
+
+
+def test_formatter_uses_markdown_from_stderr_when_stdout_empty(monkeypatch, tmp_path: Path) -> None:
+    model_path = tmp_path / "formatter.gguf"
+    model_path.write_text("model", encoding="utf-8")
+    stderr_output = (
+        "# Minutes of Meeting\n"
+        "## Agenda\n"
+        "- Remove item 6.3\n"
+        "## Decisions\n"
+        "- Postpone development agreement\n"
+    )
+
+    def fake_run(command, input, capture_output, text, timeout):
+        return SimpleNamespace(returncode=0, stdout="", stderr=stderr_output)
+
+    monkeypatch.setattr("backend.pipeline.formatter.subprocess.run", fake_run)
+
+    formatter = Formatter(command_template="llama-cli -m {model}", model_path=str(model_path))
+    rendered, _structured, _ = formatter.build_structured_summary(
+        transcript=[{"speaker_name": "Alice", "text": "We postpone item 6.3."}],
+        speakers=["Alice"],
+        title="Sync",
+        template_id="default",
+    )
+
+    assert rendered == stderr_output

@@ -19,6 +19,21 @@ LLAMA_FLAGS = ("--single-turn",)
 LLAMA_GPU_FLAG_TOKENS = ("-ngl", "--gpu-layers", "--n-gpu-layers")
 LLAMA_BINARY_PATTERN = re.compile(r"(^|[\s;|&()])(?P<cmd>(?:[^\s;|&()]+/)?llama-cli)(?=$|[\s;|&()])")
 SHELL_WRAPPERS = {"bash", "sh", "zsh"}
+ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+RUNTIME_LOG_PREFIXES = (
+    "warning: no usable gpu found",
+    "warning: one possible reason is that llama.cpp was compiled without gpu support",
+    "warning: consult docs/build.md for compilation instructions",
+    "llama_",
+    "ggml_",
+    "main:",
+    "build:",
+    "load_tensors:",
+    "model_loader:",
+    "common_init_from_params:",
+    "system_info:",
+    "print_info:",
+)
 
 
 class Formatter:
@@ -37,14 +52,17 @@ class Formatter:
         self._gpu_layers = max(0, int(gpu_layers))
         self._gpu_requested = should_enable_native_gpu(compute_device, self._cuda_device_id)
         self._gpu_retry_disabled = False
+        self.last_raw_output: str = ""
         self.last_mode: str = "heuristic"
 
     def run_model(self, prompt: str) -> dict[str, object] | None:
         if not self.command_template:
+            self.last_raw_output = ""
             self.last_mode = "heuristic_no_command"
             return None
 
         if not self.model_path or not Path(self.model_path).exists():
+            self.last_raw_output = ""
             self.last_mode = "heuristic_missing_model_path"
             return None
 
@@ -82,25 +100,34 @@ class Formatter:
                     process = retry_process
                     invocation_failed = False
         except subprocess.TimeoutExpired:
+            self.last_raw_output = ""
             self.last_mode = "heuristic_command_timeout"
             return None
         except (OSError, ValueError):
+            self.last_raw_output = ""
             self.last_mode = "heuristic_command_error"
             return None
 
         if invocation_failed:
+            self.last_raw_output = ""
             self.last_mode = "heuristic_command_nonzero"
             return None
 
-        output = process.stdout.strip() or process.stderr.strip()
+        output = _extract_model_text(process.stdout, process.stderr)
         if not output:
+            self.last_raw_output = ""
             self.last_mode = "heuristic_empty_output"
             return None
+        self.last_raw_output = output
 
         parsed = self._parse_json_output(output)
         if parsed is not None:
             self.last_mode = "model_json"
             return parsed
+
+        if _looks_like_markdown_document(output):
+            self.last_mode = "model_markdown"
+            return {"_raw_markdown_text": output}
 
         # Accept plain-text model output and inject it into the structured fallback.
         self.last_mode = "model_plaintext"
@@ -115,15 +142,12 @@ class Formatter:
     ) -> tuple[str, dict[str, object], str]:
         prompt = TEMPLATE_MANAGER.build_formatter_prompt(template_id, transcript, speakers, title)
         model_output = self.run_model(prompt)
+        if model_output is not None and self.last_raw_output:
+            markdown = self.last_raw_output
+            structured = self._heuristic_structuring(transcript, speakers, title)
+            return markdown, structured, prompt
         if model_output is None:
             model_output = self._heuristic_structuring(transcript, speakers, title)
-        elif "_raw_model_text" in model_output:
-            model_output = self._merge_raw_text_with_template_structure(
-                transcript=transcript,
-                speakers=speakers,
-                title=title,
-                raw_text=str(model_output["_raw_model_text"]),
-            )
 
         markdown = TEMPLATE_MANAGER.render(template_id, model_output)
         return markdown, model_output, prompt
@@ -148,22 +172,6 @@ class Formatter:
             except json.JSONDecodeError:
                 return None
         return None
-
-    def _merge_raw_text_with_template_structure(
-        self,
-        transcript: list[dict[str, object]],
-        speakers: list[str],
-        title: str,
-        raw_text: str,
-    ) -> dict[str, object]:
-        structured = self._heuristic_structuring(transcript, speakers, title)
-        cleaned = raw_text.strip()
-        if cleaned:
-            structured["executive_summary"] = cleaned[:2500]
-            lines = [line.strip("- ").strip() for line in cleaned.splitlines() if line.strip()]
-            if lines:
-                structured["discussion_summary"] = lines[:8]
-        return structured
 
     def _heuristic_structuring(
         self,
@@ -315,3 +323,50 @@ def _invocation_failed(process: subprocess.CompletedProcess[str]) -> bool:
         return True
 
     return False
+
+
+def _extract_model_text(stdout: str, stderr: str) -> str:
+    raw_stdout = stdout or ""
+    if raw_stdout.strip():
+        return raw_stdout
+    raw_stderr = stderr or ""
+    cleaned_stderr = _strip_runtime_logs(raw_stderr)
+    if cleaned_stderr:
+        if raw_stderr.strip() == cleaned_stderr:
+            return raw_stderr
+        return cleaned_stderr
+
+    if _looks_like_markdown_document(raw_stderr):
+        return raw_stderr
+    return ""
+
+
+def _strip_runtime_logs(text: str) -> str:
+    if not text:
+        return ""
+
+    normalized = ANSI_ESCAPE_RE.sub("", text).replace("\r", "\n")
+    kept_lines: list[str] = []
+    for line in normalized.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        lower = stripped.lower()
+        if any(lower.startswith(prefix) for prefix in RUNTIME_LOG_PREFIXES):
+            continue
+        if lower.startswith("| memory breakdown"):
+            continue
+        if lower.startswith("|   - host"):
+            continue
+        if lower.startswith("|   - cpu_repack"):
+            continue
+        kept_lines.append(stripped)
+
+    return "\n".join(kept_lines).strip()
+
+
+def _looks_like_markdown_document(text: str) -> bool:
+    if not text:
+        return False
+    heading_count = len(re.findall(r"(?m)^##?\s+\S+", text))
+    return heading_count >= 2

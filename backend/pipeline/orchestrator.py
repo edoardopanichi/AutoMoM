@@ -274,6 +274,9 @@ class PipelineOrchestrator:
                 template_id=runtime.template_id,
             )
             JOB_STORE.append_log(job_id, f"Formatter mode: {formatter.last_mode}")
+            if formatter.last_raw_output:
+                (job_dir / "formatter_raw_output.txt").write_text(formatter.last_raw_output, encoding="utf-8")
+                JOB_STORE.set_artifact(job_id, "formatter_raw_output", job_dir / "formatter_raw_output.txt")
             (job_dir / "mom.md").write_text(markdown, encoding="utf-8")
             write_json(job_dir / "mom_structured.json", structured)
             (job_dir / "formatter_prompt.txt").write_text(prompt, encoding="utf-8")
