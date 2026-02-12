@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AutoMoM</title>
+    <link rel="stylesheet" href="/static/css/styles.css" />
+  </head>
+  <body>
+    <div class="bg-shape bg-shape-a"></div>
+    <div class="bg-shape bg-shape-b"></div>
+
+    <main class="layout">
+      <header class="hero">
+        <h1>AutoMoM</h1>
+        <p>Local Automatic Minutes of Meeting</p>
+      </header>
+
+      <nav class="tabs">
+        <button class="tab active" data-tab="new-job">New Job</button>
+        <button class="tab" data-tab="progress">Progress</button>
+        <button class="tab" data-tab="speaker">Speaker Naming</button>
+        <button class="tab" data-tab="result">Result</button>
+        <button class="tab" data-tab="settings">Settings</button>
+      </nav>
+
+      <section id="new-job" class="panel active">
+        <h2>New Job</h2>
+        <form id="job-form" class="stack">
+          <label>
+            Meeting audio (WAV/MP3/M4A)
+            <input type="file" id="audio-file" accept=".wav,.mp3,.m4a" required />
+          </label>
+          <label>
+            Template
+            <select id="template-select"></select>
+          </label>
+          <label>
+            Language mode
+            <select id="language-mode">
+              <option value="auto">Auto detect</option>
+              <option value="en">English</option>
+            </select>
+          </label>
+          <label>
+            Meeting title
+            <input type="text" id="meeting-title" placeholder="Optional" />
+          </label>
+          <button type="submit">Start Job</button>
+        </form>
+        <div id="start-error" class="alert"></div>
+      </section>
+
+      <section id="progress" class="panel">
+        <h2>Progress</h2>
+        <div class="kpi-grid">
+          <div class="kpi"><span>Overall</span><strong id="overall-value">0%</strong></div>
+          <div class="kpi"><span>Stage</span><strong id="stage-value">-</strong></div>
+          <div class="kpi"><span>Stage %</span><strong id="stage-percent">0%</strong></div>
+          <div class="kpi"><span>Segments</span><strong id="segment-progress">-</strong></div>
+        </div>
+        <div class="progress-wrap">
+          <div id="overall-bar" class="progress-bar"></div>
+        </div>
+        <div class="progress-wrap">
+          <div id="stage-bar" class="progress-bar stage"></div>
+        </div>
+        <button id="cancel-job">Cancel Job</button>
+        <pre id="logs" class="logs"></pre>
+      </section>
+
+      <section id="speaker" class="panel">
+        <h2>Speaker Naming</h2>
+        <p id="speaker-count"></p>
+        <form id="speaker-form" class="stack"></form>
+        <button id="submit-speakers">Submit Speaker Mapping</button>
+      </section>
+
+      <section id="result" class="panel">
+        <h2>Result</h2>
+        <a id="download-link" href="#">Download Markdown</a>
+        <pre id="mom-preview" class="preview"></pre>
+      </section>
+
+      <section id="settings" class="panel">
+        <h2>Settings</h2>
+        <h3>Model Manager</h3>
+        <div id="models"></div>
+        <h3>Templates</h3>
+        <div id="templates"></div>
+        <h3>Voice Profiles</h3>
+        <div id="profiles"></div>
+      </section>
+    </main>
+
+    <script src="/static/js/app.js"></script>
+  </body>
+</html>

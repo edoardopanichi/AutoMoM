@@ -1,0 +1,246 @@
+:root {
+  --bg: #f2ede2;
+  --surface: #fffaf2;
+  --surface-strong: #fceec9;
+  --ink: #1f2421;
+  --accent: #0b6e4f;
+  --accent-2: #e36414;
+  --danger: #b00020;
+  --muted: #6a6f66;
+  --border: #d7c7aa;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "IBM Plex Sans", "Segoe UI", "Tahoma", sans-serif;
+  background: radial-gradient(circle at 12% 8%, #f4e2bc 0, #f2ede2 42%, #e9dfcc 100%);
+  color: var(--ink);
+  min-height: 100vh;
+}
+
+.bg-shape {
+  position: fixed;
+  z-index: -1;
+  filter: blur(36px);
+  opacity: 0.45;
+}
+
+.bg-shape-a {
+  width: 360px;
+  height: 360px;
+  background: #5fb49c;
+  border-radius: 44% 56% 42% 58%;
+  left: -120px;
+  top: -100px;
+}
+
+.bg-shape-b {
+  width: 440px;
+  height: 440px;
+  background: #f9ad6a;
+  border-radius: 52% 48% 68% 32%;
+  right: -180px;
+  bottom: -180px;
+}
+
+.layout {
+  width: min(960px, 95vw);
+  margin: 1.5rem auto 3rem;
+}
+
+.hero {
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: 18px;
+  padding: 1rem 1.2rem;
+  box-shadow: 0 10px 18px rgba(31, 36, 33, 0.08);
+}
+
+.hero h1 {
+  margin: 0;
+  font-family: "Alegreya Sans SC", "Trebuchet MS", sans-serif;
+  letter-spacing: 0.04em;
+}
+
+.hero p {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+}
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+
+.tab,
+button {
+  cursor: pointer;
+  border: 2px solid var(--border);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: 10px;
+  padding: 0.55rem 0.9rem;
+  font-weight: 700;
+  transition: transform 160ms ease, background 160ms ease;
+}
+
+.tab.active,
+button:hover {
+  background: var(--surface-strong);
+  transform: translateY(-1px);
+}
+
+.panel {
+  display: none;
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: 16px;
+  padding: 1rem;
+}
+
+.panel.active {
+  display: block;
+  animation: rise 240ms ease;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.stack {
+  display: grid;
+  gap: 0.7rem;
+}
+
+label {
+  display: grid;
+  gap: 0.25rem;
+  font-weight: 600;
+}
+
+input,
+select,
+textarea {
+  padding: 0.55rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fffcf7;
+}
+
+.kpi-grid {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.kpi {
+  background: #fff8e7;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.55rem;
+}
+
+.kpi span {
+  display: block;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.progress-wrap {
+  background: #efe4cc;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+  height: 14px;
+  margin-top: 0.7rem;
+}
+
+.progress-bar {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, var(--accent), #3ea680);
+  transition: width 220ms ease;
+}
+
+.progress-bar.stage {
+  background: linear-gradient(90deg, var(--accent-2), #ef9f57);
+}
+
+.logs,
+.preview {
+  margin-top: 0.8rem;
+  background: #f6efde;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 0.7rem;
+  min-height: 200px;
+  white-space: pre-wrap;
+}
+
+.alert {
+  margin-top: 0.8rem;
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.model-card,
+.template-card,
+.profile-card,
+.speaker-card {
+  background: #fff8e7;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.7rem;
+  margin-bottom: 0.5rem;
+}
+
+.model-download-status {
+  margin-top: 0.45rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.download-progress-wrap {
+  margin-top: 0.35rem;
+  background: #efe4cc;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+  height: 10px;
+}
+
+.download-progress-bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent-2), #ef9f57);
+  transition: width 200ms ease;
+}
+
+.speaker-card h4 {
+  margin: 0 0 0.5rem;
+}
+
+@media (max-width: 680px) {
+  .layout {
+    width: 96vw;
+    margin-top: 0.7rem;
+  }
+
+  .hero,
+  .panel {
+    padding: 0.85rem;
+  }
+}

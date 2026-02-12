@@ -9,3 +9,17 @@
 
 # Audio testing directory
 audio_trace_for_testing/
+
+# Python / tooling
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.env
+
+# Local runtime artifacts
+data/models/
+data/jobs/
+data/profiles/
+data/uploads/

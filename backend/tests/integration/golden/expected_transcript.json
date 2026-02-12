@@ -1,0 +1,22 @@
+{
+  "speakers": [
+    "Alice",
+    "Bob"
+  ],
+  "segments": [
+    {
+      "speaker_id": "SPEAKER_0",
+      "speaker_name": "Alice",
+      "start_s": 0.0,
+      "end_s": 5.0,
+      "text": "We decided to prioritize customer onboarding."
+    },
+    {
+      "speaker_id": "SPEAKER_1",
+      "speaker_name": "Bob",
+      "start_s": 5.2,
+      "end_s": 10.0,
+      "text": "Alice will share the rollout plan by next week."
+    }
+  ]
+}
