@@ -1,23 +1,30 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
+import select
 import subprocess
+import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+import pty
 
 from backend.app.config import SETTINGS
 from backend.pipeline.compute import should_enable_native_gpu
 from backend.pipeline.template_manager import TEMPLATE_MANAGER
 
 
-ACTION_OWNER_PATTERN = re.compile(r"(?P<owner>[A-Z][a-z]+) will (?P<task>[^.]+)", re.IGNORECASE)
-DATE_PATTERN = re.compile(r"\b(\d{4}-\d{2}-\d{2}|tomorrow|next week|monday|tuesday|wednesday|thursday|friday)\b", re.IGNORECASE)
+ACTION_OWNER_PATTERN = re.compile(
+    r"(?P<owner>[A-Z][a-z]+) will (?P<task>[^.]+)", re.IGNORECASE)
+DATE_PATTERN = re.compile(
+    r"\b(\d{4}-\d{2}-\d{2}|tomorrow|next week|monday|tuesday|wednesday|thursday|friday)\b", re.IGNORECASE)
 LLAMA_FLAGS = ("--single-turn",)
 LLAMA_GPU_FLAG_TOKENS = ("-ngl", "--gpu-layers", "--n-gpu-layers")
-LLAMA_BINARY_PATTERN = re.compile(r"(^|[\s;|&()])(?P<cmd>(?:[^\s;|&()]+/)?llama-cli)(?=$|[\s;|&()])")
+LLAMA_BINARY_PATTERN = re.compile(
+    r"(^|[\s;|&()])(?P<cmd>(?:[^\s;|&()]+/)?llama-cli)(?=$|[\s;|&()])")
 SHELL_WRAPPERS = {"bash", "sh", "zsh"}
 ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 RUNTIME_LOG_PREFIXES = (
@@ -74,7 +81,8 @@ class Formatter:
         self.model_path = model_path or ""
         self._cuda_device_id = max(0, int(cuda_device_id))
         self._gpu_layers = max(0, int(gpu_layers))
-        self._gpu_requested = should_enable_native_gpu(compute_device, self._cuda_device_id)
+        self._gpu_requested = should_enable_native_gpu(
+            compute_device, self._cuda_device_id)
         self._gpu_retry_disabled = False
         self.last_raw_output: str = ""
         self.last_stdout: str = ""
@@ -111,8 +119,22 @@ class Formatter:
                 text=True,
                 timeout=SETTINGS.formatter_timeout_s,
             )
-            output = _extract_model_text(process.stdout, process.stderr)
+            output = _extract_model_text(
+                process.stdout, process.stderr, prompt=prompt)
             invocation_failed = _invocation_failed(process)
+            if not output and not invocation_failed and _is_shell_wrapper(args):
+                pty_process = _run_with_pty_capture(
+                    args,
+                    prompt=prompt,
+                    timeout_s=SETTINGS.formatter_timeout_s,
+                )
+                if pty_process is not None:
+                    pty_output = _extract_model_text(
+                        pty_process.stdout, "", prompt=prompt)
+                    if pty_output:
+                        process = pty_process
+                        output = pty_output
+                        invocation_failed = False
             if use_gpu and _should_retry_without_gpu(process):
                 retry_args = _ensure_non_interactive_llama_command(
                     shlex.split(command),
@@ -126,7 +148,8 @@ class Formatter:
                     text=True,
                     timeout=SETTINGS.formatter_timeout_s,
                 )
-                retry_output = _extract_model_text(retry_process.stdout, retry_process.stderr)
+                retry_output = _extract_model_text(
+                    retry_process.stdout, retry_process.stderr, prompt=prompt)
                 if retry_output:
                     self._gpu_retry_disabled = True
                     process = retry_process
@@ -182,11 +205,28 @@ class Formatter:
         title: str,
         template_id: str,
     ) -> tuple[str, dict[str, object], str]:
-        prompt = TEMPLATE_MANAGER.build_formatter_prompt(template_id, transcript, speakers, title)
+        prompt = TEMPLATE_MANAGER.build_formatter_prompt(
+            template_id, transcript, speakers, title)
         self.run_model(prompt)
         structured = self._heuristic_structuring(transcript, speakers, title)
         markdown = self.last_raw_output if self.last_raw_output else ""
         return markdown, structured, prompt
+
+    def write_model_output_to_mom(
+        self,
+        transcript: list[dict[str, object]],
+        speakers: list[str],
+        title: str,
+        template_id: str,
+        output_path: Path,
+    ) -> tuple[dict[str, object], str]:
+        prompt = TEMPLATE_MANAGER.build_formatter_prompt(
+            template_id, transcript, speakers, title)
+        self.run_model(prompt)
+        output_path.write_text(
+            self.last_raw_output if self.last_raw_output else "", encoding="utf-8")
+        structured = self._heuristic_structuring(transcript, speakers, title)
+        return structured, prompt
 
     @staticmethod
     def _parse_json_output(output: str) -> dict[str, object] | None:
@@ -199,7 +239,8 @@ class Formatter:
             pass
 
         # Try extracting JSON from fenced code blocks or mixed output.
-        fenced_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", output, flags=re.DOTALL | re.IGNORECASE)
+        fenced_match = re.search(
+            r"```(?:json)?\s*(\{.*?\})\s*```", output, flags=re.DOTALL | re.IGNORECASE)
         if fenced_match:
             try:
                 parsed = json.loads(fenced_match.group(1))
@@ -215,12 +256,16 @@ class Formatter:
         speakers: list[str],
         title: str,
     ) -> dict[str, object]:
-        statements = [str(seg["text"]).strip() for seg in transcript if str(seg["text"]).strip()]
-        statements = [item for item in statements if not item.startswith("[Offline fallback transcript")]
+        statements = [str(seg["text"]).strip()
+                      for seg in transcript if str(seg["text"]).strip()]
+        statements = [item for item in statements if not item.startswith(
+            "[Offline fallback transcript")]
 
         discussion_summary = _discussion_bullets(transcript)
-        decisions = _keyword_extract(statements, ["decide", "approved", "agreed", "resolution"])
-        open_items = _keyword_extract(statements, ["risk", "issue", "question", "blocker"])[:8]
+        decisions = _keyword_extract(
+            statements, ["decide", "approved", "agreed", "resolution"])
+        open_items = _keyword_extract(
+            statements, ["risk", "issue", "question", "blocker"])[:8]
         actions = _extract_actions(statements)
 
         transcript_md = "\n".join(
@@ -239,7 +284,6 @@ class Formatter:
             "open_questions_risks": open_items,
             "transcript_markdown": transcript_md,
         }
-
 
 
 def _discussion_bullets(transcript: list[dict[str, object]], top_n: int = 8) -> list[str]:
@@ -265,7 +309,6 @@ def _discussion_bullets(transcript: list[dict[str, object]], top_n: int = 8) -> 
     return bullets
 
 
-
 def _keyword_extract(statements: list[str], keywords: list[str]) -> list[str]:
     found: list[str] = []
     for text in statements:
@@ -273,7 +316,6 @@ def _keyword_extract(statements: list[str], keywords: list[str]) -> list[str]:
         if any(keyword in lower for keyword in keywords):
             found.append(text)
     return found[:10]
-
 
 
 def _extract_actions(statements: list[str]) -> list[dict[str, str]]:
@@ -319,14 +361,16 @@ def _ensure_non_interactive_llama_command(
         def _inject(match: re.Match[str]) -> str:
             return f"{match.group(1)}{match.group('cmd')} {flags}"
 
-        updated_script, replacements = LLAMA_BINARY_PATTERN.subn(_inject, script, count=1)
+        updated_script, replacements = LLAMA_BINARY_PATTERN.subn(
+            _inject, script, count=1)
         if replacements == 0:
             return args
         updated = args.copy()
         updated[2] = updated_script
         return updated
 
-    llama_index = next((idx for idx, token in enumerate(args) if Path(token).name == "llama-cli"), None)
+    llama_index = next((idx for idx, token in enumerate(
+        args) if Path(token).name == "llama-cli"), None)
     if llama_index is None:
         return args
 
@@ -337,7 +381,7 @@ def _ensure_non_interactive_llama_command(
         missing_flags.extend(["-ngl", str(gpu_layers)])
     if not missing_flags:
         return args
-    return args[: llama_index + 1] + missing_flags + args[llama_index + 1 :]
+    return args[: llama_index + 1] + missing_flags + args[llama_index + 1:]
 
 
 def _is_shell_wrapper(args: list[str]) -> bool:
@@ -364,13 +408,20 @@ def _should_retry_without_gpu(process: subprocess.CompletedProcess[str]) -> bool
     return any(token in stderr for token in LLAMA_GPU_FLAG_TOKENS)
 
 
-def _extract_model_text(stdout: str, stderr: str) -> str:
+def _extract_model_text(stdout: str, stderr: str, *, prompt: str = "") -> str:
     raw_stdout = stdout or ""
     if raw_stdout != "":
-        return raw_stdout
+        model_stdout = _extract_llama_generated_text(raw_stdout, prompt=prompt)
+        cleaned_stdout = _strip_runtime_logs(model_stdout)
+        if cleaned_stdout:
+            return cleaned_stdout
+        if _contains_only_runtime_logs(model_stdout):
+            return ""
+        return ""
     raw_stderr = stderr or ""
     if raw_stderr != "":
-        return _strip_runtime_logs(raw_stderr)
+        cleaned_stderr = _strip_runtime_logs(raw_stderr)
+        return cleaned_stderr
     return ""
 
 
@@ -407,15 +458,11 @@ def _is_runtime_log_line(stripped_line: str) -> bool:
             return True
         if _looks_like_structured_content(remainder):
             return False
-        return False
+        return True
 
     if any(lower.startswith(prefix) for prefix in RUNTIME_LOG_PREFIXES):
         return True
-    if lower.startswith("| memory breakdown"):
-        return True
-    if lower.startswith("|   - host"):
-        return True
-    if lower.startswith("|   - cpu_repack"):
+    if _is_memory_breakdown_table_line(lower):
         return True
     return False
 
@@ -431,3 +478,179 @@ def _looks_like_markdown_document(text: str) -> bool:
         return False
     heading_count = len(re.findall(r"(?m)^##?\s+\S+", text))
     return heading_count >= 2
+
+
+def _extract_llama_generated_text(text: str, *, prompt: str = "") -> str:
+    if not text:
+        return ""
+
+    normalized = _normalize_terminal_output(text)
+    model_text = normalized
+
+    prompt_marker = "\n> "
+    if prompt:
+        prompt_idx = model_text.rfind(prompt)
+        if prompt_idx >= 0:
+            model_text = model_text[prompt_idx + len(prompt):]
+            model_text = _drop_leading_spinner_lines(model_text)
+        else:
+            marker_idx = model_text.rfind(prompt_marker)
+            if marker_idx >= 0:
+                model_text = model_text[marker_idx + len(prompt_marker):]
+                truncated_idx = model_text.find("... (truncated)")
+                if truncated_idx >= 0:
+                    truncated_end = model_text.find("\n", truncated_idx)
+                    if truncated_end >= 0:
+                        model_text = model_text[truncated_end + 1:]
+                else:
+                    prompt_end = model_text.find("\n")
+                    if prompt_end >= 0:
+                        model_text = model_text[prompt_end + 1:]
+                model_text = _drop_leading_spinner_lines(model_text)
+    else:
+        marker_idx = model_text.rfind(prompt_marker)
+        if marker_idx >= 0:
+            prompt_end = model_text.find("\n", marker_idx + len(prompt_marker))
+            if prompt_end >= 0:
+                model_text = model_text[prompt_end + 1:]
+                model_text = _drop_leading_spinner_lines(model_text)
+
+    timing_match = re.search(r"(?m)^\[\s*Prompt:.*$", model_text)
+    if timing_match:
+        model_text = model_text[: timing_match.start()]
+
+    exiting_match = re.search(r"(?m)^Exiting\.\.\.\s*$", model_text)
+    if exiting_match:
+        model_text = model_text[: exiting_match.start()]
+
+    return model_text
+
+
+def _normalize_terminal_output(text: str) -> str:
+    if not text:
+        return ""
+
+    normalized = ANSI_ESCAPE_RE.sub("", text).replace("\r", "\n")
+    out_chars: list[str] = []
+    for char in normalized:
+        if char == "\x08":
+            if out_chars:
+                out_chars.pop()
+            continue
+        out_chars.append(char)
+    return "".join(out_chars)
+
+
+def _drop_leading_spinner_lines(text: str) -> str:
+    lines = text.splitlines(keepends=True)
+    while lines:
+        stripped = lines[0].strip()
+        if not stripped:
+            lines.pop(0)
+            continue
+        if all(ch in {"|", "/", "-", "\\", "."} for ch in stripped):
+            lines.pop(0)
+            continue
+        break
+    return "".join(lines)
+
+
+def _is_memory_breakdown_table_line(lower_line: str) -> bool:
+    if not lower_line.startswith("|"):
+        return False
+    if "memory breakdown" in lower_line:
+        return True
+    if all(token in lower_line for token in ("total", "model", "context", "compute", "unaccounted")):
+        return True
+    if lower_line.startswith("|   - "):
+        if any(token in lower_line for token in ("host", "cpu", "cuda", "gpu", "metal", "vulkan", "hip", "opencl", "sycl")):
+            return True
+    if "=" in lower_line and any(token in lower_line for token in ("model", "context", "compute", "unaccounted", "self", "free", "total")):
+        return True
+    return False
+
+
+def _contains_only_runtime_logs(text: str) -> bool:
+    saw_content = False
+    for line in text.splitlines():
+        stripped = ANSI_ESCAPE_RE.sub("", line).strip()
+        if not stripped:
+            continue
+        saw_content = True
+        if not _is_runtime_log_line(stripped):
+            return False
+    return saw_content
+
+
+def _run_with_pty_capture(
+    args: list[str],
+    *,
+    prompt: str,
+    timeout_s: int,
+) -> subprocess.CompletedProcess[str] | None:
+    master_fd: int | None = None
+    process: subprocess.Popen[bytes] | None = None
+    try:
+        master_fd, slave_fd = pty.openpty()
+        process = subprocess.Popen(
+            args,
+            stdin=subprocess.PIPE,
+            stdout=slave_fd,
+            stderr=slave_fd,
+        )
+        os.close(slave_fd)
+        if process.stdin is not None:
+            try:
+                process.stdin.write(prompt.encode("utf-8", errors="replace"))
+                process.stdin.close()
+            except OSError:
+                pass
+
+        deadline = time.monotonic() + float(timeout_s)
+        chunks: list[bytes] = []
+        while True:
+            remaining = max(0.0, deadline - time.monotonic())
+            if remaining == 0.0 and process.poll() is None:
+                process.kill()
+                return None
+
+            ready, _, _ = select.select(
+                [master_fd], [], [], min(0.1, remaining))
+            if master_fd in ready:
+                try:
+                    data = os.read(master_fd, 4096)
+                except OSError:
+                    data = b""
+                if data:
+                    chunks.append(data)
+                elif process.poll() is not None:
+                    break
+
+            if process.poll() is not None and master_fd not in ready:
+                break
+
+        while True:
+            try:
+                data = os.read(master_fd, 4096)
+            except OSError:
+                data = b""
+            if not data:
+                break
+            chunks.append(data)
+
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=process.wait(),
+            stdout=b"".join(chunks).decode("utf-8", errors="replace"),
+            stderr="",
+        )
+    except OSError:
+        return None
+    finally:
+        if process is not None and process.poll() is None:
+            process.kill()
+        if master_fd is not None:
+            try:
+                os.close(master_fd)
+            except OSError:
+                pass

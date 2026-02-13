@@ -53,7 +53,7 @@ class PipelineOrchestrator:
 
             self._ensure_not_cancelled(job_id)
             self._set_stage(job_id, 0)
-            JOB_STORE.append_log(job_id, "Stage 1/9: validating and normalizing audio")
+            JOB_STORE.append_log(job_id, "Stage 1/9: validating, normalizing, and denoising audio")
             validate_audio_input(runtime.audio_path)
             normalized_audio_path = job_dir / "audio_normalized.wav"
             metadata = normalize_audio(runtime.audio_path, normalized_audio_path, ffmpeg_bin=SETTINGS.ffmpeg_bin)
@@ -267,11 +267,13 @@ class PipelineOrchestrator:
             )
             title = runtime.title or runtime.audio_path.stem
             speakers = transcript_payload["speakers"]
-            markdown, structured, prompt = formatter.build_structured_summary(
+            mom_path = job_dir / "mom.md"
+            structured, prompt = formatter.write_model_output_to_mom(
                 transcript=transcript_segments,
                 speakers=speakers,
                 title=title,
                 template_id=runtime.template_id,
+                output_path=mom_path,
             )
             JOB_STORE.append_log(job_id, f"Formatter mode: {formatter.last_mode}")
             if formatter.last_stdout:
@@ -283,10 +285,9 @@ class PipelineOrchestrator:
             if formatter.last_raw_output:
                 (job_dir / "formatter_raw_output.txt").write_text(formatter.last_raw_output, encoding="utf-8")
                 JOB_STORE.set_artifact(job_id, "formatter_raw_output", job_dir / "formatter_raw_output.txt")
-            (job_dir / "mom.md").write_text(markdown, encoding="utf-8")
             write_json(job_dir / "mom_structured.json", structured)
             (job_dir / "formatter_prompt.txt").write_text(prompt, encoding="utf-8")
-            JOB_STORE.set_artifact(job_id, "mom_markdown", job_dir / "mom.md")
+            JOB_STORE.set_artifact(job_id, "mom_markdown", mom_path)
             JOB_STORE.set_artifact(job_id, "mom_structured", job_dir / "mom_structured.json")
             JOB_STORE.set_stage_percent(job_id, 100.0, overall_percent=self._overall(7, 100.0))
 

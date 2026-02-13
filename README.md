@@ -84,4 +84,7 @@ Covers:
 - Runtime acceleration flags:
   - `AUTOMOM_VOXTRAL_GPU_LAYERS` for whisper.cpp-based ASR binaries
   - `AUTOMOM_FORMATTER_GPU_LAYERS` for llama.cpp formatter commands
+- Audio denoise controls (applied during normalization):
+  - `AUTOMOM_AUDIO_DENOISE=1|0` (default: `1`)
+  - `AUTOMOM_AUDIO_DENOISE_FILTER` (default: `afftdn`; FFmpeg audio filter expression)
 - Runtime artifacts are stored under `data/jobs/<job_id>/`.

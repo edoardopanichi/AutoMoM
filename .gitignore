@@ -23,3 +23,6 @@ data/models/
 data/jobs/
 data/profiles/
 data/uploads/
+
+# Vendored toolchains
+tools/

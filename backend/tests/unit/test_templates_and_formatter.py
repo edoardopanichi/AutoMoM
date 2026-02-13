@@ -5,8 +5,87 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from backend.app.config import SETTINGS
-from backend.pipeline.formatter import Formatter, _strip_runtime_logs
+from backend.pipeline.formatter import Formatter, _extract_model_text, _strip_runtime_logs
 from backend.pipeline.template_manager import TemplateManager
+
+
+def test_formatter_uses_pty_fallback_when_shell_wrapper_capture_is_empty(monkeypatch, tmp_path: Path) -> None:
+    model_path = tmp_path / "formatter.gguf"
+    model_path.write_text("model", encoding="utf-8")
+
+    def fake_run(command, input, capture_output, text, timeout):
+        return SimpleNamespace(
+            returncode=0,
+            stdout="",
+            stderr=(
+                "warning: no usable GPU found, --gpu-layers option will be ignored\n"
+                "llama_memory_breakdown_print: | memory breakdown [MiB] |\n"
+            ),
+        )
+
+    def fake_pty(command, *, prompt, timeout_s):
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout=(
+                "Minutes of Meeting\n"
+                "Agenda item 6.3 removed.\n"
+                "warning: no usable GPU found, --gpu-layers option will be ignored\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("backend.pipeline.formatter.subprocess.run", fake_run)
+    monkeypatch.setattr("backend.pipeline.formatter._run_with_pty_capture", fake_pty)
+
+    formatter = Formatter(
+        command_template='bash -lc "cat >/tmp/prompt; llama-cli -m \\"{model}\\" -n 128 -f /tmp/prompt"',
+        model_path=str(model_path),
+    )
+    result = formatter.run_model("hello")
+
+    assert result == {"_raw_model_text": "Minutes of Meeting\nAgenda item 6.3 removed.\n"}
+    assert formatter.last_mode == "model_plaintext"
+    assert formatter.last_raw_output == "Minutes of Meeting\nAgenda item 6.3 removed.\n"
+
+
+def test_formatter_uses_pty_fallback_when_shell_wrapper_stdout_is_only_warnings(monkeypatch, tmp_path: Path) -> None:
+    model_path = tmp_path / "formatter.gguf"
+    model_path.write_text("model", encoding="utf-8")
+
+    def fake_run(command, input, capture_output, text, timeout):
+        return SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "warning: no usable GPU found, --gpu-layers option will be ignored\n"
+                "llama_memory_breakdown_print: | memory breakdown [MiB] |\n"
+            ),
+            stderr="",
+        )
+
+    def fake_pty(command, *, prompt, timeout_s):
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout=(
+                "Minutes of Meeting\n"
+                "Agenda item 6.3 removed.\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("backend.pipeline.formatter.subprocess.run", fake_run)
+    monkeypatch.setattr("backend.pipeline.formatter._run_with_pty_capture", fake_pty)
+
+    formatter = Formatter(
+        command_template='bash -lc "cat >/tmp/prompt; llama-cli -m \\"{model}\\" -n 128 -f /tmp/prompt"',
+        model_path=str(model_path),
+    )
+    result = formatter.run_model("hello")
+
+    assert result == {"_raw_model_text": "Minutes of Meeting\nAgenda item 6.3 removed.\n"}
+    assert formatter.last_mode == "model_plaintext"
+    assert formatter.last_raw_output == "Minutes of Meeting\nAgenda item 6.3 removed.\n"
 
 
 def test_formatter_prompt_assembly(isolated_settings) -> None:
@@ -249,7 +328,7 @@ def test_formatter_preserves_raw_stdout_even_with_runtime_prefix(monkeypatch, tm
         template_id="default",
     )
 
-    assert rendered == raw_output
+    assert rendered == "Agenda:\n- Budget review\nDecisions:\n- Approve hiring plan\n"
 
 
 def test_formatter_passthrough_even_for_json_output(monkeypatch, tmp_path: Path) -> None:
@@ -353,9 +432,9 @@ def test_formatter_treats_prefixed_stderr_plaintext_as_valid_output(monkeypatch,
         template_id="default",
     )
 
-    assert rendered == stderr_output
-    assert formatter.last_mode == "model_plaintext"
-    assert formatter.last_raw_output == stderr_output
+    assert rendered == ""
+    assert formatter.last_mode == "heuristic_empty_output"
+    assert formatter.last_raw_output == ""
 
 
 def test_strip_runtime_logs_removes_main_runtime_lines_but_keeps_model_content() -> None:
@@ -363,8 +442,8 @@ def test_strip_runtime_logs_removes_main_runtime_lines_but_keeps_model_content()
         "main: build = 8006\n"
         "main: available commands:\n"
         "main: /exit or Ctrl+C\n"
-        "main: Minutes of Meeting\n"
-        "main: Agenda item 6.3 removed.\n"
+        "## Minutes of Meeting\n"
+        "- Agenda item 6.3 removed.\n"
     )
 
     cleaned = _strip_runtime_logs(stderr_output)
@@ -374,6 +453,89 @@ def test_strip_runtime_logs_removes_main_runtime_lines_but_keeps_model_content()
     assert "/exit or Ctrl+C" not in cleaned
     assert "Minutes of Meeting" in cleaned
     assert "Agenda item 6.3 removed." in cleaned
+
+
+def test_extract_model_text_from_llama_cli_stdout_keeps_only_generated_text() -> None:
+    stdout = (
+        "Loading model... \n\n"
+        "available commands:\n"
+        "  /exit or Ctrl+C\n\n"
+        "> Write a markdown summary.\n\n"
+        "## Agenda\n"
+        "- Item 1\n\n"
+        "## Decisions\n"
+        "- Decision 1\n\n"
+        "[ Prompt: 60.0 t/s | Generation: 10.0 t/s ]\n\n"
+        "Exiting...\n"
+    )
+
+    extracted = _extract_model_text(stdout, "")
+
+    assert "Loading model" not in extracted
+    assert "available commands" not in extracted
+    assert "[ Prompt:" not in extracted
+    assert "Exiting..." not in extracted
+    assert "## Agenda" in extracted
+    assert "## Decisions" in extracted
+
+
+def test_extract_model_text_removes_prompt_echo_when_prompt_provided() -> None:
+    prompt = "Title: Sync\nSpeakers: Alice\nTranscript:\nAlice: Hello"
+    stdout = (
+        "Loading model...\n"
+        "> " + prompt + "\n\n"
+        "|/-\\\n"
+        "## Agenda\n- Budget review\n\n## Decisions\n- Approve rollout\n\n"
+        "[ Prompt: 60.0 t/s | Generation: 10.0 t/s ]\n"
+        "Exiting...\n"
+    )
+
+    extracted = _extract_model_text(stdout, "", prompt=prompt)
+
+    assert prompt not in extracted
+    assert "Loading model" not in extracted
+    assert "## Agenda" in extracted
+    assert "## Decisions" in extracted
+    assert "[ Prompt:" not in extracted
+    assert "Exiting..." not in extracted
+
+
+def test_extract_model_text_handles_truncated_prompt_echo() -> None:
+    prompt = "Title: Sync\nSpeakers: Alice\nTranscript:\nAlice: " + ("hello " * 100)
+    stdout = (
+        "Loading model...\n"
+        "available commands:\n"
+        "> " + prompt[:80] + " ... (truncated)\n\n"
+        "|/-\\\n"
+        "## Agenda\n- Budget review\n\n## Decisions\n- Approve rollout\n\n"
+        "[ Prompt: 60.0 t/s | Generation: 10.0 t/s ]\n"
+        "Exiting...\n"
+    )
+
+    extracted = _extract_model_text(stdout, "", prompt=prompt)
+
+    assert "Loading model" not in extracted
+    assert "available commands" not in extracted
+    assert "(truncated)" not in extracted
+    assert "## Agenda" in extracted
+    assert "## Decisions" in extracted
+
+
+def test_extract_model_text_preserves_markdown_tables() -> None:
+    stdout = (
+        "\n> Write markdown minutes.\n\n"
+        "| Agenda | Decisions |\n"
+        "| --- | --- |\n"
+        "| Remove item 6.3 | Postpone agreement |\n"
+        "[ Prompt: 60.0 t/s | Generation: 10.0 t/s ]\n"
+        "Exiting...\n"
+    )
+
+    extracted = _extract_model_text(stdout, "")
+
+    assert "| Agenda | Decisions |" in extracted
+    assert "| --- | --- |" in extracted
+    assert "| Remove item 6.3 | Postpone agreement |" in extracted
 
 
 def test_formatter_preserves_output_even_when_process_returncode_nonzero(monkeypatch, tmp_path: Path) -> None:
@@ -409,3 +571,28 @@ def test_formatter_fallback_markdown_contains_no_executive_summary() -> None:
     )
 
     assert markdown == ""
+
+
+def test_formatter_writes_model_output_directly_to_mom_file(monkeypatch, tmp_path: Path) -> None:
+    model_path = tmp_path / "formatter.gguf"
+    model_path.write_text("model", encoding="utf-8")
+    mom_path = tmp_path / "mom.md"
+    model_output = "# Minutes\n## Decisions\n- Keep shipping\n"
+
+    def fake_run(command, input, capture_output, text, timeout):
+        return SimpleNamespace(returncode=0, stdout=model_output, stderr="")
+
+    monkeypatch.setattr("backend.pipeline.formatter.subprocess.run", fake_run)
+
+    formatter = Formatter(command_template="llama-cli -m {model}", model_path=str(model_path))
+    structured, _prompt = formatter.write_model_output_to_mom(
+        transcript=[{"speaker_name": "Alice", "text": "Keep shipping."}],
+        speakers=["Alice"],
+        title="Sync",
+        template_id="default",
+        output_path=mom_path,
+    )
+
+    assert mom_path.read_text(encoding="utf-8") == model_output
+    assert formatter.last_mode == "model_markdown"
+    assert "decisions" in structured
