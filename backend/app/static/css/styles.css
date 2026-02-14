@@ -229,6 +229,33 @@ textarea {
   transition: width 200ms ease;
 }
 
+/* Dedicated controls for Settings model actions */
+.model-action-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 0.45rem;
+}
+
+.download-btn {
+  padding: 0.2rem 0.4rem;
+  min-width: 80px;
+  margin-top: 0.45rem;
+  align-self: flex-start;
+  margin-left: 1px;
+  margin-right: 0;
+}
+
+.formatter-set-btn {
+  padding: 0.2rem 0.4rem;
+  min-width: 80px;
+  margin-top: 0.45rem;
+  align-self: flex-start;
+  margin-left: 1px;
+  margin-right: 0;
+}
+
 .speaker-card h4 {
   margin: 0 0 0.5rem;
 }

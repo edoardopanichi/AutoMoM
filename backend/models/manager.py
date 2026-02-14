@@ -138,16 +138,6 @@ class ModelManager:
             return True, None
 
         missing_specs = [self._spec(model_id) for model_id in missing]
-        missing_without_consent = [mid for mid in missing if not self._consent.get(mid, False)]
-        if missing_without_consent:
-            ids = ", ".join(missing_without_consent)
-            return (
-                False,
-                (
-                    f"Missing required model consent for: {ids}. "
-                    "Fix: open Settings > Model Manager and approve download for each missing model."
-                ),
-            )
 
         blocked_downloads = [mid for mid in missing if mid != "formatter" and not self._spec(mid).download_url]
         if blocked_downloads:
@@ -191,8 +181,6 @@ class ModelManager:
                 progress_callback(file_size, file_size)
             return DownloadResult(model_id=model_id, bytes_written=file_size, verified=True)
 
-        if not self._consent.get(model_id, False):
-            raise PermissionError(f"Consent not granted for model {model_id}")
         if not spec.download_url:
             raise ValueError(f"No download URL configured for model {model_id}")
 
@@ -324,8 +312,6 @@ class ModelManager:
             )
             return self.download_status(model_id)
 
-        if not self._consent.get(model_id, False):
-            raise PermissionError(f"Consent not granted for model {model_id}")
         if model_id != "formatter" and not spec.download_url:
             raise ValueError(f"No download URL configured for model {model_id}")
 

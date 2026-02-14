@@ -90,6 +90,8 @@ function renderModels(models) {
     info.textContent = `Installed: ${model.installed ? "yes" : "no"} | Size: ${model.size_mb} MB | Source: ${model.source}`;
 
     const formatterModelWrap = document.createElement("div");
+    const actionRow = document.createElement("div");
+    actionRow.className = "model-action-row";
     let formatterModelInput = null;
     if (model.model_id === "formatter") {
       const input = document.createElement("input");
@@ -100,6 +102,7 @@ function renderModels(models) {
       formatterModelInput = input;
 
       const saveBtn = document.createElement("button");
+      saveBtn.className = "download-btn formatter-set-btn";
       saveBtn.textContent = "Set formatter model";
       saveBtn.addEventListener("click", async () => {
         try {
@@ -115,27 +118,12 @@ function renderModels(models) {
         }
       });
 
-      formatterModelWrap.append(input, saveBtn);
+      formatterModelWrap.append(input);
+      actionRow.append(saveBtn);
     }
 
-    const consentWrap = document.createElement("label");
-    consentWrap.style.display = "inline-flex";
-    consentWrap.style.gap = "0.4rem";
-    const consent = document.createElement("input");
-    consent.type = "checkbox";
-    consent.checked = model.consent_granted;
-    consent.addEventListener("change", async () => {
-      await fetchJSON("/api/models/consent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model_id: model.model_id, approved: consent.checked }),
-      });
-      await refreshSettings();
-    });
-    consentWrap.appendChild(consent);
-    consentWrap.append("Approve download");
-
     const download = document.createElement("button");
+    download.className = "download-btn";
     download.textContent = downloadState.status === "running" ? "Downloading..." : "Download";
     download.disabled = model.installed || downloadState.status === "running";
     download.addEventListener("click", async () => {
@@ -164,6 +152,7 @@ function renderModels(models) {
       }
       await refreshSettings();
     });
+    actionRow.append(download);
 
     const downloadStatus = document.createElement("div");
     downloadStatus.className = "model-download-status";
@@ -176,7 +165,7 @@ function renderModels(models) {
     progressBar.style.width = `${Math.max(0, Math.min(100, Number(downloadState.percent || 0))).toFixed(1)}%`;
     progressWrap.appendChild(progressBar);
 
-    card.append(title, info, formatterModelWrap, consentWrap, download, downloadStatus, progressWrap);
+    card.append(title, info, formatterModelWrap, actionRow, downloadStatus, progressWrap);
     container.appendChild(card);
   });
 }

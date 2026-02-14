@@ -11,7 +11,7 @@ from backend.app.config import ModelSpec, SETTINGS
 from backend.models.manager import ModelManager
 
 
-def test_permission_gated_download_flow(isolated_settings, monkeypatch, tmp_path: Path) -> None:
+def test_download_flow_without_consent_gate(isolated_settings, monkeypatch, tmp_path: Path) -> None:
     source_path = tmp_path / "source.bin"
     source_bytes = b"mock-model-bytes"
     source_path.write_bytes(source_bytes)
@@ -34,14 +34,6 @@ def test_permission_gated_download_flow(isolated_settings, monkeypatch, tmp_path
         )
     }
 
-    try:
-        manager.download("diarization")
-    except PermissionError:
-        pass
-    else:
-        raise AssertionError("Expected PermissionError without consent")
-
-    manager.set_consent("diarization", True)
     result = manager.download("diarization")
 
     assert result.verified is True
