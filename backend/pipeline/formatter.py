@@ -17,16 +17,25 @@ from backend.pipeline.compute import should_enable_native_gpu
 from backend.pipeline.template_manager import TEMPLATE_MANAGER
 
 
+# The following regexes/prefix lists power the lightweight fallback parser used
+# when the formatter model returns free-form text instead of strict JSON.
 ACTION_OWNER_PATTERN = re.compile(
     r"(?P<owner>[A-Z][a-z]+) will (?P<task>[^.]+)", re.IGNORECASE)
 DATE_PATTERN = re.compile(
     r"\b(\d{4}-\d{2}-\d{2}|tomorrow|next week|monday|tuesday|wednesday|thursday|friday)\b", re.IGNORECASE)
+
+# llama.cpp command normalization flags:
+# - force non-interactive single-turn runs
+# - optionally inject GPU layer flags when runtime supports them
 LLAMA_FLAGS = ("--single-turn",)
 LLAMA_GPU_FLAG_TOKENS = ("-ngl", "--gpu-layers", "--n-gpu-layers")
 LLAMA_BINARY_PATTERN = re.compile(
     r"(^|[\s;|&()])(?P<cmd>(?:[^\s;|&()]+/)?llama-cli)(?=$|[\s;|&()])")
 SHELL_WRAPPERS = {"bash", "sh", "zsh"}
 ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+
+# Known llama.cpp/ggml runtime log prefixes that should not be treated as MoM
+# content. These lines are stripped before validating formatter output.
 RUNTIME_LOG_PREFIXES = (
     "warning: no usable gpu found",
     "warning: one possible reason is that llama.cpp was compiled without gpu support",
@@ -68,6 +77,13 @@ MAIN_RUNTIME_REMAINDER_PREFIXES = (
 
 
 class Formatter:
+    """! Bridge between prompt assembly and formatter model execution.
+
+    Stores command/model configuration, runtime preferences, and the latest raw
+    formatter artifacts (stdout, stderr, parsed output mode).
+    """
+    # Formatter is the adapter between template prompt creation and model
+    # execution. It also stores run artifacts for debugging/artifact export.
     def __init__(
         self,
         command_template: str | None = None,
@@ -77,6 +93,17 @@ class Formatter:
         cuda_device_id: int = 0,
         gpu_layers: int = 99,
     ) -> None:
+        """! Initialize formatter runtime configuration.
+
+        @param command_template External command template used to run the
+            formatter model. Supports `{model}` placeholder expansion.
+        @param model_path Local formatter model path to inject in the command.
+        @param compute_device Compute target selector (`auto`, `cpu`, `cuda`).
+        @param cuda_device_id CUDA device index when GPU is selected.
+        @param gpu_layers Number of model layers to offload to GPU when
+            supported by the runtime.
+        @return None
+        """
         self.command_template = command_template or ""
         self.model_path = model_path or ""
         self._cuda_device_id = max(0, int(cuda_device_id))
@@ -90,6 +117,17 @@ class Formatter:
         self.last_mode: str = "heuristic"
 
     def run_model(self, prompt: str) -> dict[str, object] | None:
+        """! Execute formatter model command and parse returned content.
+
+        This method normalizes command flags, runs the formatter process,
+        captures/cleans output, and classifies output mode (`model_json`,
+        `model_markdown`, `model_plaintext`, or heuristic modes).
+
+        @param prompt Full formatter prompt text passed to stdin.
+        @return Parsed model payload when available, otherwise `None`.
+        """
+        # If no command is configured, caller can still produce a heuristic
+        # structure. We return None and set a mode for actionable diagnostics.
         if not self.command_template:
             self.last_raw_output = ""
             self.last_stdout = ""
@@ -97,6 +135,7 @@ class Formatter:
             self.last_mode = "heuristic_no_command"
             return None
 
+        # Enforce local model file existence before invoking external command.
         if not self.model_path or not Path(self.model_path).exists():
             self.last_raw_output = ""
             self.last_stdout = ""
@@ -104,6 +143,8 @@ class Formatter:
             self.last_mode = "heuristic_missing_model_path"
             return None
 
+        # Expand the user command template and normalize for non-interactive
+        # llama.cpp execution.
         command = self.command_template.format(model=self.model_path)
         use_gpu = self._gpu_requested and not self._gpu_retry_disabled
         args = _ensure_non_interactive_llama_command(
@@ -111,6 +152,7 @@ class Formatter:
             use_gpu=use_gpu,
             gpu_layers=self._gpu_layers,
         )
+        # Shell wrappers frequently need PTY capture to preserve full output.
         use_pty = _is_shell_wrapper(args)
         try:
             process = _run_command(
@@ -122,6 +164,8 @@ class Formatter:
             print(f"\n\n Debug: if working the stdout should be here: {process.stdout} \n\n")
             output = _extract_model_text(process.stdout, process.stderr, prompt=prompt)
             invocation_failed = _invocation_failed(process)
+            # Retry once without GPU flags when the runtime reports unsupported
+            # GPU arguments but still exits with rc=0.
             if use_gpu and _should_retry_without_gpu(process):
                 retry_args = _ensure_non_interactive_llama_command(
                     shlex.split(command),
@@ -146,6 +190,8 @@ class Formatter:
                     output = retry_output
                     invocation_failed = False
         except subprocess.TimeoutExpired as exc:
+            # Preserve any partial timeout output so useful model content is not
+            # discarded when the process hits the timeout boundary.
             timeout_stdout = _decode_timeout_stream(exc.stdout)
             timeout_stderr = _decode_timeout_stream(exc.stderr)
             output = _extract_model_text(timeout_stdout, timeout_stderr, prompt=prompt)
@@ -172,6 +218,7 @@ class Formatter:
             self.last_mode = "heuristic_command_error"
             return None
 
+        # Persist raw process streams for post-mortem artifact writing.
         self.last_stdout = process.stdout or ""
         self.last_stderr = process.stderr or ""
         if not output:
@@ -204,6 +251,16 @@ class Formatter:
         title: str,
         template_id: str,
     ) -> tuple[str, dict[str, object], str]:
+        """! Build prompt, run formatter once, and return summary artifacts.
+
+        @param transcript Transcript segments with speaker names/text.
+        @param speakers Distinct speaker names used for prompt context.
+        @param title Meeting title used by template prompt assembly.
+        @param template_id Template identifier loaded by the template manager.
+        @return Tuple of `(markdown, structured_summary, prompt)`.
+        """
+        # Build prompt once and run formatter once. Structured fallback is always
+        # generated for downstream JSON artifact continuity.
         prompt = TEMPLATE_MANAGER.build_formatter_prompt(
             template_id, transcript, speakers, title)
         self.run_model(prompt)
@@ -219,6 +276,16 @@ class Formatter:
         template_id: str,
         output_path: Path,
     ) -> tuple[dict[str, object], str]:
+        """! Persist formatter markdown output and return structured metadata.
+
+        @param transcript Transcript segments with speaker labels/content.
+        @param speakers Distinct speaker list for prompt/template context.
+        @param title Meeting title used by template rendering.
+        @param template_id Template identifier used for prompt generation.
+        @param output_path Target path for generated markdown (`mom.md`).
+        @return Tuple of `(structured_summary, prompt)`.
+        @throws RuntimeError If model output is empty after extraction.
+        """
         markdown, structured, prompt = self.build_structured_summary(
             transcript=transcript,
             speakers=speakers,
@@ -232,6 +299,14 @@ class Formatter:
 
     @staticmethod
     def _parse_json_output(output: str) -> dict[str, object] | None:
+        """! Parse model output as JSON when possible.
+
+        Supports both direct JSON text and JSON fenced code blocks.
+
+        @param output Raw model output text.
+        @return Parsed dictionary if valid JSON object is found, otherwise
+            `None`.
+        """
         try:
             parsed = json.loads(output)
             if isinstance(parsed, dict):
@@ -258,6 +333,18 @@ class Formatter:
         speakers: list[str],
         title: str,
     ) -> dict[str, object]:
+        """! Build heuristic structured summary from transcript only.
+
+        This fallback does not call the formatter model. It derives decisions,
+        actions, and risks from transcript keyword/regex heuristics.
+
+        @param transcript Transcript segments with `speaker_name` and `text`.
+        @param speakers Distinct speaker names.
+        @param title Meeting title used in structured payload.
+        @return Structured summary dictionary used for JSON artifact output.
+        """
+        # Heuristic extraction is intentionally simple: derive useful MoM fields
+        # from transcript text without extra model calls.
         statements = [str(seg["text"]).strip()
                       for seg in transcript if str(seg["text"]).strip()]
         statements = [item for item in statements if not item.startswith(
@@ -289,6 +376,14 @@ class Formatter:
 
 
 def _discussion_bullets(transcript: list[dict[str, object]], top_n: int = 8) -> list[str]:
+    """! Build compact discussion bullets from early transcript segments.
+
+    @param transcript Transcript segments containing `speaker_name` and `text`.
+    @param top_n Maximum number of bullets to emit.
+    @return Ordered discussion bullet list.
+    """
+    # Keep early transcript content to provide a readable, compact discussion
+    # summary even when no model output is available.
     counter = Counter(str(item["speaker_name"]) for item in transcript)
     bullets: list[str] = []
     for seg in transcript[: top_n * 2]:
@@ -312,6 +407,14 @@ def _discussion_bullets(transcript: list[dict[str, object]], top_n: int = 8) -> 
 
 
 def _keyword_extract(statements: list[str], keywords: list[str]) -> list[str]:
+    """! Extract statements containing any of the provided keywords.
+
+    @param statements Candidate statement list.
+    @param keywords Case-insensitive keyword list.
+    @return Subset of statements that match at least one keyword.
+    """
+    # Lightweight keyword scanning for decisions/risks when explicit sections
+    # are missing from model output.
     found: list[str] = []
     for text in statements:
         lower = text.lower()
@@ -321,6 +424,12 @@ def _keyword_extract(statements: list[str], keywords: list[str]) -> list[str]:
 
 
 def _extract_actions(statements: list[str]) -> list[dict[str, str]]:
+    """! Extract action items from statements using owner/task regex.
+
+    @param statements Candidate transcript statements.
+    @return List of action dictionaries with `owner`, `task`, and `due_date`.
+    """
+    # Action extraction assumes "Owner will task" phrasing from transcript text.
     actions: list[dict[str, str]] = []
     for text in statements:
         match = ACTION_OWNER_PATTERN.search(text)
@@ -346,10 +455,22 @@ def _ensure_non_interactive_llama_command(
     use_gpu: bool = False,
     gpu_layers: int = 99,
 ) -> list[str]:
+    """! Inject non-interactive/GPU flags into llama.cpp invocations.
+
+    Handles both direct command args and shell-wrapper scripts.
+
+    @param args Tokenized command argument list.
+    @param use_gpu Whether GPU offload flags should be injected.
+    @param gpu_layers GPU layer count to use when injecting flags.
+    @return Updated argument list preserving original command semantics.
+    """
+    # Force llama.cpp commands to non-interactive mode to avoid hangs and to
+    # guarantee deterministic one-shot output capture.
     if not args:
         return args
 
     if _is_shell_wrapper(args):
+        # For shell wrappers, modify the embedded script string directly.
         script = args[2]
         missing_flags: list[str] = []
         if "--single-turn" not in script:
@@ -387,10 +508,25 @@ def _ensure_non_interactive_llama_command(
 
 
 def _is_shell_wrapper(args: list[str]) -> bool:
+    """! Check whether a command is a shell wrapper invocation.
+
+    @param args Tokenized command argument list.
+    @return `True` when command is `bash/sh/zsh -c|-lc ...`, else `False`.
+    """
+    # We treat shell wrappers specially because output/TTY behavior differs from
+    # direct binary invocation.
     return len(args) >= 3 and Path(args[0]).name in SHELL_WRAPPERS and args[1] in {"-c", "-lc"}
 
 
 def _invocation_failed(process: subprocess.CompletedProcess[str]) -> bool:
+    """! Determine if formatter command invocation should be treated as failed.
+
+    @param process Completed process object with stdout/stderr/return code.
+    @return `True` if return code indicates failure or stderr signals fatal
+        argument/runtime errors.
+    """
+    # Some llama wrappers print errors in stderr while returning rc=0, so we
+    # inspect both return code and stderr content.
     if process.returncode != 0:
         return True
 
@@ -402,6 +538,13 @@ def _invocation_failed(process: subprocess.CompletedProcess[str]) -> bool:
 
 
 def _should_retry_without_gpu(process: subprocess.CompletedProcess[str]) -> bool:
+    """! Decide whether to retry invocation without GPU flags.
+
+    @param process Completed process from GPU-enabled attempt.
+    @return `True` when logs indicate unsupported GPU argument usage.
+    """
+    # Retry only for "unknown GPU argument" style failures to avoid masking
+    # unrelated command errors.
     if process.returncode != 0:
         return False
     logs = f"{process.stdout}\n{process.stderr}".lower()
@@ -411,6 +554,15 @@ def _should_retry_without_gpu(process: subprocess.CompletedProcess[str]) -> bool
 
 
 def _extract_model_text(stdout: str, stderr: str, *, prompt: str = "") -> str:
+    """! Extract candidate model content from raw stdout/stderr streams.
+
+    @param stdout Raw stdout text from formatter command.
+    @param stderr Raw stderr text from formatter command.
+    @param prompt Optional full prompt used to trim prompt echo artifacts.
+    @return Cleaned model output text, or empty string when no content found.
+    """
+    # Prefer cleaned stdout, then cleaned stderr fallback. This handles runners
+    # that route model text to one stream and runtime logs to the other.
     raw_stdout = stdout or ""
     raw_stderr = stderr or ""
     cleaned_stderr = _strip_runtime_logs(raw_stderr) if raw_stderr else ""
@@ -430,6 +582,12 @@ def _extract_model_text(stdout: str, stderr: str, *, prompt: str = "") -> str:
 
 
 def _strip_runtime_logs(text: str) -> str:
+    """! Remove known runtime/log lines while preserving likely model text.
+
+    @param text Raw text to clean.
+    @return Cleaned text with runtime lines removed.
+    """
+    # Remove known runtime noise while preserving potential model content.
     if not text:
         return ""
 
@@ -450,6 +608,13 @@ def _strip_runtime_logs(text: str) -> str:
 
 
 def _is_runtime_log_line(stripped_line: str) -> bool:
+    """! Classify whether a single stripped line is runtime noise.
+
+    @param stripped_line Line content with whitespace trimmed.
+    @return `True` if line is a runtime/diagnostic line, else `False`.
+    """
+    # `main:` lines can contain either runtime diagnostics or real model text.
+    # Keep lines that look like structured/narrative content.
     lower = stripped_line.lower()
     if lower.startswith("main:"):
         remainder = stripped_line.split(":", 1)[1].strip()
@@ -474,12 +639,24 @@ def _is_runtime_log_line(stripped_line: str) -> bool:
 
 
 def _looks_like_structured_content(text: str) -> bool:
+    """! Heuristic check for markdown/list/table structured content.
+
+    @param text Candidate text line.
+    @return `True` if text matches markdown-like structural patterns.
+    """
+    # Recognize markdown-like structure quickly.
     if not text:
         return False
     return bool(re.match(r"^(#{1,6}\s+\S+|[-*]\s+\S+|\d+\.\s+\S+|\|.+\|)", text))
 
 
 def _looks_like_narrative_content(text: str) -> bool:
+    """! Heuristic check for natural-language narrative content.
+
+    @param text Candidate text line.
+    @return `True` if text resembles prose rather than runtime metadata.
+    """
+    # Narrative prose fallback for plain-text model answers.
     if not text:
         return False
     lowered = text.lower()
@@ -491,6 +668,12 @@ def _looks_like_narrative_content(text: str) -> bool:
 
 
 def _looks_like_markdown_document(text: str) -> bool:
+    """! Determine whether output looks like a markdown document.
+
+    @param text Candidate output.
+    @return `True` when output appears to contain a markdown document shape.
+    """
+    # Require at least two headings to classify as a markdown document.
     if not text:
         return False
     heading_count = len(re.findall(r"(?m)^##?\s+\S+", text))
@@ -498,6 +681,14 @@ def _looks_like_markdown_document(text: str) -> bool:
 
 
 def _extract_llama_generated_text(text: str, *, prompt: str = "") -> str:
+    """! Trim llama-cli terminal artifacts and keep generated response body.
+
+    @param text Raw terminal output from llama-cli.
+    @param prompt Optional prompt text to remove echoed prompt region.
+    @return Extracted generated text without banners/spinners/footer.
+    """
+    # Extract the generated response region from llama-cli terminal output that
+    # may include banners, prompt echo, spinners, timing footer, and exit text.
     if not text:
         print("\n\n Debug: Empty text received for model output extraction. \n\n")
         return ""
@@ -545,6 +736,12 @@ def _extract_llama_generated_text(text: str, *, prompt: str = "") -> str:
 
 
 def _normalize_terminal_output(text: str) -> str:
+    """! Normalize terminal control artifacts into plain text.
+
+    @param text Raw terminal stream text.
+    @return Normalized text with ANSI escapes and backspaces processed.
+    """
+    # Normalize ANSI and backspace-driven spinner output into plain text.
     if not text:
         return ""
 
@@ -560,6 +757,12 @@ def _normalize_terminal_output(text: str) -> str:
 
 
 def _drop_leading_spinner_lines(text: str) -> str:
+    """! Remove leading spinner-only lines from extracted output.
+
+    @param text Candidate text that may begin with spinner artifacts.
+    @return Text without leading spinner lines.
+    """
+    # Remove leading spinner-only lines after prompt trimming.
     lines = text.splitlines(keepends=True)
     while lines:
         stripped = lines[0].strip()
@@ -574,6 +777,12 @@ def _drop_leading_spinner_lines(text: str) -> str:
 
 
 def _is_memory_breakdown_table_line(lower_line: str) -> bool:
+    """! Identify llama memory-breakdown table lines.
+
+    @param lower_line Lower-cased candidate line.
+    @return `True` when line matches known memory breakdown output patterns.
+    """
+    # Filter known llama memory tables that are not MoM content.
     if not lower_line.startswith("|"):
         return False
     if "memory breakdown" in lower_line:
@@ -589,6 +798,13 @@ def _is_memory_breakdown_table_line(lower_line: str) -> bool:
 
 
 def _contains_only_runtime_logs(text: str) -> bool:
+    """! Check whether text contains only runtime/log lines.
+
+    @param text Candidate text block.
+    @return `True` if every non-empty line is classified as runtime noise.
+    """
+    # Used to distinguish "no model output" from "model output removed by
+    # cleanup". Returns True only when all non-empty lines are runtime logs.
     saw_content = False
     for line in text.splitlines():
         stripped = ANSI_ESCAPE_RE.sub("", line).strip()
@@ -601,6 +817,14 @@ def _contains_only_runtime_logs(text: str) -> bool:
 
 
 def _formatter_failure_message(last_mode: str, model_path: str, command_template: str) -> str:
+    """! Build actionable formatter error message for UI/job logs.
+
+    @param last_mode Last formatter mode recorded during execution.
+    @param model_path Effective formatter model path.
+    @param command_template Effective formatter command template.
+    @return Human-readable error with concrete remediation hints.
+    """
+    # Keep error text actionable for end-user popup diagnostics.
     if last_mode == "heuristic_no_command":
         return (
             "Formatter command is not configured. "
@@ -645,6 +869,17 @@ def _run_with_pty_capture(
     prompt: str,
     timeout_s: int,
 ) -> subprocess.CompletedProcess[str] | None:
+    """! Run command via PTY and capture merged stdout/stderr stream.
+
+    @param args Tokenized command to execute.
+    @param prompt Prompt text written to process stdin.
+    @param timeout_s Maximum run time in seconds before timeout kill.
+    @return Completed process with merged PTY output, or `None` on PTY setup
+        errors.
+    @throws subprocess.TimeoutExpired If process exceeds timeout while running.
+    """
+    # PTY capture is used for shell wrappers that require TTY-like behavior for
+    # full output emission.
     master_fd: int | None = None
     process: subprocess.Popen[bytes] | None = None
     try:
@@ -720,6 +955,17 @@ def _run_command(
     timeout_s: int,
     use_pty: bool,
 ) -> subprocess.CompletedProcess[str]:
+    """! Run formatter command with PTY or plain subprocess strategy.
+
+    @param args Tokenized command to execute.
+    @param prompt Prompt text written to stdin.
+    @param timeout_s Timeout in seconds.
+    @param use_pty Whether PTY capture path should be attempted first.
+    @return Completed process containing captured output streams.
+    @throws subprocess.TimeoutExpired If command execution exceeds timeout.
+    """
+    # Central command launcher: PTY for shell wrappers, regular subprocess for
+    # direct invocations.
     if use_pty:
         process = _run_with_pty_capture(args, prompt=prompt, timeout_s=timeout_s)
         if process is not None:
@@ -734,6 +980,12 @@ def _run_command(
 
 
 def _decode_timeout_stream(stream: str | bytes | None) -> str:
+    """! Normalize timeout exception stream payload to text.
+
+    @param stream Timeout stream payload (`str`, `bytes`, or `None`).
+    @return UTF-8 decoded string representation (empty string for `None`).
+    """
+    # Timeout exceptions can carry bytes or str depending on invocation mode.
     if stream is None:
         return ""
     if isinstance(stream, bytes):

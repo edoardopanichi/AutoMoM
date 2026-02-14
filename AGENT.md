@@ -59,3 +59,7 @@ AutoMoM is a local pipeline app that turns meeting audio into English MoM Markdo
 ## Development Shortcut
 - Create mock model placeholders for local testing:
   - `./scripts/prepare_mock_models.sh`
+
+## Code Commenting Policy
+- Write very clear, human-oriented comments in code so non-authors can read and maintain it quickly.
+- Prefer one extra explanatory comment over one missing comment when logic is non-trivial.
