@@ -16,7 +16,12 @@ from backend.app.config import SETTINGS, ModelSpec, required_models
 from backend.app.schemas import ModelStatus
 
 
-CONSENT_PATH = SETTINGS.models_dir / "consent.json"
+def _consent_path() -> Path:
+    return SETTINGS.models_dir / "consent.json"
+
+
+def _formatter_model_path() -> Path:
+    return SETTINGS.models_dir / "formatter" / "selected_model.txt"
 
 
 @dataclass
@@ -51,16 +56,36 @@ class ModelManager:
         self._download_lock = RLock()
 
     def _load_consent(self) -> dict[str, bool]:
-        if CONSENT_PATH.exists():
+        consent_path = _consent_path()
+        if consent_path.exists():
             try:
-                return json.loads(CONSENT_PATH.read_text(encoding="utf-8"))
+                return json.loads(consent_path.read_text(encoding="utf-8"))
             except json.JSONDecodeError:
                 return {}
         return {}
 
     def _persist_consent(self) -> None:
-        CONSENT_PATH.parent.mkdir(parents=True, exist_ok=True)
-        CONSENT_PATH.write_text(json.dumps(self._consent, indent=2), encoding="utf-8")
+        consent_path = _consent_path()
+        consent_path.parent.mkdir(parents=True, exist_ok=True)
+        consent_path.write_text(json.dumps(self._consent, indent=2), encoding="utf-8")
+
+    def get_formatter_model(self) -> str:
+        formatter_model_path = _formatter_model_path()
+        if formatter_model_path.exists():
+            value = formatter_model_path.read_text(encoding="utf-8").strip()
+            if value:
+                return value
+        return SETTINGS.formatter_ollama_model
+
+    def set_formatter_model(self, model_tag: str) -> str:
+        normalized = model_tag.strip()
+        if not normalized:
+            raise ValueError("Formatter model tag cannot be empty")
+        formatter_model_path = _formatter_model_path()
+        formatter_model_path.parent.mkdir(parents=True, exist_ok=True)
+        formatter_model_path.write_text(normalized, encoding="utf-8")
+        object.__setattr__(SETTINGS, "formatter_ollama_model", normalized)
+        return normalized
 
     def set_consent(self, model_id: str, approved: bool) -> None:
         self._spec(model_id)
@@ -70,6 +95,10 @@ class ModelManager:
     def statuses(self) -> list[ModelStatus]:
         statuses: list[ModelStatus] = []
         for spec in self._specs.values():
+            installed = self._is_model_installed(spec)
+            display_path = str(spec.file_path)
+            if spec.model_id == "formatter":
+                display_path = f"{SETTINGS.ollama_host}::{self.get_formatter_model()}"
             statuses.append(
                 ModelStatus(
                     model_id=spec.model_id,
@@ -77,9 +106,9 @@ class ModelManager:
                     size_mb=spec.size_mb,
                     source=spec.source,
                     required_disk_mb=spec.required_disk_mb,
-                    installed=spec.file_path.exists(),
+                    installed=installed,
                     consent_granted=self._consent.get(spec.model_id, False),
-                    file_path=str(spec.file_path),
+                    file_path=display_path,
                     checksum_sha256=spec.checksum_sha256,
                     download_url=spec.download_url,
                 )
@@ -87,11 +116,11 @@ class ModelManager:
         return statuses
 
     def missing_model_ids(self) -> list[str]:
-        return [spec.model_id for spec in self._specs.values() if not spec.file_path.exists()]
+        return [spec.model_id for spec in self._specs.values() if not self._is_model_installed(spec)]
 
     def validate_for_job_start(self) -> tuple[bool, str | None]:
         for spec in self._specs.values():
-            if not spec.file_path.exists() or not spec.checksum_sha256:
+            if not self._is_model_installed(spec) or not spec.checksum_sha256:
                 continue
             try:
                 self._verify_checksum_if_needed(spec)
@@ -120,7 +149,7 @@ class ModelManager:
                 ),
             )
 
-        blocked_downloads = [mid for mid in missing if not self._spec(mid).download_url]
+        blocked_downloads = [mid for mid in missing if mid != "formatter" and not self._spec(mid).download_url]
         if blocked_downloads:
             details = "; ".join(
                 f"{mid} expected at '{self._spec(mid).file_path}'"
@@ -151,6 +180,10 @@ class ModelManager:
         progress_callback: Callable[[int, int | None], None] | None = None,
     ) -> DownloadResult:
         spec = self._spec(model_id)
+        if model_id == "formatter":
+            downloaded_bytes = self._pull_formatter_model(progress_callback=progress_callback)
+            return DownloadResult(model_id=model_id, bytes_written=downloaded_bytes, verified=True)
+
         if spec.file_path.exists():
             self._verify_checksum_if_needed(spec)
             file_size = spec.file_path.stat().st_size
@@ -264,9 +297,10 @@ class ModelManager:
 
     def start_download(self, model_id: str, retries: int = 2) -> dict[str, object]:
         spec = self._spec(model_id)
-        if spec.file_path.exists():
+        if self._is_model_installed(spec):
             try:
-                self._verify_checksum_if_needed(spec)
+                if model_id != "formatter":
+                    self._verify_checksum_if_needed(spec)
             except Exception as exc:
                 self._set_download_state(
                     model_id,
@@ -278,7 +312,7 @@ class ModelManager:
                     error=str(exc),
                 )
                 raise
-            file_size = spec.file_path.stat().st_size
+            file_size = spec.file_path.stat().st_size if spec.file_path.exists() else 0
             self._set_download_state(
                 model_id,
                 status="completed",
@@ -292,7 +326,7 @@ class ModelManager:
 
         if not self._consent.get(model_id, False):
             raise PermissionError(f"Consent not granted for model {model_id}")
-        if not spec.download_url:
+        if model_id != "formatter" and not spec.download_url:
             raise ValueError(f"No download URL configured for model {model_id}")
 
         with self._download_lock:
@@ -357,13 +391,13 @@ class ModelManager:
         with self._download_lock:
             state = self._download_progress.get(model_id)
             if state is None:
-                installed = spec.file_path.exists()
+                installed = self._is_model_installed(spec)
                 verified = installed
-                if installed and spec.checksum_sha256:
+                if installed and spec.checksum_sha256 and model_id != "formatter":
                     try:
                         self._verify_checksum_if_needed(spec)
                     except Exception:
-                        installed = spec.file_path.exists()
+                        installed = self._is_model_installed(spec)
                         verified = False
                     else:
                         verified = True
@@ -381,6 +415,96 @@ class ModelManager:
                 )
                 self._download_progress[model_id] = state
             return state.to_dict()
+
+    def _is_model_installed(self, spec: ModelSpec) -> bool:
+        if spec.model_id != "formatter":
+            return spec.file_path.exists()
+        return self._ollama_has_model(self.get_formatter_model())
+
+    def _ollama_has_model(self, model_tag: str) -> bool:
+        request = urllib.request.Request(
+            url=f"{SETTINGS.ollama_host.rstrip('/')}/api/tags",
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                body = response.read().decode("utf-8", errors="replace")
+        except Exception:
+            return False
+
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            return False
+        models = payload.get("models", [])
+        wanted = model_tag.strip().lower()
+        for item in models:
+            if str(item.get("name", "")).strip().lower() == wanted:
+                return True
+        return False
+
+    def _pull_formatter_model(
+        self,
+        progress_callback: Callable[[int, int | None], None] | None = None,
+    ) -> int:
+        model_tag = self.get_formatter_model()
+        payload = {"name": model_tag}
+        request = urllib.request.Request(
+            url=f"{SETTINGS.ollama_host.rstrip('/')}/api/pull",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        downloaded_bytes = 0
+        total_bytes: int | None = None
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                while True:
+                    raw_line = response.readline()
+                    if not raw_line:
+                        break
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line:
+                        continue
+                    try:
+                        item = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    if "error" in item and str(item["error"]).strip():
+                        raise RuntimeError(str(item["error"]).strip())
+
+                    completed = item.get("completed")
+                    total = item.get("total")
+                    if isinstance(completed, int) and completed >= 0:
+                        downloaded_bytes = completed
+                    if isinstance(total, int) and total > 0:
+                        total_bytes = total
+                    if progress_callback:
+                        progress_callback(downloaded_bytes, total_bytes)
+        except urllib.error.HTTPError as exc:
+            details = ""
+            try:
+                body = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                body = ""
+            if body:
+                try:
+                    payload = json.loads(body)
+                    details = str(payload.get("error") or body).strip()
+                except json.JSONDecodeError:
+                    details = body.strip()
+            if details:
+                raise RuntimeError(f"Ollama pull failed: {details}") from exc
+            raise RuntimeError(f"Ollama pull failed: HTTP {exc.code}") from exc
+
+        if not self._ollama_has_model(model_tag):
+            raise RuntimeError(
+                f"Ollama pull finished but model '{model_tag}' was not found in local tags."
+            )
+        if progress_callback:
+            progress_callback(downloaded_bytes, total_bytes or downloaded_bytes)
+        return downloaded_bytes
 
     def all_download_statuses(self) -> list[dict[str, object]]:
         return [self.download_status(model_id) for model_id in sorted(self._specs.keys())]

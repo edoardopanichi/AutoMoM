@@ -236,12 +236,17 @@ class PipelineOrchestrator:
             self._ensure_not_cancelled(job_id)
             self._set_stage(job_id, 7)
             JOB_STORE.append_log(job_id, "Stage 8/9: formatting minutes of meeting")
+            use_legacy_formatter_command = SETTINGS.formatter_backend == "command"
+            JOB_STORE.append_log(
+                job_id,
+                f"Formatter backend: {'command' if use_legacy_formatter_command else 'ollama'}",
+            )
             formatter = Formatter(
-                command_template=SETTINGS.formatter_command,
-                model_path=SETTINGS.formatter_model_path,
-                compute_device=SETTINGS.compute_device,
-                cuda_device_id=SETTINGS.cuda_device_id,
-                gpu_layers=SETTINGS.formatter_gpu_layers,
+                command_template=SETTINGS.formatter_command if use_legacy_formatter_command else "",
+                model_path=SETTINGS.formatter_model_path if use_legacy_formatter_command else "",
+                ollama_host=SETTINGS.ollama_host,
+                ollama_model=SETTINGS.formatter_ollama_model,
+                timeout_s=SETTINGS.formatter_timeout_s,
             )
             title = runtime.title or runtime.audio_path.stem
             speakers = transcript_payload["speakers"]

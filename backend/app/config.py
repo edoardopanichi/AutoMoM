@@ -63,13 +63,17 @@ class Settings:
         str(DATA_DIR / "models" / "voxtral" / "model.gguf"),
     )
     voxtral_gpu_layers: int = int(os.getenv("AUTOMOM_VOXTRAL_GPU_LAYERS", "99"))
+    formatter_backend: str = os.getenv("AUTOMOM_FORMATTER_BACKEND", "ollama").strip().lower()
     formatter_command: str = os.getenv("AUTOMOM_FORMATTER_COMMAND", "")
     formatter_model_path: str = os.getenv(
         "AUTOMOM_FORMATTER_MODEL",
         str(DATA_DIR / "models" / "formatter" / "model.gguf"),
     )
     formatter_gpu_layers: int = int(os.getenv("AUTOMOM_FORMATTER_GPU_LAYERS", "99"))
-    formatter_timeout_s: int = int(os.getenv("AUTOMOM_FORMATTER_TIMEOUT_S", "120"))
+    ollama_host: str = os.getenv("AUTOMOM_OLLAMA_HOST", "http://127.0.0.1:11434")
+    formatter_ollama_model: str = os.getenv(
+        "AUTOMOM_FORMATTER_OLLAMA_MODEL", "qwen2.5:3b-instruct-q5_K_M")
+    formatter_timeout_s: int = int(os.getenv("AUTOMOM_FORMATTER_TIMEOUT_S", "300"))
     diarization_max_chunk_s: float = float(os.getenv("AUTOMOM_DIARIZATION_MAX_CHUNK_S", "18.0"))
     transcription_max_segments: int = int(os.getenv("AUTOMOM_TRANSCRIPTION_MAX_SEGMENTS", "0"))
 
@@ -113,12 +117,10 @@ def required_models() -> list[ModelSpec]:
         ),
         ModelSpec(
             model_id="formatter",
-            name="Formatter LLM (llama.cpp)",
+            name="Formatter LLM (Ollama)",
             size_mb=4200,
-            source="Local quantized instruction model",
+            source="Ollama local model registry",
             required_disk_mb=5000,
-            file_path=_resolve_model_path(SETTINGS.formatter_model_path),
-            download_url=os.getenv("AUTOMOM_FORMATTER_URL"),
-            checksum_sha256=os.getenv("AUTOMOM_FORMATTER_SHA256"),
+            file_path=SETTINGS.models_dir / "formatter" / "selected_model.txt",
         ),
     ]

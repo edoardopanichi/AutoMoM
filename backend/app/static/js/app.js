@@ -5,6 +5,7 @@ const state = {
   modelDownloads: {},
   modelDownloadPoller: null,
   speakerFormFingerprint: null,
+  formatterModelTag: "",
 };
 
 const qs = (selector) => document.querySelector(selector);
@@ -27,12 +28,14 @@ async function fetchJSON(url, options = {}) {
 }
 
 async function loadStartupData() {
-  const [templates, models, profiles, downloads] = await Promise.all([
+  const [templates, models, profiles, downloads, formatterModel] = await Promise.all([
     fetchJSON("/api/templates"),
     fetchJSON("/api/models"),
     fetchJSON("/api/profiles"),
     fetchJSON("/api/models/downloads"),
+    fetchJSON("/api/models/formatter"),
   ]);
+  state.formatterModelTag = formatterModel.model_tag || "";
   state.modelDownloads = Object.fromEntries(downloads.map((item) => [item.model_id, item]));
   renderTemplateSelect(templates);
   renderTemplates(templates);
@@ -86,6 +89,35 @@ function renderModels(models) {
     const info = document.createElement("div");
     info.textContent = `Installed: ${model.installed ? "yes" : "no"} | Size: ${model.size_mb} MB | Source: ${model.source}`;
 
+    const formatterModelWrap = document.createElement("div");
+    let formatterModelInput = null;
+    if (model.model_id === "formatter") {
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = state.formatterModelTag || "";
+      input.placeholder = "ollama model tag (e.g. qwen2.5:3b-instruct-q5_K_M)";
+      input.style.width = "100%";
+      formatterModelInput = input;
+
+      const saveBtn = document.createElement("button");
+      saveBtn.textContent = "Set formatter model";
+      saveBtn.addEventListener("click", async () => {
+        try {
+          const payload = await fetchJSON("/api/models/formatter", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model_tag: input.value.trim() }),
+          });
+          state.formatterModelTag = payload.model_tag;
+          await refreshSettings();
+        } catch (error) {
+          alert(`Unable to set formatter model: ${error.message}`);
+        }
+      });
+
+      formatterModelWrap.append(input, saveBtn);
+    }
+
     const consentWrap = document.createElement("label");
     consentWrap.style.display = "inline-flex";
     consentWrap.style.gap = "0.4rem";
@@ -108,6 +140,18 @@ function renderModels(models) {
     download.disabled = model.installed || downloadState.status === "running";
     download.addEventListener("click", async () => {
       try {
+        if (model.model_id === "formatter" && formatterModelInput) {
+          const selectedTag = formatterModelInput.value.trim();
+          if (!selectedTag) {
+            throw new Error("Formatter model tag is required");
+          }
+          const payload = await fetchJSON("/api/models/formatter", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model_tag: selectedTag }),
+          });
+          state.formatterModelTag = payload.model_tag;
+        }
         await fetchJSON("/api/models/download", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -132,7 +176,7 @@ function renderModels(models) {
     progressBar.style.width = `${Math.max(0, Math.min(100, Number(downloadState.percent || 0))).toFixed(1)}%`;
     progressWrap.appendChild(progressBar);
 
-    card.append(title, info, consentWrap, download, downloadStatus, progressWrap);
+    card.append(title, info, formatterModelWrap, consentWrap, download, downloadStatus, progressWrap);
     container.appendChild(card);
   });
 }
@@ -153,12 +197,14 @@ function renderProfiles(profiles) {
 }
 
 async function refreshSettings() {
-  const [templates, models, profiles, downloads] = await Promise.all([
+  const [templates, models, profiles, downloads, formatterModel] = await Promise.all([
     fetchJSON("/api/templates"),
     fetchJSON("/api/models"),
     fetchJSON("/api/profiles"),
     fetchJSON("/api/models/downloads"),
+    fetchJSON("/api/models/formatter"),
   ]);
+  state.formatterModelTag = formatterModel.model_tag || "";
   state.modelDownloads = Object.fromEntries(downloads.map((item) => [item.model_id, item]));
   renderTemplateSelect(templates);
   renderTemplates(templates);

@@ -41,6 +41,9 @@ AutoMoM is a local/offline web tool that converts meeting audio into English Min
 Then open:
 - `http://127.0.0.1:8000`
 
+`run_automom.sh` now checks Ollama, starts `ollama serve` automatically when needed, and then launches the app.  
+Set `AUTOMOM_OLLAMA_AUTOSTART=0` to disable automatic Ollama startup.
+
 ## First Run and Model Checks
 At startup, required models are listed in Settings:
 - Diarization model
@@ -48,6 +51,7 @@ At startup, required models are listed in Settings:
 - Formatter LLM
 
 Before a job starts, missing model consents/downloads must be handled.
+For formatter, the web UI downloads via Ollama (`/api/pull`) using the selected model tag.
 
 ### Dev shortcut (mock model placeholders)
 For local development only:
@@ -83,8 +87,10 @@ Covers:
   - In pyannote and embedding modes, device is selected dynamically from `AUTOMOM_COMPUTE_DEVICE`.
 - Runtime acceleration flags:
   - `AUTOMOM_VOXTRAL_GPU_LAYERS` for whisper.cpp-based ASR binaries
-  - `AUTOMOM_FORMATTER_GPU_LAYERS` for llama.cpp formatter commands
+  - Formatter default backend is Ollama (`AUTOMOM_FORMATTER_BACKEND=ollama`, `AUTOMOM_OLLAMA_HOST`, `AUTOMOM_FORMATTER_OLLAMA_MODEL`)
+  - Legacy formatter command backend is optional (`AUTOMOM_FORMATTER_BACKEND=command`, `AUTOMOM_FORMATTER_COMMAND`)
 - Audio denoise controls (applied during normalization):
   - `AUTOMOM_AUDIO_DENOISE=1|0` (default: `1`)
   - `AUTOMOM_AUDIO_DENOISE_FILTER` (default: `afftdn`; FFmpeg audio filter expression)
 - Runtime artifacts are stored under `data/jobs/<job_id>/`.
+  - Job IDs are generated as `YYYY-MM-DD-HH:MM-meeting_title` (fallback: `...-meeting`).

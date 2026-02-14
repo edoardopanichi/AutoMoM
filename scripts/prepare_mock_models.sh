@@ -16,8 +16,8 @@ fi
 if [[ ! -f data/models/voxtral/model.gguf ]]; then
   printf 'mock-voxtral' > data/models/voxtral/model.gguf
 fi
-if [[ ! -f data/models/formatter/model.gguf ]]; then
-  printf 'mock-formatter' > data/models/formatter/model.gguf
+if [[ ! -f data/models/formatter/selected_model.txt ]]; then
+  printf 'llama3.1:8b-instruct-q4_K_M' > data/models/formatter/selected_model.txt
 fi
 
 mkdir -p data/models

@@ -41,6 +41,14 @@ class ModelDownloadRequest(BaseModel):
     model_id: str
 
 
+class FormatterModelRequest(BaseModel):
+    model_tag: str
+
+
+class FormatterModelResponse(BaseModel):
+    model_tag: str
+
+
 class TemplateDefinition(BaseModel):
     template_id: str
     name: str

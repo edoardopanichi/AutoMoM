@@ -107,17 +107,20 @@ def test_end_to_end_job_with_golden_outputs(isolated_settings, monkeypatch, tmp_
     asr_model = tmp_path / "voxtral.gguf"
     asr_binary.write_text("bin", encoding="utf-8")
     asr_model.write_text("model", encoding="utf-8")
+    old_backend = SETTINGS.formatter_backend
     old_command = SETTINGS.formatter_command
     old_model_path = SETTINGS.formatter_model_path
     old_voxtral_bin = SETTINGS.voxtral_binary
     old_voxtral_model_path = SETTINGS.voxtral_model_path
     try:
+        object.__setattr__(SETTINGS, "formatter_backend", "command")
         object.__setattr__(SETTINGS, "formatter_command", f"python -c {shlex.quote(script)}")
         object.__setattr__(SETTINGS, "formatter_model_path", str(model_path))
         object.__setattr__(SETTINGS, "voxtral_binary", str(asr_binary))
         object.__setattr__(SETTINGS, "voxtral_model_path", str(asr_model))
         ORCHESTRATOR._run_job(job_id)
     finally:
+        object.__setattr__(SETTINGS, "formatter_backend", old_backend)
         object.__setattr__(SETTINGS, "formatter_command", old_command)
         object.__setattr__(SETTINGS, "formatter_model_path", old_model_path)
         object.__setattr__(SETTINGS, "voxtral_binary", old_voxtral_bin)
@@ -227,17 +230,20 @@ def test_end_to_end_passthrough_uses_raw_formatter_output(isolated_settings, mon
     asr_binary.write_text("bin", encoding="utf-8")
     asr_model.write_text("model", encoding="utf-8")
 
+    old_backend = SETTINGS.formatter_backend
     old_command = SETTINGS.formatter_command
     old_model_path = SETTINGS.formatter_model_path
     old_voxtral_bin = SETTINGS.voxtral_binary
     old_voxtral_model_path = SETTINGS.voxtral_model_path
     try:
+        object.__setattr__(SETTINGS, "formatter_backend", "command")
         object.__setattr__(SETTINGS, "formatter_command", f"python -c {shlex.quote(script)}")
         object.__setattr__(SETTINGS, "formatter_model_path", str(model_path))
         object.__setattr__(SETTINGS, "voxtral_binary", str(asr_binary))
         object.__setattr__(SETTINGS, "voxtral_model_path", str(asr_model))
         ORCHESTRATOR._run_job(job_id)
     finally:
+        object.__setattr__(SETTINGS, "formatter_backend", old_backend)
         object.__setattr__(SETTINGS, "formatter_command", old_command)
         object.__setattr__(SETTINGS, "formatter_model_path", old_model_path)
         object.__setattr__(SETTINGS, "voxtral_binary", old_voxtral_bin)
@@ -343,17 +349,20 @@ def test_end_to_end_stderr_prefixed_output_passthrough(isolated_settings, monkey
     asr_binary.write_text("bin", encoding="utf-8")
     asr_model.write_text("model", encoding="utf-8")
 
+    old_backend = SETTINGS.formatter_backend
     old_command = SETTINGS.formatter_command
     old_model_path = SETTINGS.formatter_model_path
     old_voxtral_bin = SETTINGS.voxtral_binary
     old_voxtral_model_path = SETTINGS.voxtral_model_path
     try:
+        object.__setattr__(SETTINGS, "formatter_backend", "command")
         object.__setattr__(SETTINGS, "formatter_command", f"python -c {shlex.quote(script)}")
         object.__setattr__(SETTINGS, "formatter_model_path", str(model_path))
         object.__setattr__(SETTINGS, "voxtral_binary", str(asr_binary))
         object.__setattr__(SETTINGS, "voxtral_model_path", str(asr_model))
         ORCHESTRATOR._run_job(job_id)
     finally:
+        object.__setattr__(SETTINGS, "formatter_backend", old_backend)
         object.__setattr__(SETTINGS, "formatter_command", old_command)
         object.__setattr__(SETTINGS, "formatter_model_path", old_model_path)
         object.__setattr__(SETTINGS, "voxtral_binary", old_voxtral_bin)
@@ -461,17 +470,20 @@ def test_end_to_end_nonzero_formatter_exit_with_stdout_still_passthrough(
     asr_binary.write_text("bin", encoding="utf-8")
     asr_model.write_text("model", encoding="utf-8")
 
+    old_backend = SETTINGS.formatter_backend
     old_command = SETTINGS.formatter_command
     old_model_path = SETTINGS.formatter_model_path
     old_voxtral_bin = SETTINGS.voxtral_binary
     old_voxtral_model_path = SETTINGS.voxtral_model_path
     try:
+        object.__setattr__(SETTINGS, "formatter_backend", "command")
         object.__setattr__(SETTINGS, "formatter_command", f"python -c {shlex.quote(script)}")
         object.__setattr__(SETTINGS, "formatter_model_path", str(model_path))
         object.__setattr__(SETTINGS, "voxtral_binary", str(asr_binary))
         object.__setattr__(SETTINGS, "voxtral_model_path", str(asr_model))
         ORCHESTRATOR._run_job(job_id)
     finally:
+        object.__setattr__(SETTINGS, "formatter_backend", old_backend)
         object.__setattr__(SETTINGS, "formatter_command", old_command)
         object.__setattr__(SETTINGS, "formatter_model_path", old_model_path)
         object.__setattr__(SETTINGS, "voxtral_binary", old_voxtral_bin)

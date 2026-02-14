@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 from backend.app.config import SETTINGS
 from backend.app.schemas import JobSpeakerInfo, JobState, SpeakerMappingItem
@@ -37,7 +37,7 @@ class JobStore:
         title: str | None,
     ) -> JobRuntime:
         now = datetime.now(timezone.utc)
-        job_id = str(uuid4())
+        job_id = self._build_job_id(now, title)
         state = JobState(
             job_id=job_id,
             status="created",
@@ -58,6 +58,27 @@ class JobStore:
         job_dir.mkdir(parents=True, exist_ok=True)
         self._persist_state(job_id)
         return runtime
+
+    @staticmethod
+    def _slugify_title(title: str) -> str:
+        cleaned = re.sub(r"[^a-zA-Z0-9]+", "_", title.strip().lower())
+        cleaned = cleaned.strip("_")
+        return cleaned[:80] if cleaned else "meeting"
+
+    def _build_job_id(self, now: datetime, title: str | None) -> str:
+        timestamp = now.strftime("%Y-%m-%d-%H:%M")
+        if title and title.strip():
+            base = f"{timestamp}-{self._slugify_title(title)}"
+        else:
+            base = f"{timestamp}-meeting"
+
+        candidate = base
+        counter = 2
+        with self._lock:
+            while (SETTINGS.jobs_dir / candidate).exists() or candidate in self._jobs:
+                candidate = f"{base}-{counter}"
+                counter += 1
+        return candidate
 
     def get_runtime(self, job_id: str) -> JobRuntime:
         with self._lock:

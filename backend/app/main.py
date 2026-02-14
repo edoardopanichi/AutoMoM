@@ -16,6 +16,8 @@ from backend.app.config import SETTINGS, ensure_directories
 from backend.app.job_store import JOB_STORE
 from backend.app.schemas import (
     CreateVoiceProfileRequest,
+    FormatterModelRequest,
+    FormatterModelResponse,
     JobListResponse,
     ModelConsentRequest,
     ModelDownloadRequest,
@@ -65,6 +67,20 @@ def health() -> dict[str, str]:
 @app.get("/api/models")
 def models() -> list[dict[str, object]]:
     return [item.model_dump() for item in MODEL_MANAGER.statuses()]
+
+
+@app.get("/api/models/formatter", response_model=FormatterModelResponse)
+def get_formatter_model() -> FormatterModelResponse:
+    return FormatterModelResponse(model_tag=MODEL_MANAGER.get_formatter_model())
+
+
+@app.post("/api/models/formatter", response_model=FormatterModelResponse)
+def set_formatter_model(request: FormatterModelRequest) -> FormatterModelResponse:
+    try:
+        model_tag = MODEL_MANAGER.set_formatter_model(request.model_tag)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return FormatterModelResponse(model_tag=model_tag)
 
 
 @app.post("/api/models/consent")

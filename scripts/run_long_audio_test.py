@@ -25,7 +25,7 @@ def prepare_mock_models() -> None:
             b"version: 3.1\npipeline:\n  name: mock\n",
         ),
         (SETTINGS.models_dir / "voxtral" / "model.gguf", b"mock"),
-        (SETTINGS.models_dir / "formatter" / "model.gguf", b"mock"),
+        (SETTINGS.models_dir / "formatter" / "selected_model.txt", b"llama3.1:8b-instruct-q4_K_M"),
     ]
     for path, payload in targets:
         path.parent.mkdir(parents=True, exist_ok=True)
