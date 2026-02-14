@@ -9,6 +9,13 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 DATA_DIR = ROOT_DIR / "data"
 
 
+def _resolve_model_path(raw_path: str) -> Path:
+    path = Path(raw_path).expanduser()
+    if path.is_absolute():
+        return path
+    return (ROOT_DIR / path).resolve()
+
+
 @dataclass(frozen=True)
 class ModelSpec:
     model_id: str
@@ -26,7 +33,7 @@ class Settings:
     app_name: str = "AutoMoM"
     host: str = os.getenv("AUTOMOM_HOST", "127.0.0.1")
     port: int = int(os.getenv("AUTOMOM_PORT", "8000"))
-    max_workers: int = int(os.getenv("AUTOMOM_MAX_WORKERS", "1"))
+    max_workers: int = max(2, int(os.getenv("AUTOMOM_MAX_WORKERS", "2")))
 
     data_dir: Path = DATA_DIR
     jobs_dir: Path = DATA_DIR / "jobs"
@@ -90,7 +97,7 @@ def required_models() -> list[ModelSpec]:
             size_mb=900,
             source="Local pyannote speaker diarization pipeline",
             required_disk_mb=1200,
-            file_path=Path(SETTINGS.diarization_model_path),
+            file_path=_resolve_model_path(SETTINGS.diarization_model_path),
             download_url=os.getenv("AUTOMOM_DIARIZATION_URL"),
             checksum_sha256=os.getenv("AUTOMOM_DIARIZATION_SHA256"),
         ),
@@ -100,7 +107,7 @@ def required_models() -> list[ModelSpec]:
             size_mb=3800,
             source="Mistral Voxtral weights (local)",
             required_disk_mb=4200,
-            file_path=SETTINGS.models_dir / "voxtral" / "model.gguf",
+            file_path=_resolve_model_path(SETTINGS.voxtral_model_path),
             download_url=os.getenv("AUTOMOM_VOXTRAL_URL"),
             checksum_sha256=os.getenv("AUTOMOM_VOXTRAL_SHA256"),
         ),
@@ -110,7 +117,7 @@ def required_models() -> list[ModelSpec]:
             size_mb=4200,
             source="Local quantized instruction model",
             required_disk_mb=5000,
-            file_path=SETTINGS.models_dir / "formatter" / "model.gguf",
+            file_path=_resolve_model_path(SETTINGS.formatter_model_path),
             download_url=os.getenv("AUTOMOM_FORMATTER_URL"),
             checksum_sha256=os.getenv("AUTOMOM_FORMATTER_SHA256"),
         ),

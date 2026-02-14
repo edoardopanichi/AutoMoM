@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from jinja2 import Environment, BaseLoader
@@ -11,6 +12,7 @@ from backend.app.schemas import TemplateDefinition, TemplateSummary
 
 DEFAULT_TEMPLATE_ID = "default"
 DEFAULT_TEMPLATE_NAME = "Default Minutes Template"
+TEMPLATE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 DEFAULT_TEMPLATE_PROMPT = (
     "You are an assistant that writes concise Minutes of Meeting in English. "
     "Use the transcript and speaker list. Return clear bullets, decisions, action items, and risks."
@@ -63,12 +65,21 @@ class TemplateManager:
         self._ensure_default_template()
 
     @staticmethod
+    def _validate_template_id(template_id: str) -> str:
+        normalized = (template_id or "").strip()
+        if not TEMPLATE_ID_PATTERN.fullmatch(normalized):
+            raise ValueError("Invalid template_id. Use 1-64 chars: letters, numbers, '.', '_' or '-'")
+        return normalized
+
+    @staticmethod
     def _template_meta_path(template_id: str) -> Path:
-        return SETTINGS.templates_dir / f"{template_id}.json"
+        safe_id = TemplateManager._validate_template_id(template_id)
+        return SETTINGS.templates_dir / f"{safe_id}.json"
 
     @staticmethod
     def _template_content_path(template_id: str) -> Path:
-        return SETTINGS.templates_dir / f"{template_id}.md.j2"
+        safe_id = TemplateManager._validate_template_id(template_id)
+        return SETTINGS.templates_dir / f"{safe_id}.md.j2"
 
     def _ensure_default_template(self) -> None:
         if self._template_meta_path(DEFAULT_TEMPLATE_ID).exists() and self._template_content_path(DEFAULT_TEMPLATE_ID).exists():
@@ -121,8 +132,12 @@ class TemplateManager:
     def delete(self, template_id: str) -> None:
         if template_id == DEFAULT_TEMPLATE_ID:
             raise ValueError("Default template cannot be deleted")
-        self._template_meta_path(template_id).unlink(missing_ok=True)
-        self._template_content_path(template_id).unlink(missing_ok=True)
+        meta_path = self._template_meta_path(template_id)
+        content_path = self._template_content_path(template_id)
+        if not meta_path.exists() and not content_path.exists():
+            raise FileNotFoundError(template_id)
+        meta_path.unlink(missing_ok=True)
+        content_path.unlink(missing_ok=True)
 
     def render(self, template_id: str, context: dict[str, object]) -> str:
         template = self.load(template_id)

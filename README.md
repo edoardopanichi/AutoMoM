@@ -67,17 +67,17 @@ Covers:
 - Integration test for end-to-end pipeline run with golden transcript and Markdown structure checks
 
 ## Notes
-- Real diarization/ASR/formatter model inference is pluggable. If local model binaries are not configured, the app falls back to deterministic offline-safe behavior for development/testing.
+- Real diarization/ASR/formatter model inference is mandatory for job execution. If required models/runtimes are missing, the job fails with an actionable configuration error.
 - Compute selection:
   - `AUTOMOM_COMPUTE_DEVICE=auto|cpu|cuda` (default: `auto`)
   - `AUTOMOM_CUDA_DEVICE_ID` selects GPU index when CUDA is used
   - `AUTOMOM_DISABLE_CUDA=1` forces CPU even if CUDA is available
   - The pipeline auto-falls back to CPU if CUDA is unavailable or a model runtime rejects GPU flags
 - Diarization backends:
-  - `AUTOMOM_DIARIZATION_BACKEND=heuristic`: built-in heuristic clustering (default fallback)
+  - `AUTOMOM_DIARIZATION_BACKEND=heuristic`: built-in heuristic clustering (explicit selection only)
   - `AUTOMOM_DIARIZATION_BACKEND=embedding`: uses speaker embeddings (`AUTOMOM_DIARIZATION_EMBEDDING_MODEL`, default `pyannote/wespeaker-voxceleb-resnet34-LM`) and clustering
-  - `AUTOMOM_DIARIZATION_BACKEND=pyannote`: forces full pyannote pipeline mode; falls back to heuristic if pipeline is unavailable
-  - `AUTOMOM_DIARIZATION_BACKEND=auto`: tries full pyannote pipeline, then embedding backend, then heuristic fallback
+  - `AUTOMOM_DIARIZATION_BACKEND=pyannote`: full pyannote pipeline mode (recommended for model-based diarization)
+  - `AUTOMOM_DIARIZATION_BACKEND=auto`: strict alias of `pyannote` (no backend fallback)
   - `AUTOMOM_DIARIZATION_MIN_SPEAKERS` / `AUTOMOM_DIARIZATION_MAX_SPEAKERS`: optional speaker count bounds (`0` = auto/unbounded)
   - For full pyannote pipeline mode, set `AUTOMOM_DIARIZATION_PIPELINE` (or `AUTOMOM_DIARIZATION_MODEL`) to a local pipeline config path. Most official pyannote pipelines are gated and require `HF_TOKEN`.
   - In pyannote and embedding modes, device is selected dynamically from `AUTOMOM_COMPUTE_DEVICE`.

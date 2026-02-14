@@ -4,6 +4,7 @@ import builtins
 from pathlib import Path
 
 import numpy as np
+import pytest
 import soundfile as sf
 
 import backend.pipeline.diarization as diarization_module
@@ -22,14 +23,14 @@ def test_diarize_returns_segments(tmp_path: Path) -> None:
     sf.write(path, audio, sample_rate)
 
     regions = [SpeechRegion(start_s=0.0, end_s=len(audio) / sample_rate)]
-    result = diarize(path, regions, max_speakers=4, max_chunk_s=0.8)
+    result = diarize(path, regions, max_speakers=4, max_chunk_s=0.8, backend="heuristic")
 
     assert result.speaker_count >= 1
     assert result.segments
     assert result.segments[0].speaker_id.startswith("SPEAKER_")
 
 
-def test_diarize_forced_pyannote_falls_back_when_not_configured(monkeypatch, tmp_path: Path) -> None:
+def test_diarize_forced_pyannote_raises_when_not_configured(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("AUTOMOM_DIARIZATION_PIPELINE", raising=False)
     sample_rate = 16000
     t = np.linspace(0, 1.0, sample_rate, endpoint=False)
@@ -38,18 +39,17 @@ def test_diarize_forced_pyannote_falls_back_when_not_configured(monkeypatch, tmp
     sf.write(path, audio, sample_rate)
 
     regions = [SpeechRegion(start_s=0.0, end_s=1.0)]
-    result = diarize(
-        path,
-        regions,
-        max_speakers=2,
-        max_chunk_s=0.5,
-        backend="pyannote",
-        model_path=tmp_path / "missing_model.yaml",
-    )
+    with pytest.raises(RuntimeError) as exc_info:
+        diarize(
+            path,
+            regions,
+            max_speakers=2,
+            max_chunk_s=0.5,
+            backend="pyannote",
+            model_path=tmp_path / "missing_model.yaml",
+        )
 
-    assert result.mode == "heuristic"
-    assert result.details is not None
-    assert "pyannote_forced_fallback" in result.details
+    assert "Diarization model/pipeline is not configured" in str(exc_info.value)
 
 
 def test_pyannote_import_skipped_when_pipeline_missing(monkeypatch, tmp_path: Path) -> None:
@@ -75,7 +75,7 @@ def test_pyannote_import_skipped_when_pipeline_missing(monkeypatch, tmp_path: Pa
     assert error == "pyannote_pipeline_not_configured"
 
 
-def test_diarize_auto_uses_embedding_backend_when_pyannote_unavailable(monkeypatch, tmp_path: Path) -> None:
+def test_diarize_auto_raises_when_pyannote_unavailable(monkeypatch, tmp_path: Path) -> None:
     sample_rate = 16000
     t = np.linspace(0, 1.0, sample_rate, endpoint=False)
     audio = (0.2 * np.sin(2 * np.pi * 250 * t)).astype(np.float32)
@@ -83,29 +83,15 @@ def test_diarize_auto_uses_embedding_backend_when_pyannote_unavailable(monkeypat
     sf.write(path, audio, sample_rate)
 
     monkeypatch.setattr(diarization_module, "_diarize_with_pyannote", lambda **_: (None, "no_pipeline"))
-    monkeypatch.setattr(
-        diarization_module,
-        "_diarize_with_embeddings",
-        lambda **_: (
-            diarization_module.DiarizationResult(
-                segments=[diarization_module.DiarizationSegment("SPEAKER_0", 0.0, 1.0, 0.9)],
-                speaker_count=1,
-                mode="embedding",
-                details="embedding_model:test",
-            ),
-            None,
-        ),
-    )
 
     regions = [SpeechRegion(start_s=0.0, end_s=1.0)]
-    result = diarization_module.diarize(path, regions, max_speakers=2, max_chunk_s=0.5, backend="auto")
+    with pytest.raises(RuntimeError) as exc_info:
+        diarization_module.diarize(path, regions, max_speakers=2, max_chunk_s=0.5, backend="auto")
 
-    assert result.mode == "embedding"
-    assert result.details is not None
-    assert result.details.startswith("embedding_model:test")
+    assert "Pyannote diarization unavailable (no_pipeline)" in str(exc_info.value)
 
 
-def test_diarize_forced_embedding_falls_back_to_heuristic(monkeypatch, tmp_path: Path) -> None:
+def test_diarize_forced_embedding_raises_when_unavailable(monkeypatch, tmp_path: Path) -> None:
     sample_rate = 16000
     t = np.linspace(0, 1.0, sample_rate, endpoint=False)
     audio = (0.2 * np.sin(2 * np.pi * 250 * t)).astype(np.float32)
@@ -115,11 +101,10 @@ def test_diarize_forced_embedding_falls_back_to_heuristic(monkeypatch, tmp_path:
     monkeypatch.setattr(diarization_module, "_diarize_with_embeddings", lambda **_: (None, "embedding_unavailable"))
 
     regions = [SpeechRegion(start_s=0.0, end_s=1.0)]
-    result = diarization_module.diarize(path, regions, max_speakers=2, max_chunk_s=0.5, backend="embedding")
+    with pytest.raises(RuntimeError) as exc_info:
+        diarization_module.diarize(path, regions, max_speakers=2, max_chunk_s=0.5, backend="embedding")
 
-    assert result.mode == "heuristic"
-    assert result.details is not None
-    assert "embedding_forced_fallback" in result.details
+    assert "Embedding diarization unavailable (embedding_unavailable)" in str(exc_info.value)
 
 
 def test_merge_transcript_segments_merges_adjacent() -> None:

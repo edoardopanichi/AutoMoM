@@ -41,6 +41,7 @@ def diarize(
     max_chunk_s: float = 18.0,
     backend: str = "auto",
     model_path: Path | None = None,
+    pipeline_path: str | None = None,
     embedding_model: str | None = None,
     compute_device: str = "auto",
     cuda_device_id: int = 0,
@@ -53,33 +54,26 @@ def diarize(
         min_speakers, max_speakers = max_speakers, min_speakers
     normalized_backend = (backend or "auto").strip().lower()
     if normalized_backend not in {"auto", "heuristic", "pyannote", "embedding"}:
-        normalized_backend = "auto"
+        raise ValueError(f"Unsupported diarization backend: {backend}")
 
-    pyannote_error: str | None = None
-    if normalized_backend in {"auto", "pyannote"}:
+    if normalized_backend == "auto":
+        normalized_backend = "pyannote"
+
+    if normalized_backend == "pyannote":
         pyannote_result, error = _diarize_with_pyannote(
             audio_path=audio_path,
             min_speakers=min_speakers,
             max_speakers=max_speakers,
             model_path=model_path,
+            pipeline_path=pipeline_path,
             compute_device=compute_device,
             cuda_device_id=cuda_device_id,
         )
         if pyannote_result is not None:
             return pyannote_result
-        pyannote_error = error
-        if normalized_backend == "pyannote":
-            return _diarize_heuristic(
-                audio_path=audio_path,
-                speech_regions=speech_regions,
-                min_speakers=min_speakers,
-                max_speakers=max_speakers,
-                max_chunk_s=max_chunk_s,
-                details=f"pyannote_forced_fallback: {error}",
-            )
+        raise RuntimeError(_pyannote_error_message(error, model_path=model_path, pipeline_path=pipeline_path))
 
-    embedding_error: str | None = None
-    if normalized_backend in {"auto", "embedding"}:
+    if normalized_backend == "embedding":
         embedding_result, error = _diarize_with_embeddings(
             audio_path=audio_path,
             speech_regions=speech_regions,
@@ -92,27 +86,7 @@ def diarize(
         )
         if embedding_result is not None:
             return embedding_result
-        embedding_error = error
-        if normalized_backend == "embedding":
-            return _diarize_heuristic(
-                audio_path=audio_path,
-                speech_regions=speech_regions,
-                min_speakers=min_speakers,
-                max_speakers=max_speakers,
-                max_chunk_s=max_chunk_s,
-                details=f"embedding_forced_fallback: {error}",
-            )
-
-    details = None
-    if normalized_backend == "auto":
-        parts = []
-        if pyannote_error:
-            parts.append(f"pyannote={pyannote_error}")
-        if embedding_error:
-            parts.append(f"embedding={embedding_error}")
-        details = "auto_fallback: " + ", ".join(parts) if parts else "auto_fallback"
-    elif normalized_backend == "heuristic":
-        details = "heuristic_backend_selected"
+        raise RuntimeError(_embedding_error_message(error))
 
     return _diarize_heuristic(
         audio_path=audio_path,
@@ -120,7 +94,53 @@ def diarize(
         min_speakers=min_speakers,
         max_speakers=max_speakers,
         max_chunk_s=max_chunk_s,
-        details=details,
+        details="heuristic_backend_selected",
+    )
+
+
+def _pyannote_error_message(
+    error: str | None,
+    *,
+    model_path: Path | None,
+    pipeline_path: str | None,
+) -> str:
+    pipeline_ref = (pipeline_path or "").strip()
+    if not pipeline_ref and model_path is not None:
+        pipeline_ref = str(model_path)
+    reason = error or "unknown_pyannote_error"
+    if reason == "pyannote_pipeline_not_configured":
+        return (
+            "Diarization model/pipeline is not configured. "
+            "Fix: set AUTOMOM_DIARIZATION_PIPELINE (or AUTOMOM_DIARIZATION_MODEL) "
+            "to a valid local pyannote pipeline YAML (e.g. .../config.yaml)."
+        )
+    if reason.startswith("pyannote_import_error"):
+        return (
+            f"Pyannote diarization runtime is unavailable ({reason}). "
+            "Fix: install pyannote.audio and torch dependencies, then retry."
+        )
+    if reason.startswith("pyannote_runtime_error"):
+        return (
+            f"Pyannote diarization failed at runtime ({reason}). "
+            f"Configured pipeline: '{pipeline_ref or '<unset>'}'. "
+            "Fix: verify the pipeline files and HF token requirements, then retry."
+        )
+    if reason.startswith("pyannote_parse_error") or reason == "pyannote_no_segments":
+        return (
+            f"Pyannote diarization returned unusable output ({reason}). "
+            "Fix: verify the input audio and pipeline configuration."
+        )
+    return (
+        f"Pyannote diarization unavailable ({reason}). "
+        "Fix: verify AUTOMOM_DIARIZATION_MODEL/AUTOMOM_DIARIZATION_PIPELINE and dependencies."
+    )
+
+
+def _embedding_error_message(error: str | None) -> str:
+    reason = error or "unknown_embedding_error"
+    return (
+        f"Embedding diarization unavailable ({reason}). "
+        "Fix: install embedding dependencies and set AUTOMOM_DIARIZATION_EMBEDDING_MODEL to a valid model."
     )
 
 
@@ -131,8 +151,9 @@ def _diarize_with_pyannote(
     model_path: Path | None,
     compute_device: str,
     cuda_device_id: int,
+    pipeline_path: str | None = None,
 ) -> tuple[DiarizationResult | None, str | None]:
-    pipeline_ref = _resolve_pyannote_pipeline_ref(model_path)
+    pipeline_ref = _resolve_pyannote_pipeline_ref(model_path, pipeline_path)
     if not pipeline_ref:
         return None, "pyannote_pipeline_not_configured"
 
@@ -389,10 +410,14 @@ def _load_embedding_inference(
             return inference, active_device
 
 
-def _resolve_pyannote_pipeline_ref(model_path: Path | None) -> str | None:
-    explicit = os.getenv("AUTOMOM_DIARIZATION_PIPELINE", "").strip()
+def _resolve_pyannote_pipeline_ref(model_path: Path | None, pipeline_path: str | None = None) -> str | None:
+    explicit = (pipeline_path or "").strip()
     if explicit:
         return explicit
+
+    env_explicit = os.getenv("AUTOMOM_DIARIZATION_PIPELINE", "").strip()
+    if env_explicit:
+        return env_explicit
 
     if model_path is None:
         return None

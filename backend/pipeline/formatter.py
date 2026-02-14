@@ -111,45 +111,30 @@ class Formatter:
             use_gpu=use_gpu,
             gpu_layers=self._gpu_layers,
         )
+        use_pty = _is_shell_wrapper(args)
         try:
-            process = subprocess.run(
-                args,
-                input=prompt,
-                capture_output=True,
-                text=True,
-                timeout=SETTINGS.formatter_timeout_s,
+            process = _run_command(
+                args=args,
+                prompt=prompt,
+                timeout_s=SETTINGS.formatter_timeout_s,
+                use_pty=use_pty,
             )
-            output = _extract_model_text(
-                process.stdout, process.stderr, prompt=prompt)
+            print(f"\n\n Debug: if working the stdout should be here: {process.stdout} \n\n")
+            output = _extract_model_text(process.stdout, process.stderr, prompt=prompt)
             invocation_failed = _invocation_failed(process)
-            if not output and not invocation_failed and _is_shell_wrapper(args):
-                pty_process = _run_with_pty_capture(
-                    args,
-                    prompt=prompt,
-                    timeout_s=SETTINGS.formatter_timeout_s,
-                )
-                if pty_process is not None:
-                    pty_output = _extract_model_text(
-                        pty_process.stdout, "", prompt=prompt)
-                    if pty_output:
-                        process = pty_process
-                        output = pty_output
-                        invocation_failed = False
             if use_gpu and _should_retry_without_gpu(process):
                 retry_args = _ensure_non_interactive_llama_command(
                     shlex.split(command),
                     use_gpu=False,
                     gpu_layers=self._gpu_layers,
                 )
-                retry_process = subprocess.run(
-                    retry_args,
-                    input=prompt,
-                    capture_output=True,
-                    text=True,
-                    timeout=SETTINGS.formatter_timeout_s,
+                retry_process = _run_command(
+                    args=retry_args,
+                    prompt=prompt,
+                    timeout_s=SETTINGS.formatter_timeout_s,
+                    use_pty=use_pty,
                 )
-                retry_output = _extract_model_text(
-                    retry_process.stdout, retry_process.stderr, prompt=prompt)
+                retry_output = _extract_model_text(retry_process.stdout, retry_process.stderr, prompt=prompt)
                 if retry_output:
                     self._gpu_retry_disabled = True
                     process = retry_process
@@ -160,10 +145,24 @@ class Formatter:
                     process = retry_process
                     output = retry_output
                     invocation_failed = False
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
+            timeout_stdout = _decode_timeout_stream(exc.stdout)
+            timeout_stderr = _decode_timeout_stream(exc.stderr)
+            output = _extract_model_text(timeout_stdout, timeout_stderr, prompt=prompt)
+            self.last_stdout = timeout_stdout
+            self.last_stderr = timeout_stderr
+            if output:
+                self.last_raw_output = output
+                parsed = self._parse_json_output(output)
+                if parsed is not None:
+                    self.last_mode = "model_json"
+                    return parsed
+                if _looks_like_markdown_document(output):
+                    self.last_mode = "model_markdown"
+                    return {"_raw_markdown_text": output}
+                self.last_mode = "model_plaintext"
+                return {"_raw_model_text": output}
             self.last_raw_output = ""
-            self.last_stdout = ""
-            self.last_stderr = ""
             self.last_mode = "heuristic_command_timeout"
             return None
         except (OSError, ValueError):
@@ -220,12 +219,15 @@ class Formatter:
         template_id: str,
         output_path: Path,
     ) -> tuple[dict[str, object], str]:
-        prompt = TEMPLATE_MANAGER.build_formatter_prompt(
-            template_id, transcript, speakers, title)
-        self.run_model(prompt)
-        output_path.write_text(
-            self.last_raw_output if self.last_raw_output else "", encoding="utf-8")
-        structured = self._heuristic_structuring(transcript, speakers, title)
+        markdown, structured, prompt = self.build_structured_summary(
+            transcript=transcript,
+            speakers=speakers,
+            title=title,
+            template_id=template_id,
+        )
+        if not markdown.strip():
+            raise RuntimeError(_formatter_failure_message(self.last_mode, self.model_path, self.command_template))
+        output_path.write_text(markdown, encoding="utf-8")
         return structured, prompt
 
     @staticmethod
@@ -402,25 +404,27 @@ def _invocation_failed(process: subprocess.CompletedProcess[str]) -> bool:
 def _should_retry_without_gpu(process: subprocess.CompletedProcess[str]) -> bool:
     if process.returncode != 0:
         return False
-    stderr = process.stderr.lower()
-    if "unknown argument" not in stderr:
+    logs = f"{process.stdout}\n{process.stderr}".lower()
+    if "unknown argument" not in logs:
         return False
-    return any(token in stderr for token in LLAMA_GPU_FLAG_TOKENS)
+    return any(token in logs for token in LLAMA_GPU_FLAG_TOKENS)
 
 
 def _extract_model_text(stdout: str, stderr: str, *, prompt: str = "") -> str:
     raw_stdout = stdout or ""
+    raw_stderr = stderr or ""
+    cleaned_stderr = _strip_runtime_logs(raw_stderr) if raw_stderr else ""
     if raw_stdout != "":
         model_stdout = _extract_llama_generated_text(raw_stdout, prompt=prompt)
         cleaned_stdout = _strip_runtime_logs(model_stdout)
         if cleaned_stdout:
             return cleaned_stdout
+        if cleaned_stderr:
+            return cleaned_stderr
         if _contains_only_runtime_logs(model_stdout):
             return ""
         return ""
-    raw_stderr = stderr or ""
     if raw_stderr != "":
-        cleaned_stderr = _strip_runtime_logs(raw_stderr)
         return cleaned_stderr
     return ""
 
@@ -458,6 +462,8 @@ def _is_runtime_log_line(stripped_line: str) -> bool:
             return True
         if _looks_like_structured_content(remainder):
             return False
+        if _looks_like_narrative_content(remainder):
+            return False
         return True
 
     if any(lower.startswith(prefix) for prefix in RUNTIME_LOG_PREFIXES):
@@ -473,6 +479,17 @@ def _looks_like_structured_content(text: str) -> bool:
     return bool(re.match(r"^(#{1,6}\s+\S+|[-*]\s+\S+|\d+\.\s+\S+|\|.+\|)", text))
 
 
+def _looks_like_narrative_content(text: str) -> bool:
+    if not text:
+        return False
+    lowered = text.lower()
+    if lowered.startswith("prompt:") or lowered.startswith("generation:"):
+        return False
+    if "=" in text and len(text.split()) <= 5:
+        return False
+    return bool(re.search(r"[A-Za-z]{3,}", text)) and (" " in text or text.endswith("."))
+
+
 def _looks_like_markdown_document(text: str) -> bool:
     if not text:
         return False
@@ -482,6 +499,7 @@ def _looks_like_markdown_document(text: str) -> bool:
 
 def _extract_llama_generated_text(text: str, *, prompt: str = "") -> str:
     if not text:
+        print("\n\n Debug: Empty text received for model output extraction. \n\n")
         return ""
 
     normalized = _normalize_terminal_output(text)
@@ -582,6 +600,45 @@ def _contains_only_runtime_logs(text: str) -> bool:
     return saw_content
 
 
+def _formatter_failure_message(last_mode: str, model_path: str, command_template: str) -> str:
+    if last_mode == "heuristic_no_command":
+        return (
+            "Formatter command is not configured. "
+            "Fix: set AUTOMOM_FORMATTER_COMMAND to a runnable command that reads prompt from stdin."
+        )
+    if last_mode == "heuristic_missing_model_path":
+        return (
+            "Formatter model file is missing. "
+            f"Expected at '{model_path or '<unset>'}'. "
+            "Fix: set AUTOMOM_FORMATTER_MODEL to an existing local model file."
+        )
+    if last_mode == "heuristic_command_timeout":
+        return (
+            "Formatter command timed out. "
+            "Fix: verify model runtime performance or increase AUTOMOM_FORMATTER_TIMEOUT_S."
+        )
+    if last_mode == "heuristic_command_error":
+        return (
+            "Formatter command could not be started. "
+            f"Command template: '{command_template or '<unset>'}'. "
+            "Fix: verify the executable is installed and command syntax is valid."
+        )
+    if last_mode == "heuristic_command_nonzero":
+        return (
+            "Formatter command failed (non-zero exit). "
+            "Fix: inspect formatter stderr artifact and verify binary/model compatibility."
+        )
+    if last_mode == "heuristic_empty_output":
+        return (
+            "Formatter produced empty output. "
+            "Fix: verify the formatter command, model file, and runtime compatibility."
+        )
+    return (
+        f"Formatter output unavailable (mode={last_mode}). "
+        "Fix: verify formatter command and model configuration."
+    )
+
+
 def _run_with_pty_capture(
     args: list[str],
     *,
@@ -612,7 +669,7 @@ def _run_with_pty_capture(
             remaining = max(0.0, deadline - time.monotonic())
             if remaining == 0.0 and process.poll() is None:
                 process.kill()
-                return None
+                raise subprocess.TimeoutExpired(cmd=args, timeout=timeout_s)
 
             ready, _, _ = select.select(
                 [master_fd], [], [], min(0.1, remaining))
@@ -654,3 +711,31 @@ def _run_with_pty_capture(
                 os.close(master_fd)
             except OSError:
                 pass
+
+
+def _run_command(
+    *,
+    args: list[str],
+    prompt: str,
+    timeout_s: int,
+    use_pty: bool,
+) -> subprocess.CompletedProcess[str]:
+    if use_pty:
+        process = _run_with_pty_capture(args, prompt=prompt, timeout_s=timeout_s)
+        if process is not None:
+            return process
+    return subprocess.run(
+        args,
+        input=prompt,
+        capture_output=True,
+        text=True,
+        timeout=timeout_s,
+    )
+
+
+def _decode_timeout_stream(stream: str | bytes | None) -> str:
+    if stream is None:
+        return ""
+    if isinstance(stream, bytes):
+        return stream.decode("utf-8", errors="replace")
+    return stream

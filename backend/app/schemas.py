@@ -57,12 +57,6 @@ class TemplateSummary(BaseModel):
     description: str
 
 
-class StartJobRequest(BaseModel):
-    template_id: str
-    language_mode: str = "auto"
-    title: str | None = None
-
-
 class SpeakerSnippet(BaseModel):
     speaker_id: str
     snippet_path: str

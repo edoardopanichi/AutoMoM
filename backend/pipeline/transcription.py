@@ -18,6 +18,10 @@ TIMESTAMP_TOKEN_PATTERN = re.compile(r"\b\d{1,2}:\d{2}:\d{2}(?:[.,]\d{1,3})?\b")
 WHISPER_TAG_PATTERN = re.compile(r"<\|[^|>]+\|>")
 
 
+class TranscriptionError(RuntimeError):
+    pass
+
+
 class VoxtralTranscriber:
     def __init__(
         self,
@@ -44,7 +48,7 @@ class VoxtralTranscriber:
 
     def transcribe(self, segment_path: Path) -> str:
         if not self._runtime_available or not self._resolved_binary_path:
-            return self._fallback_transcription(segment_path)
+            raise TranscriptionError(self._missing_runtime_message())
 
         use_gpu = self._gpu_requested and not self._gpu_retry_disabled
         command = self._build_command(segment_path, use_gpu=use_gpu)
@@ -59,10 +63,20 @@ class VoxtralTranscriber:
                 invocation_failed = False
                 self._gpu_retry_disabled = True
         if invocation_failed:
-            return self._fallback_transcription(segment_path)
+            hint = (
+                "Ensure AUTOMOM_VOXTRAL_BIN points to a working whisper.cpp CLI binary "
+                "and AUTOMOM_VOXTRAL_MODEL points to a compatible model file."
+            )
+            error_text = (process.stderr or process.stdout or "").strip()
+            raise TranscriptionError(f"ASR invocation failed for '{segment_path.name}': {error_text}. {hint}")
         raw_text = process.stdout if process.stdout.strip() else process.stderr
         text = clean_transcript_text(raw_text)
-        return text or self._fallback_transcription(segment_path)
+        if not text:
+            raise TranscriptionError(
+                f"ASR produced empty output for '{segment_path.name}'. "
+                "Verify binary/model compatibility and command arguments."
+            )
+        return text
 
     def compute_mode(self) -> str:
         if not self._runtime_available:
@@ -114,10 +128,21 @@ class VoxtralTranscriber:
             return which_path
         return None
 
-    @staticmethod
-    def _fallback_transcription(segment_path: Path) -> str:
-        name = segment_path.stem.replace("_", " ")
-        return f"[Offline fallback transcript for {name}]"
+    def _missing_runtime_message(self) -> str:
+        missing_parts: list[str] = []
+        if not self._resolved_binary_path:
+            missing_parts.append(
+                "ASR binary is not configured or not found. "
+                "Set AUTOMOM_VOXTRAL_BIN to a valid whisper.cpp CLI executable."
+            )
+        if not self.model_path or not Path(self.model_path).exists():
+            missing_parts.append(
+                "ASR model file is missing. "
+                "Set AUTOMOM_VOXTRAL_MODEL to an existing local model file."
+            )
+        if not missing_parts:
+            missing_parts.append("ASR runtime is unavailable.")
+        return " ".join(missing_parts)
 
 
 

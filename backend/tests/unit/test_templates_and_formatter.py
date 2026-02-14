@@ -49,6 +49,44 @@ def test_formatter_uses_pty_fallback_when_shell_wrapper_capture_is_empty(monkeyp
     assert formatter.last_raw_output == "Minutes of Meeting\nAgenda item 6.3 removed.\n"
 
 
+def test_formatter_shell_wrapper_uses_single_pty_invocation(monkeypatch, tmp_path: Path) -> None:
+    model_path = tmp_path / "formatter.gguf"
+    model_path.write_text("model", encoding="utf-8")
+
+    counters = {"pty": 0, "run": 0}
+
+    def fake_run(*args, **kwargs):
+        counters["run"] += 1
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    def fake_pty(command, *, prompt, timeout_s):
+        counters["pty"] += 1
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout="## Minutes\n- Item\n## Decisions\n- Keep\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("backend.pipeline.formatter.subprocess.run", fake_run)
+    monkeypatch.setattr("backend.pipeline.formatter._run_with_pty_capture", fake_pty)
+
+    formatter = Formatter(
+        command_template='bash -lc "cat >/tmp/prompt; llama-cli -m \\"{model}\\" -n 128 -f /tmp/prompt"',
+        model_path=str(model_path),
+    )
+    rendered, _structured, _ = formatter.build_structured_summary(
+        transcript=[{"speaker_name": "Alice", "text": "We aligned."}],
+        speakers=["Alice"],
+        title="Sync",
+        template_id="default",
+    )
+
+    assert rendered.startswith("## Minutes")
+    assert counters["pty"] == 1
+    assert counters["run"] == 0
+
+
 def test_formatter_uses_pty_fallback_when_shell_wrapper_stdout_is_only_warnings(monkeypatch, tmp_path: Path) -> None:
     model_path = tmp_path / "formatter.gguf"
     model_path.write_text("model", encoding="utf-8")
@@ -145,12 +183,12 @@ def test_formatter_llama_command_is_forced_non_interactive(monkeypatch, tmp_path
 
     captured: dict[str, object] = {}
 
-    def fake_run(command, input, capture_output, text, timeout):
+    def fake_pty(command, *, prompt, timeout_s):
         captured["command"] = command
-        captured["timeout"] = timeout
-        return SimpleNamespace(returncode=0, stdout='{"decisions":["ok"]}', stderr="")
+        captured["timeout"] = timeout_s
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout='{"decisions":["ok"]}', stderr="")
 
-    monkeypatch.setattr("backend.pipeline.formatter.subprocess.run", fake_run)
+    monkeypatch.setattr("backend.pipeline.formatter._run_with_pty_capture", fake_pty)
 
     formatter = Formatter(
         command_template='bash -lc "cat >/tmp/prompt; llama-cli -m \\"{model}\\" -n 128 -f /tmp/prompt"',
@@ -432,9 +470,9 @@ def test_formatter_treats_prefixed_stderr_plaintext_as_valid_output(monkeypatch,
         template_id="default",
     )
 
-    assert rendered == ""
-    assert formatter.last_mode == "heuristic_empty_output"
-    assert formatter.last_raw_output == ""
+    assert rendered == stderr_output
+    assert formatter.last_mode == "model_plaintext"
+    assert formatter.last_raw_output == stderr_output
 
 
 def test_strip_runtime_logs_removes_main_runtime_lines_but_keeps_model_content() -> None:

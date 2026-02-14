@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import mimetypes
+import os
 from pathlib import Path
 from uuid import uuid4
 
@@ -29,11 +30,20 @@ from backend.profiles.manager import VOICE_PROFILE_MANAGER
 
 ensure_directories()
 
+CORS_ORIGINS = [
+    item.strip()
+    for item in os.getenv(
+        "AUTOMOM_CORS_ORIGINS",
+        "http://127.0.0.1:8000,http://localhost:8000",
+    ).split(",")
+    if item.strip()
+]
+
 app = FastAPI(title=SETTINGS.app_name, version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=CORS_ORIGINS or ["http://127.0.0.1:8000"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -102,6 +112,8 @@ def list_templates() -> list[dict[str, object]]:
 def get_template(template_id: str) -> dict[str, object]:
     try:
         template = TEMPLATE_MANAGER.load(template_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Template not found") from exc
     return template.model_dump()
@@ -117,6 +129,8 @@ def save_template(template: TemplateDefinition) -> dict[str, str]:
 def delete_template(template_id: str) -> dict[str, str]:
     try:
         TEMPLATE_MANAGER.delete(template_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"status": "ok"}
@@ -160,13 +174,26 @@ async def create_job(
 
     try:
         TEMPLATE_MANAGER.load(template_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"Template {template_id} not found") from exc
 
     suffix = Path(audio_file.filename or "input.wav").suffix.lower() or ".wav"
     target_path = SETTINGS.uploads_dir / f"{uuid4()}{suffix}"
-    payload = await audio_file.read()
-    target_path.write_bytes(payload)
+    chunk_size = 1024 * 1024
+    try:
+        with target_path.open("wb") as handle:
+            while True:
+                chunk = await audio_file.read(chunk_size)
+                if not chunk:
+                    break
+                handle.write(chunk)
+    except Exception as exc:
+        target_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=f"Unable to persist uploaded file: {exc}") from exc
+    finally:
+        await audio_file.close()
 
     runtime = JOB_STORE.create_job(
         audio_path=target_path,
@@ -254,8 +281,13 @@ def get_artifact(job_id: str, artifact_name: str) -> FileResponse:
 
 @app.get("/api/jobs/{job_id}/snippets/{snippet_name}")
 def get_snippet(job_id: str, snippet_name: str) -> FileResponse:
-    path = SETTINGS.jobs_dir / job_id / "snippets" / snippet_name
-    if not path.exists():
+    snippet_dir = (SETTINGS.jobs_dir / job_id / "snippets").resolve()
+    snippet_leaf = Path(snippet_name).name
+    if snippet_leaf != snippet_name or snippet_leaf in {"", ".", ".."}:
+        raise HTTPException(status_code=404, detail="Snippet not found")
+
+    path = (snippet_dir / snippet_leaf).resolve()
+    if not path.is_relative_to(snippet_dir) or not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail="Snippet not found")
     return FileResponse(path, media_type="audio/wav", filename=path.name)
 

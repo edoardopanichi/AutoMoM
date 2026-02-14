@@ -305,8 +305,14 @@ function renderSpeakerForm(jobState) {
     speaker.snippets.forEach((snippet) => {
       const audio = document.createElement("audio");
       audio.controls = true;
-      const snippetName = snippet.snippet_path.split("/").pop();
-      audio.src = `/api/jobs/${jobState.job_id}/snippets/${snippetName}`;
+      const snippetName = String(snippet.snippet_path || "")
+        .replace(/\\/g, "/")
+        .split("/")
+        .pop();
+      if (!snippetName) {
+        return;
+      }
+      audio.src = `/api/jobs/${jobState.job_id}/snippets/${encodeURIComponent(snippetName)}`;
       snippets.appendChild(audio);
     });
 

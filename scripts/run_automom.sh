@@ -19,4 +19,4 @@ source .venv/bin/activate
 python -m pip install --upgrade pip >/dev/null
 python -m pip install -r requirements.txt -r requirements-dev.txt >/dev/null
 
-exec uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+exec uvicorn backend.app.main:app --host "${AUTOMOM_HOST:-127.0.0.1}" --port "${AUTOMOM_PORT:-8000}"

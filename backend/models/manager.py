@@ -86,29 +86,63 @@ class ModelManager:
             )
         return statuses
 
-    def all_required_present(self) -> bool:
-        return all(spec.file_path.exists() for spec in self._specs.values())
-
     def missing_model_ids(self) -> list[str]:
         return [spec.model_id for spec in self._specs.values() if not spec.file_path.exists()]
 
     def validate_for_job_start(self) -> tuple[bool, str | None]:
+        for spec in self._specs.values():
+            if not spec.file_path.exists() or not spec.checksum_sha256:
+                continue
+            try:
+                self._verify_checksum_if_needed(spec)
+            except Exception as exc:
+                return (
+                    False,
+                    (
+                        f"Installed model checksum verification failed for {spec.model_id}: {exc}. "
+                        "Please re-download the model."
+                    ),
+                )
+
         missing = self.missing_model_ids()
         if not missing:
             return True, None
+
+        missing_specs = [self._spec(model_id) for model_id in missing]
         missing_without_consent = [mid for mid in missing if not self._consent.get(mid, False)]
         if missing_without_consent:
             ids = ", ".join(missing_without_consent)
-            return False, f"Missing required model consent for: {ids}"
+            return (
+                False,
+                (
+                    f"Missing required model consent for: {ids}. "
+                    "Fix: open Settings > Model Manager and approve download for each missing model."
+                ),
+            )
 
         blocked_downloads = [mid for mid in missing if not self._spec(mid).download_url]
         if blocked_downloads:
-            ids = ", ".join(blocked_downloads)
+            details = "; ".join(
+                f"{mid} expected at '{self._spec(mid).file_path}'"
+                for mid in blocked_downloads
+            )
             return (
                 False,
-                f"Missing models without configured download URL: {ids}. Install manually or set env download URLs.",
+                (
+                    "Missing models without configured download URL: "
+                    f"{', '.join(blocked_downloads)}. {details}. "
+                    "Fix: install these files manually at the expected paths or set download URL env vars."
+                ),
             )
-        return False, "Models are missing; download them from Settings before starting a job."
+        missing_details = "; ".join(f"{spec.model_id} -> '{spec.file_path}'" for spec in missing_specs)
+        return (
+            False,
+            (
+                f"Missing required models: {', '.join(missing)}. "
+                f"Expected files: {missing_details}. "
+                "Fix: download them from Settings > Model Manager or place files at those paths."
+            ),
+        )
 
     def download(
         self,
@@ -118,6 +152,7 @@ class ModelManager:
     ) -> DownloadResult:
         spec = self._spec(model_id)
         if spec.file_path.exists():
+            self._verify_checksum_if_needed(spec)
             file_size = spec.file_path.stat().st_size
             if progress_callback:
                 progress_callback(file_size, file_size)
@@ -177,30 +212,35 @@ class ModelManager:
             return target_path.stat().st_size, total_size
 
         headers = {}
-        mode = "wb"
         existing_size = target_path.stat().st_size if target_path.exists() else 0
         if existing_size > 0:
             headers["Range"] = f"bytes={existing_size}-"
-            mode = "ab"
 
         request = urllib.request.Request(url=url, headers=headers)
+        total_bytes: int | None = None
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response, target_path.open(mode) as output:
-                total_bytes: int | None = None
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                status_code = int(getattr(response, "status", 200))
+                has_content_range = bool(response.headers.get("Content-Range"))
+                supports_resume = existing_size > 0 and (status_code == 206 or has_content_range)
+                start_offset = existing_size if supports_resume else 0
+                mode = "ab" if supports_resume else "wb"
+
                 content_length = response.headers.get("Content-Length")
                 if content_length and content_length.isdigit():
-                    total_bytes = existing_size + int(content_length)
+                    total_bytes = start_offset + int(content_length)
 
                 if progress_callback:
-                    progress_callback(existing_size, total_bytes)
+                    progress_callback(start_offset, total_bytes)
 
-                while True:
-                    chunk = response.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    output.write(chunk)
-                    if progress_callback:
-                        progress_callback(output.tell(), total_bytes)
+                with target_path.open(mode) as output:
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        output.write(chunk)
+                        if progress_callback:
+                            progress_callback(output.tell(), total_bytes)
         except urllib.error.HTTPError as exc:
             if exc.code == 416:
                 file_size = target_path.stat().st_size
@@ -225,6 +265,19 @@ class ModelManager:
     def start_download(self, model_id: str, retries: int = 2) -> dict[str, object]:
         spec = self._spec(model_id)
         if spec.file_path.exists():
+            try:
+                self._verify_checksum_if_needed(spec)
+            except Exception as exc:
+                self._set_download_state(
+                    model_id,
+                    status="failed",
+                    downloaded_bytes=0,
+                    total_bytes=None,
+                    percent=0.0,
+                    verified=False,
+                    error=str(exc),
+                )
+                raise
             file_size = spec.file_path.stat().st_size
             self._set_download_state(
                 model_id,
@@ -300,20 +353,29 @@ class ModelManager:
         )
 
     def download_status(self, model_id: str) -> dict[str, object]:
-        self._spec(model_id)
+        spec = self._spec(model_id)
         with self._download_lock:
             state = self._download_progress.get(model_id)
             if state is None:
-                installed = self._spec(model_id).file_path.exists()
-                size = self._spec(model_id).file_path.stat().st_size if installed else 0
-                status = "completed" if installed else "idle"
+                installed = spec.file_path.exists()
+                verified = installed
+                if installed and spec.checksum_sha256:
+                    try:
+                        self._verify_checksum_if_needed(spec)
+                    except Exception:
+                        installed = spec.file_path.exists()
+                        verified = False
+                    else:
+                        verified = True
+                size = spec.file_path.stat().st_size if installed else 0
+                status = "completed" if installed and verified else "idle"
                 state = DownloadProgress(
                     model_id=model_id,
                     status=status,
                     downloaded_bytes=size,
                     total_bytes=size if installed else None,
-                    percent=100.0 if installed else 0.0,
-                    verified=installed,
+                    percent=100.0 if installed and verified else 0.0,
+                    verified=verified,
                     started_at=None,
                     updated_at=self._now_iso(),
                 )

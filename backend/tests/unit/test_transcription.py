@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from backend.pipeline.transcription import VoxtralTranscriber, clean_transcript_text, transcribe_segments
+import pytest
+
+from backend.pipeline.transcription import TranscriptionError, VoxtralTranscriber, clean_transcript_text, transcribe_segments
 
 
 def test_voxtral_invocation_wrapper_uses_subprocess(monkeypatch, tmp_path: Path) -> None:
@@ -32,7 +34,12 @@ def test_transcribe_segments_reports_progress(tmp_path: Path) -> None:
     segment = tmp_path / "segment.wav"
     segment.write_text("wav", encoding="utf-8")
 
-    transcriber = VoxtralTranscriber(binary_path="", model_path="")
+    class StubTranscriber:
+        @staticmethod
+        def transcribe(_segment_path: Path) -> str:
+            return "ok"
+
+    transcriber = StubTranscriber()
     progress = []
 
     result = transcribe_segments(
@@ -51,6 +58,15 @@ def test_transcribe_segments_reports_progress(tmp_path: Path) -> None:
 
     assert len(result) == 1
     assert progress == [(1, 1)]
+
+
+def test_voxtral_raises_when_runtime_unavailable(tmp_path: Path) -> None:
+    segment = tmp_path / "segment.wav"
+    segment.write_text("wav", encoding="utf-8")
+
+    transcriber = VoxtralTranscriber(binary_path="", model_path="")
+    with pytest.raises(TranscriptionError):
+        transcriber.transcribe(segment)
 
 
 def test_clean_transcript_text_removes_timestamp_noise() -> None:

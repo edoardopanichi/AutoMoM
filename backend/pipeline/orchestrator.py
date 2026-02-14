@@ -11,7 +11,7 @@ from backend.pipeline.audio import extract_segment, normalize_audio, validate_au
 from backend.pipeline.diarization import DiarizationSegment, diarize
 from backend.pipeline.formatter import Formatter
 from backend.pipeline.snippets import extract_snippets, pick_snippet_ranges
-from backend.pipeline.transcription import VoxtralTranscriber, transcribe_segments
+from backend.pipeline.transcription import TranscriptionError, VoxtralTranscriber, transcribe_segments
 from backend.pipeline.vad import detect_speech_regions
 from backend.profiles.manager import VOICE_PROFILE_MANAGER
 
@@ -83,6 +83,7 @@ class PipelineOrchestrator:
                 max_chunk_s=SETTINGS.diarization_max_chunk_s,
                 backend=SETTINGS.diarization_backend,
                 model_path=Path(SETTINGS.diarization_model_path),
+                pipeline_path=SETTINGS.diarization_pipeline_path,
                 embedding_model=SETTINGS.diarization_embedding_model,
                 compute_device=SETTINGS.compute_device,
                 cuda_device_id=SETTINGS.cuda_device_id,
@@ -157,7 +158,11 @@ class PipelineOrchestrator:
                 cuda_device_id=SETTINGS.cuda_device_id,
                 gpu_layers=SETTINGS.voxtral_gpu_layers,
             )
-            transcriber_available = transcriber.available()
+            if not transcriber.available():
+                raise TranscriptionError(
+                    "ASR runtime unavailable. Fix: set AUTOMOM_VOXTRAL_BIN to a valid ASR binary "
+                    "and AUTOMOM_VOXTRAL_MODEL to an existing model file before starting a job."
+                )
 
             segments_for_transcription = self._collapse_labeled_segments(diarization_result.segments, speaker_map)
             if len(segments_for_transcription) != len(diarization_result.segments):
@@ -183,8 +188,7 @@ class PipelineOrchestrator:
                 start_s = max(0.0, float(segment["start_s"]) - padding)
                 end_s = float(segment["end_s"]) + padding
                 segment_path = transcription_dir / f"segment_{idx:04d}.wav"
-                if transcriber_available:
-                    extract_segment(normalized_audio_path, segment_path, start_s, end_s, ffmpeg_bin=SETTINGS.ffmpeg_bin)
+                extract_segment(normalized_audio_path, segment_path, start_s, end_s, ffmpeg_bin=SETTINGS.ffmpeg_bin)
                 segment_jobs.append(
                     {
                         "segment_path": str(segment_path),
@@ -195,24 +199,13 @@ class PipelineOrchestrator:
                     }
                 )
 
-            if transcriber_available:
-                JOB_STORE.append_log(
-                    job_id,
-                    (
-                        "ASR runtime detected; transcription uses external binary "
-                        f"(compute={transcriber.compute_mode()})"
-                    ),
-                )
-            else:
-                JOB_STORE.append_log(
-                    job_id,
-                    (
-                        "ASR runtime unavailable; using fallback transcription. "
-                        "Skipping per-segment audio extraction. "
-                        f"binary='{SETTINGS.voxtral_binary or '<unset>'}' "
-                        f"model='{SETTINGS.voxtral_model_path or '<unset>'}'"
-                    ),
-                )
+            JOB_STORE.append_log(
+                job_id,
+                (
+                    "ASR runtime detected; transcription uses external binary "
+                    f"(compute={transcriber.compute_mode()})"
+                ),
+            )
 
             def _segment_progress(done: int, total: int) -> None:
                 stage_percent = (done / max(1, total)) * 100
@@ -225,21 +218,6 @@ class PipelineOrchestrator:
                 )
 
             transcript_segments = transcribe_segments(transcriber, segment_jobs, progress_callback=_segment_progress)
-            fallback_segments = sum(
-                1
-                for item in transcript_segments
-                if str(item.get("text", "")).startswith("[Offline fallback transcript")
-            )
-            if fallback_segments:
-                JOB_STORE.append_log(
-                    job_id,
-                    f"ASR fallback segments: {fallback_segments}/{len(transcript_segments)}",
-                )
-                if fallback_segments == len(transcript_segments):
-                    JOB_STORE.append_log(
-                        job_id,
-                        "Warning: ASR produced only fallback text; check ASR binary/model compatibility.",
-                    )
             write_json(job_dir / "segments_transcript.json", transcript_segments)
             JOB_STORE.set_artifact(job_id, "segments_transcript", job_dir / "segments_transcript.json")
             JOB_STORE.set_stage_percent(job_id, 100.0, overall_percent=self._overall(5, 100.0))
