@@ -55,6 +55,22 @@ function renderTemplateSelect(templates) {
   });
 }
 
+function resetTemplateCreator() {
+  qs("#new-template-id").value = "";
+  qs("#new-template-name").value = "";
+  qs("#new-template-version").value = "1.0.0";
+  qs("#new-template-description").value = "";
+  qs("#new-template-prompt-block").value = "";
+}
+
+function toggleTemplateCreator(show) {
+  const panel = qs("#template-creator");
+  panel.classList.toggle("hidden", !show);
+  if (!show) {
+    resetTemplateCreator();
+  }
+}
+
 function renderTemplates(templates) {
   const container = qs("#templates");
   container.innerHTML = "";
@@ -472,6 +488,38 @@ async function cancelJob() {
   await fetchJSON(`/api/jobs/${state.currentJobId}/cancel`, { method: "POST" });
 }
 
+async function saveTemplateInline() {
+  const templateId = qs("#new-template-id").value.trim();
+  const name = qs("#new-template-name").value.trim();
+  const version = qs("#new-template-version").value.trim() || "1.0.0";
+  const description = qs("#new-template-description").value.trim();
+  const promptBlock = qs("#new-template-prompt-block").value.trim();
+
+  if (!templateId || !name || !promptBlock) {
+    alert("Template ID, Name, and Prompt Block are required.");
+    return;
+  }
+
+  try {
+    await fetchJSON("/api/templates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        template_id: templateId,
+        name,
+        version,
+        description,
+        prompt_block: promptBlock,
+      }),
+    });
+    await refreshSettings();
+    qs("#template-select").value = templateId;
+    toggleTemplateCreator(false);
+  } catch (error) {
+    alert(`Unable to save template: ${error.message}`);
+  }
+}
+
 function bindEvents() {
   qsa(".tab").forEach((button) => {
     button.addEventListener("click", () => switchTab(button.dataset.tab));
@@ -479,6 +527,9 @@ function bindEvents() {
   qs("#job-form").addEventListener("submit", startJob);
   qs("#cancel-job").addEventListener("click", cancelJob);
   qs("#submit-speakers").addEventListener("click", submitSpeakerMapping);
+  qs("#open-template-creator").addEventListener("click", () => toggleTemplateCreator(true));
+  qs("#cancel-template-inline").addEventListener("click", () => toggleTemplateCreator(false));
+  qs("#save-template-inline").addEventListener("click", saveTemplateInline);
 }
 
 async function init() {

@@ -15,10 +15,10 @@ AutoMoM is a local/offline web tool that converts meeting audio into English Min
   9. Export
 - Speaker count detection and speaker snippet playback for naming
 - Local voice profiles for speaker auto-identification
-- Model manager with per-model consent and permission-gated downloads
+- Model manager with local model checks and web-triggered downloads
 - Multiple templates with default template included
 - Stage progress reporting (overall, stage, segment-level)
-- Markdown export with collapsible transcript section
+- Markdown export
 
 ## Repository Layout
 - `backend/app`: FastAPI app, API routes, state schemas, job store
@@ -50,7 +50,7 @@ At startup, required models are listed in Settings:
 - Voxtral weights
 - Formatter LLM
 
-Before a job starts, missing model consents/downloads must be handled.
+Before a job starts, missing required models must be handled.
 For formatter, the web UI downloads via Ollama (`/api/pull`) using the selected model tag.
 
 ### Dev shortcut (mock model placeholders)
@@ -67,7 +67,7 @@ pytest backend/tests -q
 ```
 
 Covers:
-- Unit tests for audio normalization, VAD, diarization, snippets, voice profiles, transcript merging, voxtral wrapper, template rendering/prompting, and consent-gated model downloads
+- Unit tests for audio normalization, VAD, diarization, snippets, voice profiles, transcript merging, voxtral wrapper, template prompting, and model download flows
 - Integration test for end-to-end pipeline run with golden transcript and Markdown structure checks
 
 ## Notes

@@ -54,7 +54,6 @@ class TemplateDefinition(BaseModel):
     name: str
     version: str = "1.0.0"
     description: str = ""
-    content: str
     prompt_block: str
 
 

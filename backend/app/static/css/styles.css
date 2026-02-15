@@ -96,6 +96,16 @@ button:hover {
   transform: translateY(-1px);
 }
 
+.danger-btn {
+  background: #ffe7e6;
+  border-color: #e8a9a4;
+  color: #8f0017;
+}
+
+.danger-btn:hover {
+  background: #ffd7d4;
+}
+
 .panel {
   display: none;
   background: var(--surface);
@@ -125,6 +135,10 @@ button:hover {
   gap: 0.7rem;
 }
 
+.hidden {
+  display: none;
+}
+
 label {
   display: grid;
   gap: 0.25rem;
@@ -138,6 +152,36 @@ textarea {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #fffcf7;
+}
+
+.template-inline-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.template-inline-row select {
+  flex: 1;
+}
+
+.small-btn {
+  padding: 0.35rem 0.65rem;
+  font-size: 0.86rem;
+  white-space: nowrap;
+}
+
+.template-creator {
+  margin-top: 0.35rem;
+  padding: 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff8e7;
+}
+
+.template-creator-actions {
+  display: flex;
+  gap: 0.45rem;
+  margin-top: 0.35rem;
 }
 
 .kpi-grid {

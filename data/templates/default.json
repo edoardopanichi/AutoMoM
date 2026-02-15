@@ -2,6 +2,6 @@
   "template_id": "default",
   "name": "Default Minutes Template",
   "version": "1.0.0",
-  "description": "Default AutoMoM template with collapsible transcript section.",
+  "description": "Default AutoMoM formatter prompt template.",
   "prompt_block": "You are an assistant that writes concise Minutes of Meeting in English. Use the transcript and speaker list. Return clear bullets, decisions, action items, and risks."
 }

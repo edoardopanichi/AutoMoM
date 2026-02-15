@@ -27,16 +27,16 @@ AutoMoM is a local pipeline app that turns meeting audio into English MoM Markdo
 - Job folder IDs are title-aware: `YYYY-MM-DD-HH:MM-meeting_title` (or `...-meeting` when title is missing)
 
 ## Models
-- Model checks and consent/download flow: `backend/models/manager.py`
+- Model checks and download flow: `backend/models/manager.py`
 - Required model specs are defined in `backend/app/config.py`
-- Downloads are permission-gated
+- Downloads are triggered from the web app model manager
 - Formatter model runtime uses Ollama by default (`AUTOMOM_FORMATTER_BACKEND=ollama`)
 - Formatter model selection is stored in `data/models/formatter/selected_model.txt`
 
 ## Templates
 - Template manager: `backend/pipeline/template_manager.py`
-- Default template auto-created in `data/templates/default.{json,md.j2}`
-- Formatter prompt assembly happens in template manager; final structuring/rendering in `backend/pipeline/formatter.py`
+- Default template auto-created in `data/templates/default.json`
+- Formatter prompt assembly happens in template manager; final MoM output is produced by the formatter model
 
 ## Voice Profiles
 - Manager: `backend/profiles/manager.py`

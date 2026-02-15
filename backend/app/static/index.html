@@ -33,8 +33,37 @@
           </label>
           <label>
             Template
-            <select id="template-select"></select>
+            <div class="template-inline-row">
+              <select id="template-select"></select>
+              <button type="button" id="open-template-creator" class="small-btn">New Template</button>
+            </div>
           </label>
+          <div id="template-creator" class="template-creator hidden">
+            <label>
+              Template ID
+              <input type="text" id="new-template-id" placeholder="e.g. project_sync" />
+            </label>
+            <label>
+              Name
+              <input type="text" id="new-template-name" placeholder="Template name" />
+            </label>
+            <label>
+              Version
+              <input type="text" id="new-template-version" value="1.0.0" />
+            </label>
+            <label>
+              Description
+              <input type="text" id="new-template-description" placeholder="Optional short description" />
+            </label>
+            <label>
+              Prompt Block
+              <textarea id="new-template-prompt-block" rows="4" placeholder="Instructions sent to the formatter model"></textarea>
+            </label>
+            <div class="template-creator-actions">
+              <button type="button" id="save-template-inline" class="small-btn">Save Template</button>
+              <button type="button" id="cancel-template-inline" class="small-btn danger-btn">Cancel</button>
+            </div>
+          </div>
           <label>
             Language mode
             <select id="language-mode">
@@ -65,7 +94,7 @@
         <div class="progress-wrap">
           <div id="stage-bar" class="progress-bar stage"></div>
         </div>
-        <button id="cancel-job">Cancel Job</button>
+        <button id="cancel-job" class="danger-btn">Cancel Job</button>
         <pre id="logs" class="logs"></pre>
       </section>
 
