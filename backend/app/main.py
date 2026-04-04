@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.app.config import SETTINGS, ensure_directories
 from backend.app.job_store import JOB_STORE
+from backend.app.job_store import OpenAIJobConfig
 from backend.app.schemas import (
     CreateVoiceProfileRequest,
     FormatterModelRequest,
@@ -31,6 +32,8 @@ from backend.profiles.manager import VOICE_PROFILE_MANAGER
 
 
 ensure_directories()
+
+OPENAI_STEP_CHOICES = {"local", "api"}
 
 CORS_ORIGINS = [
     item.strip()
@@ -183,8 +186,40 @@ async def create_job(
     template_id: str = Form("default"),
     language_mode: str = Form("auto"),
     title: str | None = Form(None),
+    diarization_execution: str = Form("local"),
+    transcription_execution: str = Form("local"),
+    formatter_execution: str = Form("local"),
+    openai_api_key: str | None = Form(None),
+    openai_diarization_model: str = Form("gpt-4o-transcribe-diarize"),
+    openai_transcription_model: str = Form("gpt-4o-transcribe"),
+    openai_formatter_model: str = Form("gpt-5-mini"),
 ) -> dict[str, object]:
-    validation_ok, message = MODEL_MANAGER.validate_for_job_start()
+    execution_values = {
+        "diarization_execution": diarization_execution.strip().lower(),
+        "transcription_execution": transcription_execution.strip().lower(),
+        "formatter_execution": formatter_execution.strip().lower(),
+    }
+    invalid = [name for name, value in execution_values.items() if value not in OPENAI_STEP_CHOICES]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Invalid execution mode for {invalid[0]}")
+
+    any_api_step = any(value == "api" for value in execution_values.values())
+    normalized_api_key = (openai_api_key or "").strip()
+    if any_api_step and not normalized_api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="OpenAI API key is required when any step is configured to use API execution.",
+        )
+
+    required_local_models: set[str] = set()
+    if execution_values["diarization_execution"] == "local":
+        required_local_models.add("diarization")
+    if execution_values["transcription_execution"] == "local":
+        required_local_models.add("voxtral")
+    if execution_values["formatter_execution"] == "local":
+        required_local_models.add("formatter")
+
+    validation_ok, message = MODEL_MANAGER.validate_for_job_start(required_local_models)
     if not validation_ok:
         raise HTTPException(status_code=400, detail=message)
 
@@ -211,11 +246,24 @@ async def create_job(
     finally:
         await audio_file.close()
 
+    api_config = None
+    if any_api_step:
+        api_config = OpenAIJobConfig(
+            api_key=normalized_api_key,
+            diarization_execution=execution_values["diarization_execution"],
+            transcription_execution=execution_values["transcription_execution"],
+            formatter_execution=execution_values["formatter_execution"],
+            diarization_model=openai_diarization_model.strip() or "gpt-4o-transcribe-diarize",
+            transcription_model=openai_transcription_model.strip() or "gpt-4o-transcribe",
+            formatter_model=openai_formatter_model.strip() or "gpt-5-mini",
+        )
+
     runtime = JOB_STORE.create_job(
         audio_path=target_path,
         template_id=template_id,
         language_mode=language_mode,
         title=title,
+        api_config=api_config,
     )
     ORCHESTRATOR.submit(runtime.state.job_id)
 
@@ -274,6 +322,8 @@ def submit_speaker_mapping(job_id: str, request: SubmitSpeakerMappingRequest) ->
         JOB_STORE.submit_speaker_mapping(job_id, request.mappings)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Job not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"status": "ok"}
 
 

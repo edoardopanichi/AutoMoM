@@ -16,6 +16,7 @@ AutoMoM is a local/offline web tool that converts meeting audio into English Min
 - Speaker count detection and speaker snippet playback for naming
 - Local voice profiles for speaker auto-identification
 - Model manager with local model checks and web-triggered downloads
+- Optional OpenAI API execution per stage with one API key across diarization, transcription, and MoM generation
 - Multiple templates with default template included
 - Stage progress reporting (overall, stage, segment-level)
 - Markdown export
@@ -89,6 +90,9 @@ Covers:
   - `AUTOMOM_VOXTRAL_GPU_LAYERS` for whisper.cpp-based ASR binaries
   - Formatter default backend is Ollama (`AUTOMOM_FORMATTER_BACKEND=ollama`, `AUTOMOM_OLLAMA_HOST`, `AUTOMOM_FORMATTER_OLLAMA_MODEL`)
   - Legacy formatter command backend is optional (`AUTOMOM_FORMATTER_BACKEND=command`, `AUTOMOM_FORMATTER_COMMAND`)
+- Cloud execution:
+  - On the New Job page you can optionally provide an OpenAI API key and choose `local` or `api` independently for diarization, transcription, and MoM formatting
+  - Recommended OpenAI models: `gpt-4o-transcribe-diarize`, `gpt-4o-transcribe`, and `gpt-5-mini`
 - Audio denoise controls (applied during normalization):
   - `AUTOMOM_AUDIO_DENOISE=1|0` (default: `1`)
   - `AUTOMOM_AUDIO_DENOISE_FILTER` (default: `afftdn`; FFmpeg audio filter expression)

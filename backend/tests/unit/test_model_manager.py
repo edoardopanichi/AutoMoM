@@ -154,3 +154,40 @@ def test_formatter_pull_surfaces_ollama_http_error(isolated_settings, monkeypatc
         assert "model not found" in str(exc)
     else:
         raise AssertionError("Expected RuntimeError for Ollama HTTP error")
+
+
+def test_validate_for_job_start_can_skip_unused_local_models(isolated_settings, monkeypatch, tmp_path: Path) -> None:
+    manager = ModelManager()
+    manager._specs = {
+        "diarization": ModelSpec(
+            model_id="diarization",
+            name="Diarization",
+            size_mb=1,
+            source="local",
+            required_disk_mb=1,
+            file_path=tmp_path / "missing_diarization.bin",
+        ),
+        "voxtral": ModelSpec(
+            model_id="voxtral",
+            name="Voxtral",
+            size_mb=1,
+            source="local",
+            required_disk_mb=1,
+            file_path=tmp_path / "voxtral.bin",
+        ),
+        "formatter": ModelSpec(
+            model_id="formatter",
+            name="Formatter",
+            size_mb=1,
+            source="local",
+            required_disk_mb=1,
+            file_path=tmp_path / "formatter.bin",
+        ),
+    }
+    manager._specs["voxtral"].file_path.write_bytes(b"x")
+    monkeypatch.setattr(manager, "_is_model_installed", lambda spec: spec.file_path.exists())
+
+    ok, message = manager.validate_for_job_start({"voxtral"})
+
+    assert ok is True
+    assert message is None

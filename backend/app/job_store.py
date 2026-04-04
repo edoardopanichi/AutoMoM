@@ -13,11 +13,23 @@ from backend.app.schemas import JobSpeakerInfo, JobState, SpeakerMappingItem
 
 
 @dataclass
+class OpenAIJobConfig:
+    api_key: str
+    diarization_execution: str = "local"
+    transcription_execution: str = "local"
+    formatter_execution: str = "local"
+    diarization_model: str = "gpt-4o-transcribe-diarize"
+    transcription_model: str = "gpt-4o-transcribe"
+    formatter_model: str = "gpt-5-mini"
+
+
+@dataclass
 class JobRuntime:
     audio_path: Path
     template_id: str
     language_mode: str
     title: str | None
+    api_config: OpenAIJobConfig | None
     state: JobState
     speaker_mapping_event: threading.Event = field(default_factory=threading.Event)
     speaker_mapping_payload: list[SpeakerMappingItem] | None = None
@@ -35,6 +47,7 @@ class JobStore:
         template_id: str,
         language_mode: str,
         title: str | None,
+        api_config: OpenAIJobConfig | None = None,
     ) -> JobRuntime:
         now = datetime.now(timezone.utc)
         job_id = self._build_job_id(now, title)
@@ -49,6 +62,7 @@ class JobStore:
             template_id=template_id,
             language_mode=language_mode,
             title=title,
+            api_config=api_config,
             state=state,
         )
         with self._lock:
@@ -171,6 +185,8 @@ class JobStore:
     def submit_speaker_mapping(self, job_id: str, mappings: list[SpeakerMappingItem]) -> None:
         with self._lock:
             runtime = self.get_runtime(job_id)
+            if runtime.state.status != "waiting_speaker_input":
+                raise ValueError("Job is not waiting for speaker input")
             runtime.speaker_mapping_payload = mappings
             runtime.state.stage_percent = 100.0
             runtime.state.status = "running"
@@ -206,6 +222,8 @@ class JobStore:
     def cancel(self, job_id: str) -> None:
         with self._lock:
             runtime = self.get_runtime(job_id)
+            if runtime.state.status in {"completed", "failed", "cancelled"}:
+                return
             runtime.cancel_event.set()
             runtime.state.status = "cancelled"
             runtime.state.updated_at = datetime.now(timezone.utc)

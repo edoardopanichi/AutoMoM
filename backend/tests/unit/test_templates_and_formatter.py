@@ -109,6 +109,19 @@ def test_formatter_handles_ollama_timeout(monkeypatch) -> None:
     assert formatter.last_mode == "heuristic_ollama_timeout"
 
 
+def test_formatter_uses_openai_response(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "backend.pipeline.formatter.OpenAIClient.generate_text",
+        lambda self, prompt, model, timeout_s: "## Minutes\n- Strong summary\n## Decisions\n- Ship it\n",
+    )
+    formatter = Formatter(openai_api_key="sk-test", openai_model="gpt-5-mini")
+
+    result = formatter.run_model("hello")
+
+    assert result == {"_raw_markdown_text": "## Minutes\n- Strong summary\n## Decisions\n- Ship it\n"}
+    assert formatter.last_mode == "model_markdown"
+
+
 def test_formatter_legacy_command_still_supported(tmp_path: Path) -> None:
     model_path = tmp_path / "formatter.gguf"
     model_path.write_text("model", encoding="utf-8")

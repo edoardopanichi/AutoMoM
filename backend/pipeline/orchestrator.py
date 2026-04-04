@@ -5,13 +5,14 @@ from dataclasses import asdict
 from pathlib import Path
 
 from backend.app.config import SETTINGS
-from backend.app.job_store import JOB_STORE, ensure_job_artifact_dir, write_json
+from backend.app.job_store import JOB_STORE, OpenAIJobConfig, ensure_job_artifact_dir, write_json
 from backend.app.schemas import JobSpeakerInfo, SpeakerSnippet, SpeakerState
 from backend.pipeline.audio import extract_segment, normalize_audio, validate_audio_input
-from backend.pipeline.diarization import DiarizationSegment, diarize
+from backend.pipeline.diarization import DiarizationResult, DiarizationSegment, diarize
 from backend.pipeline.formatter import Formatter
+from backend.pipeline.openai_client import OpenAIAPIError, OpenAIClient, OpenAIDiarizationResult
 from backend.pipeline.snippets import extract_snippets, pick_snippet_ranges
-from backend.pipeline.transcription import TranscriptionError, VoxtralTranscriber, transcribe_segments
+from backend.pipeline.transcription import OpenAITranscriber, TranscriptionError, VoxtralTranscriber, transcribe_segments
 from backend.pipeline.vad import detect_speech_regions
 from backend.profiles.manager import VOICE_PROFILE_MANAGER
 
@@ -50,6 +51,18 @@ class PipelineOrchestrator:
             JOB_STORE.mark_running(job_id)
             runtime = JOB_STORE.get_runtime(job_id)
             job_dir = ensure_job_artifact_dir(job_id)
+            api_config = runtime.api_config
+            api_diarization_result: OpenAIDiarizationResult | None = None
+            if api_config is not None:
+                JOB_STORE.append_log(
+                    job_id,
+                    (
+                        "Cloud execution plan: "
+                        f"diarization={api_config.diarization_execution}, "
+                        f"transcription={api_config.transcription_execution}, "
+                        f"formatter={api_config.formatter_execution}"
+                    ),
+                )
 
             self._ensure_not_cancelled(job_id)
             self._set_stage(job_id, 0)
@@ -73,21 +86,28 @@ class PipelineOrchestrator:
             self._ensure_not_cancelled(job_id)
             self._set_stage(job_id, 2)
             JOB_STORE.append_log(job_id, "Stage 3/9: speaker diarization")
-            min_speakers = SETTINGS.diarization_min_speakers if SETTINGS.diarization_min_speakers > 0 else None
-            max_speakers = SETTINGS.diarization_max_speakers if SETTINGS.diarization_max_speakers > 0 else None
-            diarization_result = diarize(
-                normalized_audio_path,
-                speech_regions,
-                min_speakers=min_speakers,
-                max_speakers=max_speakers,
-                max_chunk_s=SETTINGS.diarization_max_chunk_s,
-                backend=SETTINGS.diarization_backend,
-                model_path=Path(SETTINGS.diarization_model_path),
-                pipeline_path=SETTINGS.diarization_pipeline_path,
-                embedding_model=SETTINGS.diarization_embedding_model,
-                compute_device=SETTINGS.compute_device,
-                cuda_device_id=SETTINGS.cuda_device_id,
-            )
+            if api_config is not None and api_config.diarization_execution == "api":
+                api_diarization_result = self._diarize_with_openai(
+                    runtime=runtime,
+                    normalized_audio_path=normalized_audio_path,
+                )
+                diarization_result = self._diarization_result_from_openai(api_diarization_result)
+            else:
+                min_speakers = SETTINGS.diarization_min_speakers if SETTINGS.diarization_min_speakers > 0 else None
+                max_speakers = SETTINGS.diarization_max_speakers if SETTINGS.diarization_max_speakers > 0 else None
+                diarization_result = diarize(
+                    normalized_audio_path,
+                    speech_regions,
+                    min_speakers=min_speakers,
+                    max_speakers=max_speakers,
+                    max_chunk_s=SETTINGS.diarization_max_chunk_s,
+                    backend=SETTINGS.diarization_backend,
+                    model_path=Path(SETTINGS.diarization_model_path),
+                    pipeline_path=SETTINGS.diarization_pipeline_path,
+                    embedding_model=SETTINGS.diarization_embedding_model,
+                    compute_device=SETTINGS.compute_device,
+                    cuda_device_id=SETTINGS.cuda_device_id,
+                )
             write_json(job_dir / "diarization.json", diarization_result.to_json())
             JOB_STORE.set_artifact(job_id, "diarization", job_dir / "diarization.json")
             JOB_STORE.append_log(job_id, f"Diarization mode: {diarization_result.mode}")
@@ -151,19 +171,6 @@ class PipelineOrchestrator:
             JOB_STORE.append_log(job_id, "Stage 6/9: transcribing diarized segments")
             transcription_dir = ensure_job_artifact_dir(job_id, "transcription_segments")
             segment_jobs: list[dict[str, object]] = []
-            transcriber = VoxtralTranscriber(
-                SETTINGS.voxtral_binary,
-                SETTINGS.voxtral_model_path,
-                compute_device=SETTINGS.compute_device,
-                cuda_device_id=SETTINGS.cuda_device_id,
-                gpu_layers=SETTINGS.voxtral_gpu_layers,
-            )
-            if not transcriber.available():
-                raise TranscriptionError(
-                    "ASR runtime unavailable. Fix: set AUTOMOM_VOXTRAL_BIN to a valid ASR binary "
-                    "and AUTOMOM_VOXTRAL_MODEL to an existing model file before starting a job."
-                )
-
             segments_for_transcription = self._collapse_labeled_segments(diarization_result.segments, speaker_map)
             if len(segments_for_transcription) != len(diarization_result.segments):
                 JOB_STORE.append_log(
@@ -183,30 +190,6 @@ class PipelineOrchestrator:
                     f"Transcription segment cap applied: {SETTINGS.transcription_max_segments}",
                 )
 
-            for idx, segment in enumerate(segments_for_transcription, start=1):
-                padding = 0.2
-                start_s = max(0.0, float(segment["start_s"]) - padding)
-                end_s = float(segment["end_s"]) + padding
-                segment_path = transcription_dir / f"segment_{idx:04d}.wav"
-                extract_segment(normalized_audio_path, segment_path, start_s, end_s, ffmpeg_bin=SETTINGS.ffmpeg_bin)
-                segment_jobs.append(
-                    {
-                        "segment_path": str(segment_path),
-                        "speaker_id": str(segment["speaker_id"]),
-                        "speaker_name": str(segment["speaker_name"]),
-                        "start_s": float(segment["start_s"]),
-                        "end_s": float(segment["end_s"]),
-                    }
-                )
-
-            JOB_STORE.append_log(
-                job_id,
-                (
-                    "ASR runtime detected; transcription uses external binary "
-                    f"(compute={transcriber.compute_mode()})"
-                ),
-            )
-
             def _segment_progress(done: int, total: int) -> None:
                 stage_percent = (done / max(1, total)) * 100
                 JOB_STORE.set_transcription_progress(
@@ -217,7 +200,85 @@ class PipelineOrchestrator:
                     overall_percent=self._overall(5, stage_percent),
                 )
 
-            transcript_segments = transcribe_segments(transcriber, segment_jobs, progress_callback=_segment_progress)
+            if api_config is not None and api_config.transcription_execution == "api":
+                if api_diarization_result is not None:
+                    transcript_segments = self._transcript_segments_from_openai_diarization(
+                        api_diarization_result,
+                        speaker_map,
+                    )
+                    _segment_progress(len(transcript_segments), len(transcript_segments))
+                    JOB_STORE.append_log(
+                        job_id,
+                        f"Transcription executed via OpenAI diarized transcript ({api_config.diarization_model})",
+                    )
+                else:
+                    transcriber = OpenAITranscriber(api_config.api_key, api_config.transcription_model)
+                    for idx, segment in enumerate(segments_for_transcription, start=1):
+                        padding = 0.2
+                        start_s = max(0.0, float(segment["start_s"]) - padding)
+                        end_s = float(segment["end_s"]) + padding
+                        segment_path = transcription_dir / f"segment_{idx:04d}.wav"
+                        extract_segment(
+                            normalized_audio_path,
+                            segment_path,
+                            start_s,
+                            end_s,
+                            ffmpeg_bin=SETTINGS.ffmpeg_bin,
+                        )
+                        segment_jobs.append(
+                            {
+                                "segment_path": str(segment_path),
+                                "speaker_id": str(segment["speaker_id"]),
+                                "speaker_name": str(segment["speaker_name"]),
+                                "start_s": float(segment["start_s"]),
+                                "end_s": float(segment["end_s"]),
+                            }
+                        )
+                    JOB_STORE.append_log(
+                        job_id,
+                        f"Transcription uses OpenAI model {api_config.transcription_model}",
+                    )
+                    transcript_segments = transcribe_segments(
+                        transcriber,
+                        segment_jobs,
+                        progress_callback=_segment_progress,
+                    )
+            else:
+                transcriber = VoxtralTranscriber(
+                    SETTINGS.voxtral_binary,
+                    SETTINGS.voxtral_model_path,
+                    compute_device=SETTINGS.compute_device,
+                    cuda_device_id=SETTINGS.cuda_device_id,
+                    gpu_layers=SETTINGS.voxtral_gpu_layers,
+                )
+                if not transcriber.available():
+                    raise TranscriptionError(
+                        "ASR runtime unavailable. Fix: set AUTOMOM_VOXTRAL_BIN to a valid ASR binary "
+                        "and AUTOMOM_VOXTRAL_MODEL to an existing model file before starting a job."
+                    )
+                for idx, segment in enumerate(segments_for_transcription, start=1):
+                    padding = 0.2
+                    start_s = max(0.0, float(segment["start_s"]) - padding)
+                    end_s = float(segment["end_s"]) + padding
+                    segment_path = transcription_dir / f"segment_{idx:04d}.wav"
+                    extract_segment(normalized_audio_path, segment_path, start_s, end_s, ffmpeg_bin=SETTINGS.ffmpeg_bin)
+                    segment_jobs.append(
+                        {
+                            "segment_path": str(segment_path),
+                            "speaker_id": str(segment["speaker_id"]),
+                            "speaker_name": str(segment["speaker_name"]),
+                            "start_s": float(segment["start_s"]),
+                            "end_s": float(segment["end_s"]),
+                        }
+                    )
+                JOB_STORE.append_log(
+                    job_id,
+                    (
+                        "ASR runtime detected; transcription uses external binary "
+                        f"(compute={transcriber.compute_mode()})"
+                    ),
+                )
+                transcript_segments = transcribe_segments(transcriber, segment_jobs, progress_callback=_segment_progress)
             write_json(job_dir / "segments_transcript.json", transcript_segments)
             JOB_STORE.set_artifact(job_id, "segments_transcript", job_dir / "segments_transcript.json")
             JOB_STORE.set_stage_percent(job_id, 100.0, overall_percent=self._overall(5, 100.0))
@@ -236,16 +297,23 @@ class PipelineOrchestrator:
             self._ensure_not_cancelled(job_id)
             self._set_stage(job_id, 7)
             JOB_STORE.append_log(job_id, "Stage 8/9: formatting minutes of meeting")
-            use_legacy_formatter_command = SETTINGS.formatter_backend == "command"
+            use_api_formatter = api_config is not None and api_config.formatter_execution == "api"
+            use_legacy_formatter_command = SETTINGS.formatter_backend == "command" and not use_api_formatter
             JOB_STORE.append_log(
                 job_id,
-                f"Formatter backend: {'command' if use_legacy_formatter_command else 'ollama'}",
+                (
+                    f"Formatter backend: OpenAI ({api_config.formatter_model})"
+                    if use_api_formatter
+                    else f"Formatter backend: {'command' if use_legacy_formatter_command else 'ollama'}"
+                ),
             )
             formatter = Formatter(
                 command_template=SETTINGS.formatter_command if use_legacy_formatter_command else "",
                 model_path=SETTINGS.formatter_model_path if use_legacy_formatter_command else "",
                 ollama_host=SETTINGS.ollama_host,
                 ollama_model=SETTINGS.formatter_ollama_model,
+                openai_api_key=api_config.api_key if use_api_formatter else "",
+                openai_model=api_config.formatter_model if use_api_formatter else "",
                 timeout_s=SETTINGS.formatter_timeout_s,
             )
             title = runtime.title or runtime.audio_path.stem
@@ -291,6 +359,74 @@ class PipelineOrchestrator:
         except Exception as exc:  # pragma: no cover - this is fallback guard
             JOB_STORE.mark_failed(job_id, str(exc))
             JOB_STORE.append_log(job_id, f"Job failed: {exc}")
+
+    def _diarize_with_openai(
+        self,
+        runtime,
+        normalized_audio_path: Path,
+    ) -> OpenAIDiarizationResult:
+        api_config = runtime.api_config
+        if api_config is None:
+            raise RuntimeError("OpenAI diarization requested without API configuration.")
+        client = OpenAIClient(api_config.api_key)
+        audio_path = self._pick_openai_audio_source(runtime.audio_path, normalized_audio_path)
+        try:
+            return client.diarize_audio(audio_path, model=api_config.diarization_model)
+        except OpenAIAPIError as exc:
+            raise RuntimeError(f"OpenAI diarization failed: {exc}") from exc
+
+    @staticmethod
+    def _pick_openai_audio_source(original_audio_path: Path, normalized_audio_path: Path) -> Path:
+        supported_suffixes = {".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm"}
+        original_suffix = original_audio_path.suffix.lower()
+        if (
+            original_audio_path.exists()
+            and original_suffix in supported_suffixes
+            and original_audio_path.stat().st_size <= 25 * 1024 * 1024
+        ):
+            return original_audio_path
+        if normalized_audio_path.exists() and normalized_audio_path.stat().st_size <= 25 * 1024 * 1024:
+            return normalized_audio_path
+        raise RuntimeError(
+            "OpenAI audio upload requires a supported source file under 25 MB. "
+            "Use a shorter/compressed input or keep this step on local execution."
+        )
+
+    @staticmethod
+    def _diarization_result_from_openai(result: OpenAIDiarizationResult) -> DiarizationResult:
+        segments = [
+            DiarizationSegment(
+                speaker_id=item.speaker_id,
+                start_s=item.start_s,
+                end_s=item.end_s,
+                confidence=1.0,
+            )
+            for item in result.segments
+        ]
+        return DiarizationResult(
+            segments=segments,
+            speaker_count=len({item.speaker_id for item in segments}),
+            mode="openai",
+            details="openai_api",
+        )
+
+    @staticmethod
+    def _transcript_segments_from_openai_diarization(
+        result: OpenAIDiarizationResult,
+        speaker_map: dict[str, str],
+    ) -> list[dict[str, object]]:
+        transcript_segments = [
+            {
+                "speaker_id": item.speaker_id,
+                "speaker_name": speaker_map.get(item.speaker_id, item.speaker_id),
+                "start_s": item.start_s,
+                "end_s": item.end_s,
+                "text": item.text,
+            }
+            for item in result.segments
+            if item.text.strip()
+        ]
+        return sorted(transcript_segments, key=lambda item: (float(item["start_s"]), float(item["end_s"])))
 
     def _build_speaker_info(
         self,

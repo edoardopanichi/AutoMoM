@@ -71,6 +71,70 @@
               <option value="en">English</option>
             </select>
           </label>
+          <section class="cloud-panel">
+            <div class="cloud-panel-header">
+              <h3>Paid Cloud Models</h3>
+              <p>Optional OpenAI API key. Use one key across diarization, transcription, and MoM generation.</p>
+            </div>
+            <label>
+              OpenAI API key
+              <input
+                type="password"
+                id="openai-api-key"
+                placeholder="sk-..."
+                autocomplete="off"
+                spellcheck="false"
+              />
+            </label>
+            <div class="cloud-grid">
+              <label>
+                Diarization
+                <select id="diarization-execution">
+                  <option value="local">Local model</option>
+                  <option value="api">OpenAI API</option>
+                </select>
+              </label>
+              <label>
+                Diarization API model
+                <select id="openai-diarization-model">
+                  <option value="gpt-4o-transcribe-diarize">gpt-4o-transcribe-diarize</option>
+                </select>
+              </label>
+              <label>
+                Transcription
+                <select id="transcription-execution">
+                  <option value="local">Local model</option>
+                  <option value="api">OpenAI API</option>
+                </select>
+              </label>
+              <label>
+                Transcription API model
+                <select id="openai-transcription-model">
+                  <option value="gpt-4o-transcribe">gpt-4o-transcribe</option>
+                  <option value="gpt-4o-mini-transcribe">gpt-4o-mini-transcribe</option>
+                </select>
+              </label>
+              <label>
+                MoM generation
+                <select id="formatter-execution">
+                  <option value="local">Local model</option>
+                  <option value="api">OpenAI API</option>
+                </select>
+              </label>
+              <label>
+                MoM API model
+                <select id="openai-formatter-model">
+                  <option value="gpt-5-mini">gpt-5-mini</option>
+                  <option value="gpt-4.1">gpt-4.1</option>
+                  <option value="gpt-5-nano">gpt-5-nano</option>
+                </select>
+              </label>
+            </div>
+            <p class="cloud-note">
+              Recommended pairing: `gpt-4o-transcribe-diarize` for diarization, `gpt-4o-transcribe` for ASR,
+              and `gpt-5-mini` for minutes generation.
+            </p>
+          </section>
           <label>
             Meeting title
             <input type="text" id="meeting-title" placeholder="Optional" />

@@ -115,11 +115,19 @@ class ModelManager:
             )
         return statuses
 
-    def missing_model_ids(self) -> list[str]:
-        return [spec.model_id for spec in self._specs.values() if not self._is_model_installed(spec)]
+    def missing_model_ids(self, required_model_ids: set[str] | None = None) -> list[str]:
+        required = set(self._specs.keys()) if required_model_ids is None else set(required_model_ids)
+        return [
+            spec.model_id
+            for spec in self._specs.values()
+            if spec.model_id in required and not self._is_model_installed(spec)
+        ]
 
-    def validate_for_job_start(self) -> tuple[bool, str | None]:
+    def validate_for_job_start(self, required_model_ids: set[str] | None = None) -> tuple[bool, str | None]:
+        required = set(self._specs.keys()) if required_model_ids is None else set(required_model_ids)
         for spec in self._specs.values():
+            if spec.model_id not in required:
+                continue
             if not self._is_model_installed(spec) or not spec.checksum_sha256:
                 continue
             try:
@@ -132,8 +140,7 @@ class ModelManager:
                         "Please re-download the model."
                     ),
                 )
-
-        missing = self.missing_model_ids()
+        missing = self.missing_model_ids(required)
         if not missing:
             return True, None
 

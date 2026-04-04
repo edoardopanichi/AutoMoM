@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from backend.app.config import SETTINGS
+from backend.pipeline.openai_client import OpenAIAPIError, OpenAIClient
 from backend.pipeline.template_manager import TEMPLATE_MANAGER
 
 ACTION_OWNER_PATTERN = re.compile(r"(?P<owner>[A-Z][a-z]+) will (?P<task>[^.]+)", re.IGNORECASE)
@@ -29,6 +30,8 @@ class Formatter:
         model_path: str | None = None,
         ollama_host: str | None = None,
         ollama_model: str | None = None,
+        openai_api_key: str | None = None,
+        openai_model: str | None = None,
         *,
         timeout_s: int | None = None,
         **_: object,
@@ -37,6 +40,8 @@ class Formatter:
         self.model_path = model_path or ""
         self.ollama_host = (ollama_host or SETTINGS.ollama_host).rstrip("/")
         self.ollama_model = (ollama_model or SETTINGS.formatter_ollama_model).strip()
+        self.openai_api_key = (openai_api_key or "").strip()
+        self.openai_model = (openai_model or "").strip()
         self.timeout_s = int(timeout_s or SETTINGS.formatter_timeout_s)
         self.last_raw_output: str = ""
         self.last_stdout: str = ""
@@ -44,6 +49,8 @@ class Formatter:
         self.last_mode: str = "heuristic"
 
     def run_model(self, prompt: str) -> dict[str, object] | None:
+        if self.openai_api_key:
+            return self._run_openai_response(prompt)
         if self.command_template:
             return self._run_legacy_command(prompt)
         if not self.ollama_model:
@@ -113,6 +120,31 @@ class Formatter:
             self.last_mode = "heuristic_empty_output"
             return None
 
+        self.last_raw_output = output
+        parsed = self._parse_json_output(output)
+        if parsed is not None:
+            self.last_mode = "model_json"
+            return parsed
+        if _looks_like_markdown_document(output):
+            self.last_mode = "model_markdown"
+            return {"_raw_markdown_text": output}
+
+        self.last_mode = "model_plaintext"
+        return {"_raw_model_text": output}
+
+    def _run_openai_response(self, prompt: str) -> dict[str, object] | None:
+        try:
+            client = OpenAIClient(self.openai_api_key)
+            output = client.generate_text(prompt, model=self.openai_model or "gpt-5-mini", timeout_s=self.timeout_s)
+        except (OpenAIAPIError, ValueError) as exc:
+            self.last_raw_output = ""
+            self.last_stdout = ""
+            self.last_stderr = str(exc)
+            self.last_mode = "heuristic_openai_error"
+            return None
+
+        self.last_stdout = output
+        self.last_stderr = ""
         self.last_raw_output = output
         parsed = self._parse_json_output(output)
         if parsed is not None:
@@ -340,4 +372,6 @@ def _formatter_failure_message(last_mode: str, model_name: str, ollama_host: str
         return "Ollama returned invalid JSON response. Fix: verify Ollama health and server logs."
     if last_mode == "heuristic_empty_output":
         return "Formatter produced empty output. Fix: try another Ollama model or adjust prompt/template."
+    if last_mode == "heuristic_openai_error":
+        return "OpenAI formatter request failed. Fix: verify the API key, selected model, and network access."
     return f"Formatter output unavailable (mode={last_mode})."

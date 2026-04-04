@@ -9,6 +9,7 @@ from functools import lru_cache
 
 from backend.pipeline.compute import should_enable_native_gpu
 from backend.pipeline.diarization import merge_transcript_segments
+from backend.pipeline.openai_client import OpenAIAPIError, OpenAIClient
 
 TIMESTAMP_RANGE_PATTERN = re.compile(
     r"\[\s*\d{1,2}:\d{2}:\d{2}(?:[.,]\d{1,3})?\s*-->\s*\d{1,2}:\d{2}:\d{2}(?:[.,]\d{1,3})?\s*\]"
@@ -145,9 +146,26 @@ class VoxtralTranscriber:
         return " ".join(missing_parts)
 
 
+class OpenAITranscriber:
+    def __init__(self, api_key: str, model: str) -> None:
+        self._client = OpenAIClient(api_key)
+        self._model = model.strip() or "gpt-4o-transcribe"
+
+    def available(self) -> bool:
+        return True
+
+    def transcribe(self, segment_path: Path) -> str:
+        try:
+            return self._client.transcribe_audio(segment_path, model=self._model)
+        except OpenAIAPIError as exc:
+            raise TranscriptionError(f"OpenAI transcription failed for '{segment_path.name}': {exc}") from exc
+
+    def compute_mode(self) -> str:
+        return f"api:{self._model}"
+
 
 def transcribe_segments(
-    transcriber: VoxtralTranscriber,
+    transcriber: VoxtralTranscriber | OpenAITranscriber,
     segment_jobs: list[dict[str, object]],
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> list[dict[str, object]]:

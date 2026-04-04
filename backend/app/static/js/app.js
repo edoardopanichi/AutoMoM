@@ -71,6 +71,19 @@ function toggleTemplateCreator(show) {
   }
 }
 
+function syncCloudExecutionControls() {
+  [
+    ["#diarization-execution", "#openai-diarization-model"],
+    ["#transcription-execution", "#openai-transcription-model"],
+    ["#formatter-execution", "#openai-formatter-model"],
+  ].forEach(([executionSelector, modelSelector]) => {
+    const execution = qs(executionSelector);
+    const model = qs(modelSelector);
+    if (!execution || !model) return;
+    model.disabled = execution.value !== "api";
+  });
+}
+
 function renderTemplates(templates) {
   const container = qs("#templates");
   container.innerHTML = "";
@@ -464,6 +477,13 @@ async function startJob(event) {
   formData.append("template_id", qs("#template-select").value);
   formData.append("language_mode", qs("#language-mode").value);
   formData.append("title", qs("#meeting-title").value);
+  formData.append("diarization_execution", qs("#diarization-execution").value);
+  formData.append("transcription_execution", qs("#transcription-execution").value);
+  formData.append("formatter_execution", qs("#formatter-execution").value);
+  formData.append("openai_api_key", qs("#openai-api-key").value);
+  formData.append("openai_diarization_model", qs("#openai-diarization-model").value);
+  formData.append("openai_transcription_model", qs("#openai-transcription-model").value);
+  formData.append("openai_formatter_model", qs("#openai-formatter-model").value);
 
   try {
     const response = await fetch("/api/jobs", {
@@ -530,10 +550,14 @@ function bindEvents() {
   qs("#open-template-creator").addEventListener("click", () => toggleTemplateCreator(true));
   qs("#cancel-template-inline").addEventListener("click", () => toggleTemplateCreator(false));
   qs("#save-template-inline").addEventListener("click", saveTemplateInline);
+  ["#diarization-execution", "#transcription-execution", "#formatter-execution"].forEach((selector) => {
+    qs(selector).addEventListener("change", syncCloudExecutionControls);
+  });
 }
 
 async function init() {
   bindEvents();
+  syncCloudExecutionControls();
   await loadStartupData();
 }
 
