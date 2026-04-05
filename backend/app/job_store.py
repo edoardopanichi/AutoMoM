@@ -26,6 +26,7 @@ class OpenAIJobConfig:
 @dataclass
 class JobRuntime:
     audio_path: Path
+    original_filename: str | None
     template_id: str
     language_mode: str
     title: str | None
@@ -44,6 +45,7 @@ class JobStore:
     def create_job(
         self,
         audio_path: Path,
+        original_filename: str | None,
         template_id: str,
         language_mode: str,
         title: str | None,
@@ -59,6 +61,7 @@ class JobStore:
         )
         runtime = JobRuntime(
             audio_path=audio_path,
+            original_filename=original_filename,
             template_id=template_id,
             language_mode=language_mode,
             title=title,

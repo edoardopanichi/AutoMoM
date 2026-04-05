@@ -260,6 +260,7 @@ async def create_job(
 
     runtime = JOB_STORE.create_job(
         audio_path=target_path,
+        original_filename=audio_file.filename,
         template_id=template_id,
         language_mode=language_mode,
         title=title,

@@ -11,6 +11,7 @@ def test_job_id_uses_timestamp_and_title(isolated_settings, tmp_path: Path) -> N
 
     runtime = JOB_STORE.create_job(
         audio_path=audio,
+        original_filename=audio.name,
         template_id="default",
         language_mode="auto",
         title="Weekly Sync",
@@ -26,6 +27,7 @@ def test_job_id_falls_back_to_meeting_when_title_missing(isolated_settings, tmp_
 
     runtime = JOB_STORE.create_job(
         audio_path=audio,
+        original_filename=audio.name,
         template_id="default",
         language_mode="auto",
         title=None,
@@ -40,6 +42,7 @@ def test_submit_speaker_mapping_requires_waiting_state(isolated_settings, tmp_pa
 
     runtime = JOB_STORE.create_job(
         audio_path=audio,
+        original_filename=audio.name,
         template_id="default",
         language_mode="auto",
         title="Weekly Sync",

@@ -31,6 +31,7 @@ def test_end_to_end_job_with_golden_outputs(isolated_settings, monkeypatch, tmp_
 
     runtime = JOB_STORE.create_job(
         audio_path=source_audio,
+        original_filename=source_audio.name,
         template_id="default",
         language_mode="auto",
         title="Integration Test Meeting",
@@ -141,6 +142,7 @@ def test_end_to_end_job_with_golden_outputs(isolated_settings, monkeypatch, tmp_
     transcript_path = Path(state.artifact_paths["transcript"])
     mom_path = Path(state.artifact_paths["mom_markdown"])
     runtime_path = Path(state.artifact_paths["transcription_runtime"])
+    summary_path = Path(state.artifact_paths["job_summary"])
 
     generated_transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
     expected_transcript = json.loads(
@@ -150,8 +152,15 @@ def test_end_to_end_job_with_golden_outputs(isolated_settings, monkeypatch, tmp_
 
     assert mom_path.read_text(encoding="utf-8") == raw_formatter_output
     runtime_payload = json.loads(runtime_path.read_text(encoding="utf-8"))
+    summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
     assert runtime_payload["thread_count"] == 2
     assert runtime_payload["active_mode"] == "cpu"
+    assert summary_payload["meeting_title"] == "Integration Test Meeting"
+    assert summary_payload["template_id"] == "default"
+    assert summary_payload["audio"]["original_filename"] == "meeting.wav"
+    assert summary_payload["speakers"]["count"] == 2
+    assert summary_payload["execution"]["transcription"]["compute_active"] == "cpu"
+    assert "transcription" in summary_payload["timings"]["stages"]
     assert not any((transcript_path.parent / "transcription_segments").glob("*.wav"))
 
 
@@ -163,6 +172,7 @@ def test_end_to_end_passthrough_uses_raw_formatter_output(isolated_settings, mon
 
     runtime = JOB_STORE.create_job(
         audio_path=source_audio,
+        original_filename=source_audio.name,
         template_id="default",
         language_mode="auto",
         title="Passthrough Meeting",
@@ -282,6 +292,7 @@ def test_end_to_end_stderr_prefixed_output_passthrough(isolated_settings, monkey
 
     runtime = JOB_STORE.create_job(
         audio_path=source_audio,
+        original_filename=source_audio.name,
         template_id="default",
         language_mode="auto",
         title="Stderr Passthrough Meeting",
@@ -403,6 +414,7 @@ def test_end_to_end_nonzero_formatter_exit_with_stdout_still_passthrough(
 
     runtime = JOB_STORE.create_job(
         audio_path=source_audio,
+        original_filename=source_audio.name,
         template_id="default",
         language_mode="auto",
         title="Nonzero Passthrough Meeting",

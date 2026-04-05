@@ -46,6 +46,7 @@ def main() -> int:
 
     runtime = JOB_STORE.create_job(
         audio_path=args.audio_path,
+        original_filename=args.audio_path.name,
         template_id=args.template_id,
         language_mode="auto",
         title=args.title,

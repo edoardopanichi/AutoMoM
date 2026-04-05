@@ -138,6 +138,7 @@ def _collect_metrics(job_id: str, wall_clock_s: float) -> dict[str, Any]:
 def _run_benchmark(audio_path: Path, template_id: str, title_prefix: str) -> dict[str, Any]:
     runtime = JOB_STORE.create_job(
         audio_path=audio_path,
+        original_filename=audio_path.name,
         template_id=template_id,
         language_mode="auto",
         title=f"{title_prefix} {audio_path.stem}",
