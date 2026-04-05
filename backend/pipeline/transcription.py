@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import asdict, dataclass
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -23,6 +25,39 @@ class TranscriptionError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class ASRBinaryCapabilities:
+    binary_path: str
+    is_whisper_cli: bool
+    supported_flags: tuple[str, ...]
+    linked_backends: tuple[str, ...]
+    gpu_backend_available: bool
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass
+class ASRRuntimeReport:
+    binary_path: str
+    model_path: str
+    requested_mode: str
+    available_mode: str
+    active_mode: str
+    gpu_requested: bool
+    gpu_backend_available: bool
+    gpu_verified_active: bool
+    supported_flags: list[str]
+    linked_backends: list[str]
+    thread_count: int
+    processor_count: int
+    gpu_retry_disabled: bool = False
+    last_error: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
 class VoxtralTranscriber:
     def __init__(
         self,
@@ -32,16 +67,36 @@ class VoxtralTranscriber:
         compute_device: str = "auto",
         cuda_device_id: int = 0,
         gpu_layers: int = 99,
+        threads: int = 4,
+        processors: int = 1,
     ) -> None:
         self.binary_path = binary_path or ""
         self.model_path = model_path or ""
         self._resolved_binary_path = self._resolve_binary_path(self.binary_path)
         self._cuda_device_id = max(0, int(cuda_device_id))
         self._gpu_layers = max(0, int(gpu_layers))
+        self._threads = max(1, int(threads))
+        self._processors = max(1, int(processors))
+        self._requested_mode = (compute_device or "auto").strip().lower() or "auto"
         self._gpu_requested = should_enable_native_gpu(compute_device, self._cuda_device_id)
         self._gpu_retry_disabled = False
         self._runtime_available = bool(
             self._resolved_binary_path and self.model_path and Path(self.model_path).exists()
+        )
+        self._capabilities = _probe_asr_binary(self._resolved_binary_path or "")
+        self._runtime_report = ASRRuntimeReport(
+            binary_path=self._resolved_binary_path or "",
+            model_path=self.model_path,
+            requested_mode=self._requested_mode,
+            available_mode=self._available_mode(),
+            active_mode="cpu" if self._runtime_available else "fallback",
+            gpu_requested=self._gpu_requested,
+            gpu_backend_available=self._capabilities.gpu_backend_available,
+            gpu_verified_active=False,
+            supported_flags=list(self._capabilities.supported_flags),
+            linked_backends=list(self._capabilities.linked_backends),
+            thread_count=self._threads,
+            processor_count=self._processors,
         )
 
     def available(self) -> bool:
@@ -55,6 +110,7 @@ class VoxtralTranscriber:
         command = self._build_command(segment_path, use_gpu=use_gpu)
         process = subprocess.run(command, capture_output=True, text=True)
         invocation_failed = _invocation_failed(process)
+        self._record_runtime_result(process, requested_gpu=use_gpu)
         if invocation_failed and use_gpu:
             # If GPU flags are unsupported, retry once on CPU and keep running.
             retry_command = self._build_command(segment_path, use_gpu=False)
@@ -63,12 +119,14 @@ class VoxtralTranscriber:
                 process = retry_process
                 invocation_failed = False
                 self._gpu_retry_disabled = True
+                self._record_runtime_result(retry_process, requested_gpu=False)
         if invocation_failed:
             hint = (
                 "Ensure AUTOMOM_VOXTRAL_BIN points to a working whisper.cpp CLI binary "
                 "and AUTOMOM_VOXTRAL_MODEL points to a compatible model file."
             )
             error_text = (process.stderr or process.stdout or "").strip()
+            self._runtime_report.last_error = error_text
             raise TranscriptionError(f"ASR invocation failed for '{segment_path.name}': {error_text}. {hint}")
         raw_text = process.stdout if process.stdout.strip() else process.stderr
         text = clean_transcript_text(raw_text)
@@ -82,17 +140,42 @@ class VoxtralTranscriber:
     def compute_mode(self) -> str:
         if not self._runtime_available:
             return "fallback"
-        if self._gpu_requested and not self._gpu_retry_disabled:
+        if self._runtime_report.gpu_verified_active:
             return "cuda"
         if self._gpu_requested and self._gpu_retry_disabled:
             return "cpu(gpu_retry_disabled)"
+        if self._gpu_requested and not self._capabilities.gpu_backend_available:
+            return "cpu(gpu_backend_unavailable)"
         return "cpu"
+
+    def runtime_report(self) -> dict[str, object]:
+        self._runtime_report.available_mode = self._available_mode()
+        self._runtime_report.gpu_retry_disabled = self._gpu_retry_disabled
+        return self._runtime_report.to_dict()
+
+    def runtime_summary(self) -> str:
+        report = self.runtime_report()
+        active_mode = str(report["active_mode"])
+        if bool(report["gpu_verified_active"]):
+            return "compute=cuda (verified active)"
+        if bool(report["gpu_requested"]) and not bool(report["gpu_backend_available"]):
+            return "compute=cpu (GPU backend unavailable in ASR binary)"
+        if bool(report["gpu_requested"]) and bool(report["gpu_retry_disabled"]):
+            return "compute=cpu (GPU retry disabled after runtime fallback)"
+        if self._requested_mode == "cpu" or not bool(report["gpu_requested"]):
+            return "compute=cpu (GPU disabled by config)"
+        return f"compute={active_mode} (GPU requested but not verified active)"
 
     def _build_command(self, segment_path: Path, *, use_gpu: bool) -> list[str]:
         command = [self._resolved_binary_path, "-m", self.model_path, "-f", str(segment_path)]
+        if self._capabilities.is_whisper_cli:
+            if _binary_supports_any_flag(self._resolved_binary_path, ("-t", "--threads")):
+                command.extend(["-t", str(self._threads)])
+            if _binary_supports_any_flag(self._resolved_binary_path, ("-p", "--processors")):
+                command.extend(["-p", str(self._processors)])
         if not use_gpu or not self._resolved_binary_path:
             return command
-        if "whisper" not in Path(self._resolved_binary_path).name.lower():
+        if not self._capabilities.is_whisper_cli or not self._capabilities.gpu_backend_available:
             return command
 
         tokens = set(command)
@@ -113,7 +196,7 @@ class VoxtralTranscriber:
             and "--n-gpu-layers" not in tokens
         ):
             command.extend(["-ngl", str(self._gpu_layers)])
-        if supports_device and self._cuda_device_id > 0 and "-dev" not in tokens and "--device" not in tokens:
+        if supports_device and "-dev" not in tokens and "--device" not in tokens:
             command.extend(["-dev", str(self._cuda_device_id)])
         return command
 
@@ -144,6 +227,27 @@ class VoxtralTranscriber:
         if not missing_parts:
             missing_parts.append("ASR runtime is unavailable.")
         return " ".join(missing_parts)
+
+    def _available_mode(self) -> str:
+        if not self._runtime_available:
+            return "fallback"
+        if self._gpu_requested and self._capabilities.gpu_backend_available:
+            return "cuda"
+        return "cpu"
+
+    def _record_runtime_result(self, process: subprocess.CompletedProcess[str], *, requested_gpu: bool) -> None:
+        combined_output = "\n".join(part for part in (process.stdout, process.stderr) if part).strip()
+        verified_gpu = _gpu_verified_active(combined_output)
+        active_mode = "cuda" if verified_gpu else "cpu"
+        self._runtime_report.active_mode = active_mode
+        self._runtime_report.gpu_verified_active = verified_gpu
+        self._runtime_report.gpu_retry_disabled = self._gpu_retry_disabled
+        if requested_gpu and not verified_gpu and self._capabilities.gpu_backend_available:
+            self._runtime_report.last_error = _runtime_gpu_failure_reason(combined_output)
+        elif requested_gpu and not self._capabilities.gpu_backend_available:
+            self._runtime_report.last_error = "gpu_backend_unavailable"
+        elif not requested_gpu:
+            self._runtime_report.last_error = ""
 
 
 class OpenAITranscriber:
@@ -225,8 +329,79 @@ def _invocation_failed(process: subprocess.CompletedProcess[str]) -> bool:
     return False
 
 
+def _runtime_gpu_failure_reason(output: str) -> str:
+    lowered = output.lower()
+    if "no gpu found" in lowered:
+        return "no_gpu_found"
+    if "failed" in lowered and "gpu" in lowered:
+        return "gpu_runtime_failure"
+    return "gpu_not_verified"
+
+
+def _gpu_verified_active(output: str) -> bool:
+    lowered = output.lower()
+    if "no gpu found" in lowered:
+        return False
+    return bool(re.search(r"whisper_backend_init_gpu:\s*device\s+\d+:\s*(?!cpu\b).+", lowered))
+
+
 @lru_cache(maxsize=8)
-def _binary_supports_any_flag(binary_path: str, flags: tuple[str, ...]) -> bool:
+def _probe_asr_binary(binary_path: str) -> ASRBinaryCapabilities:
+    if not binary_path:
+        return ASRBinaryCapabilities("", False, tuple(), tuple(), False)
+
+    resolved = str(Path(binary_path))
+    name = Path(resolved).name.lower()
+    help_text = _binary_help_text(resolved)
+    supported_flags = tuple(sorted(set(re.findall(r"(?<!\w)(?:-{1,2}[a-z0-9][a-z0-9\-]*)", help_text))))
+    linked_backends = _detect_linked_backends(resolved)
+    is_whisper_cli = "whisper" in name
+    if linked_backends:
+        gpu_backend_available = any(item != "cpu" for item in linked_backends)
+    else:
+        gpu_backend_available = any(flag in supported_flags for flag in ("-dev", "--device", "-ngl", "--gpu-layers"))
+    return ASRBinaryCapabilities(
+        binary_path=resolved,
+        is_whisper_cli=is_whisper_cli,
+        supported_flags=supported_flags,
+        linked_backends=linked_backends,
+        gpu_backend_available=gpu_backend_available,
+    )
+
+
+def _detect_linked_backends(binary_path: str) -> tuple[str, ...]:
+    try:
+        process = subprocess.run(
+            ["ldd", binary_path],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except Exception:
+        return tuple()
+
+    if process.returncode != 0:
+        return tuple()
+
+    lowered = process.stdout.lower()
+    backends: list[str] = []
+    if "libggml-cpu" in lowered:
+        backends.append("cpu")
+    if "cuda" in lowered or "cublas" in lowered:
+        backends.append("cuda")
+    if "vulkan" in lowered:
+        backends.append("vulkan")
+    if "opencl" in lowered:
+        backends.append("opencl")
+    if "metal" in lowered:
+        backends.append("metal")
+    if "sycl" in lowered:
+        backends.append("sycl")
+    return tuple(dict.fromkeys(backends))
+
+
+@lru_cache(maxsize=8)
+def _binary_help_text(binary_path: str) -> str:
     try:
         process = subprocess.run(
             [binary_path, "--help"],
@@ -235,7 +410,13 @@ def _binary_supports_any_flag(binary_path: str, flags: tuple[str, ...]) -> bool:
             timeout=2,
         )
     except Exception:
-        return False
+        return ""
+    return f"{process.stdout}\n{process.stderr}"
 
-    help_text = f"{process.stdout}\n{process.stderr}"
+
+@lru_cache(maxsize=8)
+def _binary_supports_any_flag(binary_path: str, flags: tuple[str, ...]) -> bool:
+    help_text = _binary_help_text(binary_path)
+    if not help_text:
+        return False
     return any(flag in help_text for flag in flags)

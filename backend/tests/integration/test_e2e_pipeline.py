@@ -112,12 +112,18 @@ def test_end_to_end_job_with_golden_outputs(isolated_settings, monkeypatch, tmp_
     old_model_path = SETTINGS.formatter_model_path
     old_voxtral_bin = SETTINGS.voxtral_binary
     old_voxtral_model_path = SETTINGS.voxtral_model_path
+    old_voxtral_threads = SETTINGS.voxtral_threads
+    old_voxtral_processors = SETTINGS.voxtral_processors
+    old_keep_segment_audio = SETTINGS.transcription_keep_segment_audio
     try:
         object.__setattr__(SETTINGS, "formatter_backend", "command")
         object.__setattr__(SETTINGS, "formatter_command", f"python -c {shlex.quote(script)}")
         object.__setattr__(SETTINGS, "formatter_model_path", str(model_path))
         object.__setattr__(SETTINGS, "voxtral_binary", str(asr_binary))
         object.__setattr__(SETTINGS, "voxtral_model_path", str(asr_model))
+        object.__setattr__(SETTINGS, "voxtral_threads", 2)
+        object.__setattr__(SETTINGS, "voxtral_processors", 1)
+        object.__setattr__(SETTINGS, "transcription_keep_segment_audio", False)
         ORCHESTRATOR._run_job(job_id)
     finally:
         object.__setattr__(SETTINGS, "formatter_backend", old_backend)
@@ -125,12 +131,16 @@ def test_end_to_end_job_with_golden_outputs(isolated_settings, monkeypatch, tmp_
         object.__setattr__(SETTINGS, "formatter_model_path", old_model_path)
         object.__setattr__(SETTINGS, "voxtral_binary", old_voxtral_bin)
         object.__setattr__(SETTINGS, "voxtral_model_path", old_voxtral_model_path)
+        object.__setattr__(SETTINGS, "voxtral_threads", old_voxtral_threads)
+        object.__setattr__(SETTINGS, "voxtral_processors", old_voxtral_processors)
+        object.__setattr__(SETTINGS, "transcription_keep_segment_audio", old_keep_segment_audio)
 
     state = JOB_STORE.get_state(job_id)
     assert state.status == "completed"
 
     transcript_path = Path(state.artifact_paths["transcript"])
     mom_path = Path(state.artifact_paths["mom_markdown"])
+    runtime_path = Path(state.artifact_paths["transcription_runtime"])
 
     generated_transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
     expected_transcript = json.loads(
@@ -139,6 +149,10 @@ def test_end_to_end_job_with_golden_outputs(isolated_settings, monkeypatch, tmp_
     assert generated_transcript == expected_transcript
 
     assert mom_path.read_text(encoding="utf-8") == raw_formatter_output
+    runtime_payload = json.loads(runtime_path.read_text(encoding="utf-8"))
+    assert runtime_payload["thread_count"] == 2
+    assert runtime_payload["active_mode"] == "cpu"
+    assert not any((transcript_path.parent / "transcription_segments").glob("*.wav"))
 
 
 def test_end_to_end_passthrough_uses_raw_formatter_output(isolated_settings, monkeypatch, tmp_path: Path) -> None:

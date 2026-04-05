@@ -3,6 +3,7 @@ from __future__ import annotations
 import concurrent.futures
 from dataclasses import asdict
 from pathlib import Path
+import statistics
 
 from backend.app.config import SETTINGS
 from backend.app.job_store import JOB_STORE, OpenAIJobConfig, ensure_job_artifact_dir, write_json
@@ -180,11 +181,34 @@ class PipelineOrchestrator:
                         f"{len(diarization_result.segments)} -> {len(segments_for_transcription)} segments"
                     ),
                 )
+            transcription_chunks = self._plan_transcription_chunks(
+                segments_for_transcription,
+                max_gap_s=SETTINGS.transcription_merge_gap_s,
+                max_chunk_s=SETTINGS.transcription_max_chunk_s,
+            )
+            if len(transcription_chunks) != len(segments_for_transcription):
+                JOB_STORE.append_log(
+                    job_id,
+                    (
+                        "Transcription chunk planner applied: "
+                        f"{len(segments_for_transcription)} -> {len(transcription_chunks)} chunks"
+                    ),
+                )
+            if transcription_chunks:
+                durations = [float(item["end_s"]) - float(item["start_s"]) for item in transcription_chunks]
+                JOB_STORE.append_log(
+                    job_id,
+                    (
+                        "Transcription chunk stats: "
+                        f"avg={statistics.mean(durations):.2f}s "
+                        f"max={max(durations):.2f}s"
+                    ),
+                )
             if (
                 SETTINGS.transcription_max_segments > 0
-                and len(segments_for_transcription) > SETTINGS.transcription_max_segments
+                and len(transcription_chunks) > SETTINGS.transcription_max_segments
             ):
-                segments_for_transcription = segments_for_transcription[: SETTINGS.transcription_max_segments]
+                transcription_chunks = transcription_chunks[: SETTINGS.transcription_max_segments]
                 JOB_STORE.append_log(
                     job_id,
                     f"Transcription segment cap applied: {SETTINGS.transcription_max_segments}",
@@ -213,7 +237,7 @@ class PipelineOrchestrator:
                     )
                 else:
                     transcriber = OpenAITranscriber(api_config.api_key, api_config.transcription_model)
-                    for idx, segment in enumerate(segments_for_transcription, start=1):
+                    for idx, segment in enumerate(transcription_chunks, start=1):
                         padding = 0.2
                         start_s = max(0.0, float(segment["start_s"]) - padding)
                         end_s = float(segment["end_s"]) + padding
@@ -250,13 +274,15 @@ class PipelineOrchestrator:
                     compute_device=SETTINGS.compute_device,
                     cuda_device_id=SETTINGS.cuda_device_id,
                     gpu_layers=SETTINGS.voxtral_gpu_layers,
+                    threads=SETTINGS.voxtral_threads,
+                    processors=SETTINGS.voxtral_processors,
                 )
                 if not transcriber.available():
                     raise TranscriptionError(
                         "ASR runtime unavailable. Fix: set AUTOMOM_VOXTRAL_BIN to a valid ASR binary "
                         "and AUTOMOM_VOXTRAL_MODEL to an existing model file before starting a job."
                     )
-                for idx, segment in enumerate(segments_for_transcription, start=1):
+                for idx, segment in enumerate(transcription_chunks, start=1):
                     padding = 0.2
                     start_s = max(0.0, float(segment["start_s"]) - padding)
                     end_s = float(segment["end_s"]) + padding
@@ -271,14 +297,27 @@ class PipelineOrchestrator:
                             "end_s": float(segment["end_s"]),
                         }
                     )
+                initial_runtime = transcriber.runtime_report()
                 JOB_STORE.append_log(
                     job_id,
                     (
                         "ASR runtime detected; transcription uses external binary "
-                        f"(compute={transcriber.compute_mode()})"
+                        f"(requested={initial_runtime['requested_mode']} "
+                        f"available={initial_runtime['available_mode']} "
+                        f"binary={initial_runtime['binary_path']})"
                     ),
                 )
                 transcript_segments = transcribe_segments(transcriber, segment_jobs, progress_callback=_segment_progress)
+                runtime_payload = transcriber.runtime_report()
+                write_json(job_dir / "transcription_runtime.json", runtime_payload)
+                JOB_STORE.set_artifact(job_id, "transcription_runtime", job_dir / "transcription_runtime.json")
+                JOB_STORE.append_log(
+                    job_id,
+                    f"ASR runtime result: {transcriber.runtime_summary()}",
+                )
+                if not SETTINGS.transcription_keep_segment_audio:
+                    for item in segment_jobs:
+                        Path(str(item["segment_path"])).unlink(missing_ok=True)
             write_json(job_dir / "segments_transcript.json", transcript_segments)
             JOB_STORE.set_artifact(job_id, "segments_transcript", job_dir / "segments_transcript.json")
             JOB_STORE.set_stage_percent(job_id, 100.0, overall_percent=self._overall(5, 100.0))
@@ -516,6 +555,28 @@ class PipelineOrchestrator:
             else:
                 collapsed.append(segment.copy())
         return collapsed
+
+    @staticmethod
+    def _plan_transcription_chunks(
+        segments: list[dict[str, object]],
+        max_gap_s: float,
+        max_chunk_s: float,
+    ) -> list[dict[str, object]]:
+        if not segments:
+            return []
+
+        ordered = sorted(segments, key=lambda item: (float(item["start_s"]), float(item["end_s"])))
+        chunks: list[dict[str, object]] = [ordered[0].copy()]
+        for segment in ordered[1:]:
+            current = chunks[-1]
+            same_speaker = str(segment["speaker_id"]) == str(current["speaker_id"])
+            gap_s = float(segment["start_s"]) - float(current["end_s"])
+            proposed_duration = float(segment["end_s"]) - float(current["start_s"])
+            if same_speaker and gap_s <= max_gap_s and proposed_duration <= max_chunk_s:
+                current["end_s"] = float(segment["end_s"])
+            else:
+                chunks.append(segment.copy())
+        return chunks
 
     def _set_stage(self, job_id: str, stage_index: int) -> None:
         JOB_STORE.set_stage(job_id, STAGES[stage_index], overall_percent=self._overall(stage_index, 0.0))

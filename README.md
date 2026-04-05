@@ -88,6 +88,9 @@ Covers:
   - In pyannote and embedding modes, device is selected dynamically from `AUTOMOM_COMPUTE_DEVICE`.
 - Runtime acceleration flags:
   - `AUTOMOM_VOXTRAL_GPU_LAYERS` for whisper.cpp-based ASR binaries
+  - `AUTOMOM_VOXTRAL_THREADS` / `AUTOMOM_VOXTRAL_PROCESSORS` tune whisper.cpp CPU execution
+  - `AUTOMOM_TRANSCRIPTION_MERGE_GAP_S` / `AUTOMOM_TRANSCRIPTION_MAX_CHUNK_S` control same-speaker chunking before ASR
+  - `AUTOMOM_TRANSCRIPTION_KEEP_SEGMENT_AUDIO=1` preserves extracted transcription chunk WAVs for debugging
   - Formatter default backend is Ollama (`AUTOMOM_FORMATTER_BACKEND=ollama`, `AUTOMOM_OLLAMA_HOST`, `AUTOMOM_FORMATTER_OLLAMA_MODEL`)
   - Legacy formatter command backend is optional (`AUTOMOM_FORMATTER_BACKEND=command`, `AUTOMOM_FORMATTER_COMMAND`)
 - Cloud execution:
@@ -97,4 +100,5 @@ Covers:
   - `AUTOMOM_AUDIO_DENOISE=1|0` (default: `1`)
   - `AUTOMOM_AUDIO_DENOISE_FILTER` (default: `afftdn`; FFmpeg audio filter expression)
 - Runtime artifacts are stored under `data/jobs/<job_id>/`.
+  - Local ASR jobs now include `transcription_runtime.json` with requested vs active compute mode and binary capability details.
   - Job IDs are generated as `YYYY-MM-DD-HH:MM-meeting_title` (fallback: `...-meeting`).

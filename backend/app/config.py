@@ -62,6 +62,8 @@ class Settings:
         "AUTOMOM_VOXTRAL_MODEL",
         str(DATA_DIR / "models" / "voxtral" / "model.gguf"),
     )
+    voxtral_threads: int = max(1, int(os.getenv("AUTOMOM_VOXTRAL_THREADS", str(min(os.cpu_count() or 4, 8)))))
+    voxtral_processors: int = max(1, int(os.getenv("AUTOMOM_VOXTRAL_PROCESSORS", "1")))
     voxtral_gpu_layers: int = int(os.getenv("AUTOMOM_VOXTRAL_GPU_LAYERS", "99"))
     formatter_backend: str = os.getenv("AUTOMOM_FORMATTER_BACKEND", "ollama").strip().lower()
     formatter_command: str = os.getenv("AUTOMOM_FORMATTER_COMMAND", "")
@@ -76,6 +78,12 @@ class Settings:
     formatter_timeout_s: int = int(os.getenv("AUTOMOM_FORMATTER_TIMEOUT_S", "300"))
     diarization_max_chunk_s: float = float(os.getenv("AUTOMOM_DIARIZATION_MAX_CHUNK_S", "18.0"))
     transcription_max_segments: int = int(os.getenv("AUTOMOM_TRANSCRIPTION_MAX_SEGMENTS", "0"))
+    transcription_merge_gap_s: float = float(os.getenv("AUTOMOM_TRANSCRIPTION_MERGE_GAP_S", "1.5"))
+    transcription_max_chunk_s: float = float(os.getenv("AUTOMOM_TRANSCRIPTION_MAX_CHUNK_S", "20.0"))
+    transcription_keep_segment_audio: bool = os.getenv(
+        "AUTOMOM_TRANSCRIPTION_KEEP_SEGMENT_AUDIO",
+        "0",
+    ).strip().lower() in {"1", "true", "yes", "on"}
 
 
 SETTINGS = Settings()

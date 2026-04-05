@@ -75,3 +75,33 @@ def test_transcript_segments_from_openai_diarization_applies_speaker_mapping() -
         {"speaker_id": "SPEAKER_0", "speaker_name": "Alice", "start_s": 0.0, "end_s": 1.0, "text": "First"},
         {"speaker_id": "SPEAKER_1", "speaker_name": "Bob", "start_s": 1.0, "end_s": 2.0, "text": "Second"},
     ]
+
+
+def test_plan_transcription_chunks_merges_short_same_speaker_gaps() -> None:
+    chunks = PipelineOrchestrator._plan_transcription_chunks(
+        [
+            {"speaker_id": "SPEAKER_0", "speaker_name": "Alice", "start_s": 0.0, "end_s": 4.0},
+            {"speaker_id": "SPEAKER_0", "speaker_name": "Alice", "start_s": 4.8, "end_s": 9.0},
+            {"speaker_id": "SPEAKER_1", "speaker_name": "Bob", "start_s": 9.5, "end_s": 12.0},
+        ],
+        max_gap_s=1.0,
+        max_chunk_s=20.0,
+    )
+
+    assert len(chunks) == 2
+    assert chunks[0]["start_s"] == 0.0
+    assert chunks[0]["end_s"] == 9.0
+    assert chunks[1]["speaker_name"] == "Bob"
+
+
+def test_plan_transcription_chunks_respects_max_chunk_duration() -> None:
+    chunks = PipelineOrchestrator._plan_transcription_chunks(
+        [
+            {"speaker_id": "SPEAKER_0", "speaker_name": "Alice", "start_s": 0.0, "end_s": 12.0},
+            {"speaker_id": "SPEAKER_0", "speaker_name": "Alice", "start_s": 12.2, "end_s": 25.0},
+        ],
+        max_gap_s=1.0,
+        max_chunk_s=20.0,
+    )
+
+    assert len(chunks) == 2

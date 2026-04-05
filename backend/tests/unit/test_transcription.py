@@ -5,11 +5,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from backend.pipeline.transcription import TranscriptionError, VoxtralTranscriber, clean_transcript_text, transcribe_segments
+from backend.pipeline.transcription import (
+    ASRBinaryCapabilities,
+    TranscriptionError,
+    VoxtralTranscriber,
+    _gpu_verified_active,
+    clean_transcript_text,
+    transcribe_segments,
+)
 
 
 def test_voxtral_invocation_wrapper_uses_subprocess(monkeypatch, tmp_path: Path) -> None:
-    binary = tmp_path / "voxtral"
+    binary = tmp_path / "whisper-cli"
     model = tmp_path / "model.gguf"
     segment = tmp_path / "segment.wav"
     binary.write_text("bin", encoding="utf-8")
@@ -19,12 +26,19 @@ def test_voxtral_invocation_wrapper_uses_subprocess(monkeypatch, tmp_path: Path)
     def fake_run(command, capture_output, text):
         assert str(binary) in command
         assert str(model) in command
+        assert "-t" in command
+        assert "-p" in command
         return SimpleNamespace(returncode=0, stdout="hello world", stderr="")
 
     monkeypatch.setattr("backend.pipeline.transcription.should_enable_native_gpu", lambda *_: False)
+    monkeypatch.setattr(
+        "backend.pipeline.transcription._probe_asr_binary",
+        lambda *_: ASRBinaryCapabilities(str(binary), True, ("-t", "-p"), ("cpu",), False),
+    )
+    monkeypatch.setattr("backend.pipeline.transcription._binary_supports_any_flag", lambda *_: True)
     monkeypatch.setattr("backend.pipeline.transcription.subprocess.run", fake_run)
 
-    transcriber = VoxtralTranscriber(str(binary), str(model))
+    transcriber = VoxtralTranscriber(str(binary), str(model), threads=8, processors=2)
     text = transcriber.transcribe(segment)
 
     assert text == "hello world"
@@ -67,6 +81,11 @@ def test_voxtral_raises_when_runtime_unavailable(tmp_path: Path) -> None:
     transcriber = VoxtralTranscriber(binary_path="", model_path="")
     with pytest.raises(TranscriptionError):
         transcriber.transcribe(segment)
+
+
+def test_gpu_verified_active_parses_runtime_output() -> None:
+    assert _gpu_verified_active("whisper_backend_init_gpu: device 0: NVIDIA GeForce RTX 3050") is True
+    assert _gpu_verified_active("whisper_backend_init_gpu: device 0: CPU\nwhisper_backend_init_gpu: no GPU found") is False
 
 
 def test_clean_transcript_text_removes_timestamp_noise() -> None:
@@ -138,6 +157,10 @@ def test_voxtral_gpu_retry_falls_back_to_cpu(monkeypatch, tmp_path: Path) -> Non
     segment.write_text("wav", encoding="utf-8")
 
     monkeypatch.setattr("backend.pipeline.transcription.should_enable_native_gpu", lambda *_: True)
+    monkeypatch.setattr(
+        "backend.pipeline.transcription._probe_asr_binary",
+        lambda *_: ASRBinaryCapabilities(str(binary), True, ("-ngl", "-dev", "-t", "-p"), ("cuda",), True),
+    )
     monkeypatch.setattr("backend.pipeline.transcription._binary_supports_any_flag", lambda *_: True)
     calls: list[list[str]] = []
 
@@ -155,6 +178,7 @@ def test_voxtral_gpu_retry_falls_back_to_cpu(monkeypatch, tmp_path: Path) -> Non
     assert text == "ok text"
     assert any("-ngl" in call for call in calls)
     assert transcriber.compute_mode() == "cpu(gpu_retry_disabled)"
+    assert transcriber.runtime_report()["gpu_verified_active"] is False
 
 
 def test_voxtral_gpu_retry_handles_rc0_with_stderr_error(monkeypatch, tmp_path: Path) -> None:
@@ -166,6 +190,10 @@ def test_voxtral_gpu_retry_handles_rc0_with_stderr_error(monkeypatch, tmp_path: 
     segment.write_text("wav", encoding="utf-8")
 
     monkeypatch.setattr("backend.pipeline.transcription.should_enable_native_gpu", lambda *_: True)
+    monkeypatch.setattr(
+        "backend.pipeline.transcription._probe_asr_binary",
+        lambda *_: ASRBinaryCapabilities(str(binary), True, ("-ngl", "-dev", "-t", "-p"), ("cuda",), True),
+    )
     monkeypatch.setattr("backend.pipeline.transcription._binary_supports_any_flag", lambda *_: True)
     calls: list[list[str]] = []
 
@@ -195,6 +223,10 @@ def test_voxtral_does_not_add_gpu_layers_when_binary_does_not_support_them(monke
 
     monkeypatch.setattr("backend.pipeline.transcription.should_enable_native_gpu", lambda *_: True)
     monkeypatch.setattr(
+        "backend.pipeline.transcription._probe_asr_binary",
+        lambda *_: ASRBinaryCapabilities(str(binary), True, ("-dev", "-t", "-p"), ("cuda",), True),
+    )
+    monkeypatch.setattr(
         "backend.pipeline.transcription._binary_supports_any_flag",
         lambda _binary, flags: ("-dev" in flags),
     )
@@ -213,3 +245,59 @@ def test_voxtral_does_not_add_gpu_layers_when_binary_does_not_support_them(monke
     assert calls
     assert "-ngl" not in calls[0]
     assert "-dev" in calls[0]
+
+
+def test_voxtral_runtime_summary_reports_cpu_when_gpu_backend_unavailable(monkeypatch, tmp_path: Path) -> None:
+    binary = tmp_path / "whisper-cli"
+    model = tmp_path / "model.gguf"
+    segment = tmp_path / "segment.wav"
+    binary.write_text("bin", encoding="utf-8")
+    model.write_text("model", encoding="utf-8")
+    segment.write_text("wav", encoding="utf-8")
+
+    monkeypatch.setattr("backend.pipeline.transcription.should_enable_native_gpu", lambda *_: True)
+    monkeypatch.setattr(
+        "backend.pipeline.transcription._probe_asr_binary",
+        lambda *_: ASRBinaryCapabilities(str(binary), True, ("-dev", "-t", "-p"), ("cpu",), False),
+    )
+    monkeypatch.setattr(
+        "backend.pipeline.transcription.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout="hello",
+            stderr="whisper_backend_init_gpu: no GPU found",
+        ),
+    )
+
+    transcriber = VoxtralTranscriber(str(binary), str(model), compute_device="auto")
+    assert transcriber.transcribe(segment) == "hello"
+    assert transcriber.compute_mode() == "cpu(gpu_backend_unavailable)"
+    assert transcriber.runtime_summary() == "compute=cpu (GPU backend unavailable in ASR binary)"
+
+
+def test_voxtral_runtime_summary_reports_verified_cuda(monkeypatch, tmp_path: Path) -> None:
+    binary = tmp_path / "whisper-cli"
+    model = tmp_path / "model.gguf"
+    segment = tmp_path / "segment.wav"
+    binary.write_text("bin", encoding="utf-8")
+    model.write_text("model", encoding="utf-8")
+    segment.write_text("wav", encoding="utf-8")
+
+    monkeypatch.setattr("backend.pipeline.transcription.should_enable_native_gpu", lambda *_: True)
+    monkeypatch.setattr(
+        "backend.pipeline.transcription._probe_asr_binary",
+        lambda *_: ASRBinaryCapabilities(str(binary), True, ("-dev", "-t", "-p"), ("cuda",), True),
+    )
+    monkeypatch.setattr(
+        "backend.pipeline.transcription.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout="hello",
+            stderr="whisper_backend_init_gpu: device 0: NVIDIA GeForce RTX 3050",
+        ),
+    )
+
+    transcriber = VoxtralTranscriber(str(binary), str(model), compute_device="auto")
+    assert transcriber.transcribe(segment) == "hello"
+    assert transcriber.compute_mode() == "cuda"
+    assert transcriber.runtime_summary() == "compute=cuda (verified active)"
