@@ -96,12 +96,20 @@ def test_end_to_end_job_with_golden_outputs(isolated_settings, monkeypatch, tmp_
     model_path = tmp_path / "formatter.gguf"
     model_path.write_text("mock-model", encoding="utf-8")
     raw_formatter_output = (
-        "# Minutes of Meeting\n"
-        "## Participants\n"
+        "### Title: Minutes of Meeting - Integration Test Meeting\n"
+        "#### Participants:\n"
         "- Alice\n"
         "- Bob\n"
-        "## Decisions\n"
+        "#### Concise Overview:\n"
+        "Customer onboarding was prioritized.\n"
+        "#### TODO's:\n"
+        "- Alice to share the rollout plan.\n"
+        "#### CONCLUSIONS:\n"
         "- Prioritize customer onboarding\n"
+        "#### DECISION/OPEN POINTS:\n"
+        "None\n"
+        "#### RISKS:\n"
+        "None\n"
     )
     script = f"import sys; sys.stdin.read(); sys.stdout.write({raw_formatter_output!r})"
     asr_binary = tmp_path / "whisper-cli"
@@ -150,7 +158,7 @@ def test_end_to_end_job_with_golden_outputs(isolated_settings, monkeypatch, tmp_
     )
     assert generated_transcript == expected_transcript
 
-    assert mom_path.read_text(encoding="utf-8") == raw_formatter_output
+    assert mom_path.read_text(encoding="utf-8").rstrip() == raw_formatter_output.rstrip()
     runtime_payload = json.loads(runtime_path.read_text(encoding="utf-8"))
     summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
     assert runtime_payload["thread_count"] == 2
@@ -237,16 +245,22 @@ def test_end_to_end_passthrough_uses_raw_formatter_output(isolated_settings, mon
     model_path = tmp_path / "formatter.gguf"
     model_path.write_text("mock-model", encoding="utf-8")
     raw_formatter_output = (
-        "# Minutes of Meeting\n"
-        "## Participants\n"
+        "### Title: Minutes of Meeting - Passthrough Meeting\n"
+        "#### Participants:\n"
         "- MAN\n"
         "- WOMAN\n"
         "- Mayor Terry\n"
         "- Councillor Kaczynski\n"
-        "## Agenda\n"
-        "- Remove item 6.3\n"
-        "## Decisions\n"
+        "#### Concise Overview:\n"
+        "The meeting reviewed agenda items and follow-up references.\n"
+        "#### TODO's:\n"
+        "None\n"
+        "#### CONCLUSIONS:\n"
         "- Postpone development agreement\n"
+        "#### DECISION/OPEN POINTS:\n"
+        "- Remove item 6.3 from today's meeting agenda.\n"
+        "#### RISKS:\n"
+        "None\n"
     )
     script = f"import sys; sys.stdin.read(); sys.stdout.write({raw_formatter_output!r})"
     asr_binary = tmp_path / "whisper-cli"
@@ -277,11 +291,11 @@ def test_end_to_end_passthrough_uses_raw_formatter_output(isolated_settings, mon
     assert state.status == "completed"
 
     mom_path = Path(state.artifact_paths["mom_markdown"])
-    assert mom_path.read_text(encoding="utf-8") == raw_formatter_output
+    assert mom_path.read_text(encoding="utf-8").rstrip() == raw_formatter_output.rstrip()
     raw_output_path = Path(state.artifact_paths["formatter_raw_output"])
-    assert raw_output_path.read_text(encoding="utf-8") == raw_formatter_output
+    assert raw_output_path.read_text(encoding="utf-8").rstrip() == raw_formatter_output.rstrip()
     stdout_path = Path(state.artifact_paths["formatter_stdout"])
-    assert stdout_path.read_text(encoding="utf-8") == raw_formatter_output
+    assert stdout_path.read_text(encoding="utf-8").rstrip() == raw_formatter_output.rstrip()
 
 
 def test_end_to_end_stderr_prefixed_output_passthrough(isolated_settings, monkeypatch, tmp_path: Path) -> None:
@@ -357,16 +371,22 @@ def test_end_to_end_stderr_prefixed_output_passthrough(isolated_settings, monkey
     model_path = tmp_path / "formatter.gguf"
     model_path.write_text("mock-model", encoding="utf-8")
     raw_stderr_output = (
-        "main: ## Minutes of Meeting\n"
-        "main: ## Participants\n"
+        "main: ### Title: Minutes of Meeting - Stderr Passthrough Meeting\n"
+        "main: #### Participants:\n"
         "main: - MAN\n"
         "main: - WOMAN\n"
         "main: - Mayor Terry\n"
         "main: - Councillor Kaczynski\n"
-        "main: ## Agenda\n"
-        "main: - Remove item 6.3\n"
-        "main: ## Decisions\n"
+        "main: #### Concise Overview:\n"
+        "main: The meeting reviewed agenda items and follow-up references.\n"
+        "main: #### TODO's:\n"
+        "main: None\n"
+        "main: #### CONCLUSIONS:\n"
         "main: - Postpone development agreement\n"
+        "main: #### DECISION/OPEN POINTS:\n"
+        "main: - Remove item 6.3\n"
+        "main: #### RISKS:\n"
+        "main: None\n"
     )
     script = f"import sys; sys.stdin.read(); sys.stderr.write({raw_stderr_output!r})"
     asr_binary = tmp_path / "whisper-cli"
@@ -396,10 +416,11 @@ def test_end_to_end_stderr_prefixed_output_passthrough(isolated_settings, monkey
     state = JOB_STORE.get_state(job_id)
     assert state.status == "completed"
 
+    normalized_stderr_output = raw_stderr_output.replace("main: ", "")
     mom_path = Path(state.artifact_paths["mom_markdown"])
-    assert mom_path.read_text(encoding="utf-8") == raw_stderr_output
+    assert mom_path.read_text(encoding="utf-8").rstrip() == normalized_stderr_output.rstrip()
     raw_output_path = Path(state.artifact_paths["formatter_raw_output"])
-    assert raw_output_path.read_text(encoding="utf-8") == raw_stderr_output
+    assert raw_output_path.read_text(encoding="utf-8").rstrip() == normalized_stderr_output.rstrip()
     stderr_path = Path(state.artifact_paths["formatter_stderr"])
     assert stderr_path.read_text(encoding="utf-8") == raw_stderr_output
 
@@ -479,11 +500,20 @@ def test_end_to_end_nonzero_formatter_exit_with_stdout_still_passthrough(
     model_path = tmp_path / "formatter.gguf"
     model_path.write_text("mock-model", encoding="utf-8")
     raw_stdout_output = (
-        "# Minutes of Meeting\n"
-        "## Agenda\n"
-        "- Keep item 6.3\n"
-        "## Decisions\n"
+        "### Title: Minutes of Meeting - Nonzero Passthrough Meeting\n"
+        "#### Participants:\n"
+        "- MAN\n"
+        "- WOMAN\n"
+        "#### Concise Overview:\n"
+        "The meeting confirmed the rollout plan.\n"
+        "#### TODO's:\n"
+        "None\n"
+        "#### CONCLUSIONS:\n"
         "- Proceed with rollout\n"
+        "#### DECISION/OPEN POINTS:\n"
+        "- Keep item 6.3\n"
+        "#### RISKS:\n"
+        "None\n"
     )
     script = (
         "import sys; "
@@ -518,4 +548,4 @@ def test_end_to_end_nonzero_formatter_exit_with_stdout_still_passthrough(
     state = JOB_STORE.get_state(job_id)
     assert state.status == "completed"
     mom_path = Path(state.artifact_paths["mom_markdown"])
-    assert mom_path.read_text(encoding="utf-8") == raw_stdout_output
+    assert mom_path.read_text(encoding="utf-8").rstrip() == raw_stdout_output.rstrip()

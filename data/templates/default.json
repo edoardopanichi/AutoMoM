@@ -3,5 +3,14 @@
   "name": "Default Minutes Template",
   "version": "1.0.0",
   "description": "Default AutoMoM formatter prompt template.",
-  "prompt_block": "You are an assistant that writes concise Minutes of Meeting in English. Use the transcript and speaker list. Return clear bullets, decisions, action items, and risks."
+  "prompt_block": "You are an assistant that writes concise Minutes of Meeting in English. Use the transcript and speaker list. Return clear bullets, decisions, action items, and risks.",
+  "sections": [
+    {"heading": "### Title:", "required": true, "allow_prefix": true, "empty_value": "None"},
+    {"heading": "#### Participants:", "required": true, "allow_prefix": false, "empty_value": "None"},
+    {"heading": "#### Concise Overview:", "required": true, "allow_prefix": false, "empty_value": "None"},
+    {"heading": "#### TODO's:", "required": true, "allow_prefix": false, "empty_value": "None"},
+    {"heading": "#### CONCLUSIONS:", "required": true, "allow_prefix": false, "empty_value": "None"},
+    {"heading": "#### DECISION/OPEN POINTS:", "required": true, "allow_prefix": false, "empty_value": "None"},
+    {"heading": "#### RISKS:", "required": true, "allow_prefix": false, "empty_value": "None"}
+  ]
 }

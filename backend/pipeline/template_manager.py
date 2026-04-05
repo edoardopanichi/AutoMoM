@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from backend.app.config import SETTINGS
-from backend.app.schemas import TemplateDefinition, TemplateSummary
+from backend.app.schemas import TemplateDefinition, TemplateSection, TemplateSummary
 
 
 DEFAULT_TEMPLATE_ID = "default"
@@ -15,6 +16,23 @@ DEFAULT_TEMPLATE_PROMPT = (
     "You are an assistant that writes concise Minutes of Meeting in English. "
     "Use the transcript and speaker list. Return clear bullets, decisions, action items, and risks."
 )
+DEFAULT_TEMPLATE_SECTIONS = [
+    TemplateSection(heading="### Title:", allow_prefix=True),
+    TemplateSection(heading="#### Participants:"),
+    TemplateSection(heading="#### Concise Overview:"),
+    TemplateSection(heading="#### TODO's:"),
+    TemplateSection(heading="#### CONCLUSIONS:"),
+    TemplateSection(heading="#### DECISION/OPEN POINTS:"),
+    TemplateSection(heading="#### RISKS:"),
+]
+
+
+@dataclass(frozen=True)
+class FormatterPromptBundle:
+    system_prompt: str
+    user_prompt: str
+    template: TemplateDefinition
+    strict_sections: list[TemplateSection]
 
 
 class TemplateManager:
@@ -43,6 +61,7 @@ class TemplateManager:
                 version="1.0.0",
                 description="Default AutoMoM formatter prompt template.",
                 prompt_block=DEFAULT_TEMPLATE_PROMPT,
+                sections=DEFAULT_TEMPLATE_SECTIONS,
             )
         )
 
@@ -87,18 +106,55 @@ class TemplateManager:
         speakers: list[str],
         title: str,
     ) -> str:
+        bundle = self.build_formatter_request(template_id, transcript, speakers, title)
+        return f"{bundle.system_prompt}\n\n{bundle.user_prompt}"
+
+    def build_formatter_request(
+        self,
+        template_id: str,
+        transcript: list[dict[str, object]],
+        speakers: list[str],
+        title: str,
+        *,
+        transcript_label: str = "Transcript",
+    ) -> FormatterPromptBundle:
         template = self.load(template_id)
         transcript_text = "\n".join(f"{seg['speaker_name']}: {seg['text']}" for seg in transcript)
-        prompt = (
+        sections = template.sections or []
+        section_rules = ""
+        if sections:
+            ordered = "\n".join(
+                f"{index}. {section.heading}{' <content>' if section.allow_prefix else ''}"
+                for index, section in enumerate(sections, start=1)
+            )
+            section_rules = (
+                "Required section order:\n"
+                f"{ordered}\n\n"
+                "Validation rules:\n"
+                "- Return markdown only.\n"
+                "- Keep the exact section order.\n"
+                "- Do not rename headings.\n"
+                "- If a required section has no content, write exactly 'None'.\n\n"
+            )
+        system_prompt = (
             f"{template.prompt_block}\n\n"
-            "Requirements:\n"
+            f"{section_rules}"
+            "Global requirements:\n"
             "- Final output must be in English.\n"
-            "- Capture decisions/action items/open questions when present.\n\n"
+            "- Capture decisions, action items, and open questions when present.\n"
+            "- Do not add commentary outside the document.\n"
+        )
+        user_prompt = (
             f"Title: {title}\n"
             f"Speakers: {', '.join(speakers)}\n\n"
-            f"Transcript:\n{transcript_text}\n"
+            f"{transcript_label}:\n{transcript_text}\n"
         )
-        return prompt
+        return FormatterPromptBundle(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            template=template,
+            strict_sections=sections,
+        )
 
 
 TEMPLATE_MANAGER = TemplateManager()

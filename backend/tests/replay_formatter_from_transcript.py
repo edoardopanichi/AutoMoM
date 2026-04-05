@@ -117,7 +117,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--title",
         help=(
-            "Meeting title for prompt assembly. If omitted, script tries previous formatter_prompt.txt title "
+            "Meeting title for prompt assembly. If omitted, script tries previous formatter_user_prompt.txt title "
             "then falls back to job folder name."
         ),
     )
@@ -245,7 +245,7 @@ def _parse_title_from_existing_prompt(job_dir: Path) -> str | None:
     @param job_dir Job directory path.
     @return Parsed title or `None` when missing.
     """
-    prompt_path = job_dir / "formatter_prompt.txt"
+    prompt_path = job_dir / "formatter_user_prompt.txt"
     if not prompt_path.exists():
         return None
     for line in prompt_path.read_text(encoding="utf-8").splitlines():
@@ -314,15 +314,17 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def _write_formatter_debug_artifacts(output_dir: Path, formatter: Formatter, prompt: str) -> None:
+def _write_formatter_debug_artifacts(output_dir: Path, formatter: Formatter, *, system_prompt: str, user_prompt: str) -> None:
     """! Persist replay debug artifacts aligned with stage-8 outputs.
 
     @param output_dir Replay output directory.
     @param formatter Formatter instance with captured streams/mode.
-    @param prompt Reconstructed formatter prompt.
+    @param system_prompt Reconstructed formatter system prompt.
+    @param user_prompt Reconstructed formatter user prompt.
     @return None
     """
-    _write_text(output_dir / "formatter_prompt.txt", prompt)
+    _write_text(output_dir / "formatter_system_prompt.txt", system_prompt)
+    _write_text(output_dir / "formatter_user_prompt.txt", user_prompt)
     if formatter.last_stdout:
         _write_text(output_dir / "formatter_stdout.txt", formatter.last_stdout)
     if formatter.last_stderr:
@@ -360,21 +362,27 @@ def main() -> int:
 
     formatter_error: str | None = None
     structured: dict[str, object] | None = None
+    system_prompt = ""
+    user_prompt = ""
     try:
         # Same stage-8 function call used by the orchestrator path.
-        structured, prompt = formatter.write_model_output_to_mom(
+        formatter_result = formatter.write_model_output_to_mom(
             transcript=transcript,
             speakers=speakers,
             title=title,
             template_id=args.template_id,
             output_path=mom_path,
         )
+        structured = formatter_result.structured
+        system_prompt = formatter_result.system_prompt
+        user_prompt = formatter_result.user_prompt
     except RuntimeError as exc:
         formatter_error = str(exc)
-        # Rebuild prompt with the same helper for debugging artifacts, without rerunning the model.
-        prompt = TEMPLATE_MANAGER.build_formatter_prompt(args.template_id, transcript, speakers, title)
+        bundle = TEMPLATE_MANAGER.build_formatter_request(args.template_id, transcript, speakers, title)
+        system_prompt = bundle.system_prompt
+        user_prompt = bundle.user_prompt
 
-    _write_formatter_debug_artifacts(output_dir, formatter, prompt)
+    _write_formatter_debug_artifacts(output_dir, formatter, system_prompt=system_prompt, user_prompt=user_prompt)
     if structured is not None:
         _write_json(output_dir / "mom_structured.json", structured)
 
@@ -387,8 +395,10 @@ def main() -> int:
     print(f"formatter_mode={formatter.last_mode}")
 
     if args.print_prompt:
-        print("\n--- formatter_prompt.txt ---")
-        print(prompt)
+        print("\n--- formatter_system_prompt.txt ---")
+        print(system_prompt)
+        print("\n--- formatter_user_prompt.txt ---")
+        print(user_prompt)
 
     if formatter_error is not None:
         print(f"error={formatter_error}")

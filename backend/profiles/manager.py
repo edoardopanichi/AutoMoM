@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -49,20 +50,31 @@ class VoiceProfileManager:
         for existing in self.list_profiles():
             if existing.name.strip().lower() == name.strip().lower():
                 payload = existing.model_dump(mode="json")
-                payload["embedding"] = normalized.tolist()
+                existing_embedding = np.array(existing.embedding, dtype=np.float32)
+                sample_count = max(1, int(existing.sample_count))
+                merged = self._normalize(((existing_embedding * sample_count) + normalized) / (sample_count + 1))
+                payload["embedding"] = merged.tolist()
                 payload["threshold"] = threshold
-                self._path(existing.profile_id).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+                payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+                payload["sample_count"] = sample_count + 1
+                profile = VoiceProfile(**payload)
+                path = self._path(existing.profile_id, profile.name)
+                self._delete_stale_paths(existing.profile_id, keep=path)
+                path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
                 return VoiceProfile(**payload)
 
+        now = datetime.now(timezone.utc)
         profile = VoiceProfile(
             profile_id=str(uuid4()),
             name=name,
-            created_at=datetime.now(timezone.utc),
+            created_at=now,
+            updated_at=now,
             embedding=normalized.tolist(),
             model_version=EMBEDDING_VERSION,
             threshold=threshold,
+            sample_count=1,
         )
-        self._path(profile.profile_id).write_text(
+        self._path(profile.profile_id, profile.name).write_text(
             json.dumps(profile.model_dump(mode="json"), indent=2),
             encoding="utf-8",
         )
@@ -155,8 +167,26 @@ class VoiceProfileManager:
         return (vector / norm).astype(np.float32)
 
     @staticmethod
-    def _path(profile_id: str) -> Path:
+    def _slugify_name(name: str) -> str:
+        normalized = re.sub(r"[^a-zA-Z0-9]+", "_", name.strip().lower()).strip("_")
+        return normalized[:60] or "speaker"
+
+    @classmethod
+    def _path(cls, profile_id: str, name: str | None = None) -> Path:
+        if name:
+            return SETTINGS.profiles_dir / f"{cls._slugify_name(name)}--{profile_id}.json"
+        named = sorted(SETTINGS.profiles_dir.glob(f"*--{profile_id}.json"))
+        if named:
+            return named[0]
         return SETTINGS.profiles_dir / f"{profile_id}.json"
+
+    @classmethod
+    def _delete_stale_paths(cls, profile_id: str, keep: Path) -> None:
+        candidates = {SETTINGS.profiles_dir / f"{profile_id}.json", *SETTINGS.profiles_dir.glob(f"*--{profile_id}.json")}
+        for candidate in candidates:
+            if candidate == keep:
+                continue
+            candidate.unlink(missing_ok=True)
 
 
 VOICE_PROFILE_MANAGER = VoiceProfileManager()

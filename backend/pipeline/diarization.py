@@ -120,6 +120,12 @@ def _pyannote_error_message(
             "Fix: install pyannote.audio and torch dependencies, then retry."
         )
     if reason.startswith("pyannote_runtime_error"):
+        if "outofmemoryerror" in reason.lower() or "out_of_memory" in reason.lower():
+            return (
+                f"Pyannote diarization ran out of memory ({reason}). "
+                f"Configured pipeline: '{pipeline_ref or '<unset>'}'. "
+                "Fix: retry on CPU, reduce concurrent GPU load, or use a shorter recording chunk."
+            )
         return (
             f"Pyannote diarization failed at runtime ({reason}). "
             f"Configured pipeline: '{pipeline_ref or '<unset>'}'. "
@@ -177,20 +183,6 @@ def _diarize_with_pyannote(
     try:
         pipeline = Pipeline.from_pretrained(pipeline_ref, **kwargs)
         target_device = resolve_torch_device(compute_device, cuda_device_id)
-        active_device = target_device
-        try:
-            pipeline.to(torch.device(target_device))
-        except Exception:
-            if target_device == "cuda":
-                try:
-                    pipeline.to(torch.device("cpu"))
-                    active_device = "cpu"
-                except Exception:
-                    # Some pipeline variants do not expose .to()
-                    pass
-            else:
-                # Some pipeline variants do not expose .to()
-                pass
 
         audio, sample_rate = sf.read(str(audio_path), dtype="float32", always_2d=False)
         if isinstance(audio, np.ndarray) and audio.ndim > 1:
@@ -204,10 +196,14 @@ def _diarize_with_pyannote(
             pipeline_kwargs["min_speakers"] = min_speakers
         if max_speakers is not None:
             pipeline_kwargs["max_speakers"] = max_speakers
-        try:
-            diarization = pipeline(input_payload, **pipeline_kwargs)
-        except TypeError:
-            diarization = pipeline(input_payload)
+
+        diarization, active_device = _run_pyannote_pipeline(
+            pipeline,
+            input_payload,
+            pipeline_kwargs,
+            torch,
+            target_device=target_device,
+        )
     except Exception as exc:
         return None, f"pyannote_runtime_error:{exc.__class__.__name__}"
 
@@ -240,6 +236,56 @@ def _diarize_with_pyannote(
         ),
         None,
     )
+
+
+def _run_pyannote_pipeline(
+    pipeline,
+    input_payload: dict[str, object],
+    pipeline_kwargs: dict[str, int],
+    torch_module,
+    *,
+    target_device: str,
+) -> tuple[object, str]:
+    active_device = _move_pyannote_pipeline(pipeline, torch_module, target_device)
+    try:
+        return _invoke_pyannote_pipeline(pipeline, input_payload, pipeline_kwargs), active_device
+    except Exception as exc:
+        if active_device == "cuda" and _is_cuda_oom(exc):
+            try:
+                if hasattr(torch_module, "cuda") and hasattr(torch_module.cuda, "empty_cache"):
+                    torch_module.cuda.empty_cache()
+            except Exception:
+                pass
+            active_device = _move_pyannote_pipeline(pipeline, torch_module, "cpu")
+            return _invoke_pyannote_pipeline(pipeline, input_payload, pipeline_kwargs), active_device
+        raise
+
+
+def _move_pyannote_pipeline(pipeline, torch_module, target_device: str) -> str:
+    active_device = target_device
+    try:
+        pipeline.to(torch_module.device(target_device))
+    except Exception:
+        if target_device == "cuda":
+            try:
+                pipeline.to(torch_module.device("cpu"))
+                active_device = "cpu"
+            except Exception:
+                pass
+    return active_device
+
+
+def _invoke_pyannote_pipeline(pipeline, input_payload: dict[str, object], pipeline_kwargs: dict[str, int]):
+    try:
+        return pipeline(input_payload, **pipeline_kwargs)
+    except TypeError:
+        return pipeline(input_payload)
+
+
+def _is_cuda_oom(exc: Exception) -> bool:
+    name = exc.__class__.__name__.lower()
+    message = str(exc).lower()
+    return "outofmemory" in name or "out of memory" in message or "cuda out of memory" in message
 
 
 def _diarize_with_embeddings(

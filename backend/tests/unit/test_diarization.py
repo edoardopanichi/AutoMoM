@@ -175,3 +175,42 @@ def test_estimate_speaker_count_can_pick_higher_k_when_clusters_are_stable(monke
     result = diarization_module._estimate_speaker_count(features, max_speakers=4)
 
     assert result == 3
+
+
+def test_run_pyannote_pipeline_retries_on_cpu_after_cuda_oom() -> None:
+    class FakeTorch:
+        class cuda:
+            @staticmethod
+            def empty_cache():
+                return None
+
+        @staticmethod
+        def device(name):
+            return name
+
+    class FakePipeline:
+        def __init__(self):
+            self.current_device = "cpu"
+            self.moves = []
+
+        def to(self, device):
+            self.current_device = str(device)
+            self.moves.append(self.current_device)
+
+        def __call__(self, input_payload, **kwargs):
+            if self.current_device == "cuda":
+                raise RuntimeError("CUDA out of memory")
+            return "ok"
+
+    pipeline = FakePipeline()
+    result, active_device = diarization_module._run_pyannote_pipeline(
+        pipeline,
+        {"waveform": np.zeros((1, 10), dtype=np.float32), "sample_rate": 16000},
+        {},
+        FakeTorch,
+        target_device="cuda",
+    )
+
+    assert result == "ok"
+    assert active_device == "cpu"
+    assert pipeline.moves == ["cuda", "cpu"]

@@ -10,7 +10,7 @@ from typing import Any
 
 from backend.app.config import SETTINGS
 from backend.app.job_store import JOB_STORE, OpenAIJobConfig, ensure_job_artifact_dir, write_json
-from backend.app.schemas import JobSpeakerInfo, SpeakerSnippet, SpeakerState
+from backend.app.schemas import JobSpeakerInfo, SpeakerProfileMatch, SpeakerSnippet, SpeakerState
 from backend.pipeline.audio import extract_segment, normalize_audio, validate_audio_input
 from backend.pipeline.diarization import DiarizationResult, DiarizationSegment, diarize
 from backend.pipeline.formatter import Formatter
@@ -193,7 +193,7 @@ class PipelineOrchestrator:
                 self._begin_stage_timing(3)
             )
             JOB_STORE.append_log(job_id, "Stage 4/9: extracting labeling snippets")
-            snippet_ranges = pick_snippet_ranges(diarization_result.segments)
+            snippet_ranges = pick_snippet_ranges(diarization_result.segments, audio_path=normalized_audio_path)
             snippets = extract_snippets(
                 source_audio_path=normalized_audio_path,
                 output_dir=job_dir / "snippets",
@@ -248,10 +248,14 @@ class PipelineOrchestrator:
             for mapping in mapping_items:
                 if not mapping.save_voice_profile:
                     continue
-                segments = segments_by_speaker.get(mapping.speaker_id, [])[:8]
+                segments = self._select_profile_segments(segments_by_speaker.get(mapping.speaker_id, []))
                 embedding = VOICE_PROFILE_MANAGER.compute_embedding_from_segments(normalized_audio_path, segments)
-                VOICE_PROFILE_MANAGER.upsert_profile(mapping.name, embedding)
-                JOB_STORE.append_log(job_id, f"Saved voice profile for {mapping.name}")
+                profile = VOICE_PROFILE_MANAGER.upsert_profile(mapping.name, embedding)
+                action = "updated" if profile.sample_count > 1 else "saved"
+                JOB_STORE.append_log(
+                    job_id,
+                    f"Voice profile {action} for {mapping.name} (samples={profile.sample_count})",
+                )
             self._finish_stage_timing(
                 stage_timings,
                 active_stage_key,
@@ -483,7 +487,7 @@ class PipelineOrchestrator:
             title = runtime.title or runtime.audio_path.stem
             speakers = transcript_payload["speakers"]
             mom_path = job_dir / "mom.md"
-            structured, prompt = formatter.write_model_output_to_mom(
+            formatter_result = formatter.write_model_output_to_mom(
                 transcript=transcript_segments,
                 speakers=speakers,
                 title=title,
@@ -491,6 +495,16 @@ class PipelineOrchestrator:
                 output_path=mom_path,
             )
             JOB_STORE.append_log(job_id, f"Formatter mode: {formatter.last_mode}")
+            if formatter_result.validation.get("reduction_used"):
+                JOB_STORE.append_log(
+                    job_id,
+                    f"Formatter long-input mode enabled (estimated_tokens={formatter_result.validation.get('estimated_tokens')})",
+                )
+            if not formatter_result.validation.get("valid", True):
+                JOB_STORE.append_log(
+                    job_id,
+                    "Formatter validation failed: " + "; ".join(formatter_result.validation.get("errors", [])),
+                )
             if formatter.last_stdout:
                 (job_dir / "formatter_stdout.txt").write_text(formatter.last_stdout, encoding="utf-8")
                 JOB_STORE.set_artifact(job_id, "formatter_stdout", job_dir / "formatter_stdout.txt")
@@ -500,8 +514,16 @@ class PipelineOrchestrator:
             if formatter.last_raw_output:
                 (job_dir / "formatter_raw_output.txt").write_text(formatter.last_raw_output, encoding="utf-8")
                 JOB_STORE.set_artifact(job_id, "formatter_raw_output", job_dir / "formatter_raw_output.txt")
-            write_json(job_dir / "mom_structured.json", structured)
-            (job_dir / "formatter_prompt.txt").write_text(prompt, encoding="utf-8")
+            write_json(job_dir / "mom_structured.json", formatter_result.structured)
+            (job_dir / "formatter_system_prompt.txt").write_text(formatter_result.system_prompt, encoding="utf-8")
+            (job_dir / "formatter_user_prompt.txt").write_text(formatter_result.user_prompt, encoding="utf-8")
+            write_json(job_dir / "formatter_validation.json", formatter_result.validation)
+            JOB_STORE.set_artifact(job_id, "formatter_system_prompt", job_dir / "formatter_system_prompt.txt")
+            JOB_STORE.set_artifact(job_id, "formatter_user_prompt", job_dir / "formatter_user_prompt.txt")
+            JOB_STORE.set_artifact(job_id, "formatter_validation", job_dir / "formatter_validation.json")
+            if formatter_result.reduced_notes:
+                write_json(job_dir / "formatter_reduced_notes.json", formatter_result.reduced_notes)
+                JOB_STORE.set_artifact(job_id, "formatter_reduced_notes", job_dir / "formatter_reduced_notes.json")
             JOB_STORE.set_artifact(job_id, "mom_markdown", mom_path)
             JOB_STORE.set_artifact(job_id, "mom_structured", job_dir / "mom_structured.json")
             JOB_STORE.set_stage_percent(job_id, 100.0, overall_percent=self._overall(7, 100.0))
@@ -846,7 +868,7 @@ class PipelineOrchestrator:
         profiles = VOICE_PROFILE_MANAGER.list_profiles()
         speakers: list[SpeakerState] = []
         for speaker_id in sorted(segments_by_speaker):
-            speaker_segments = segments_by_speaker[speaker_id][:8]
+            speaker_segments = self._select_profile_segments(segments_by_speaker[speaker_id])
             embedding = VOICE_PROFILE_MANAGER.compute_embedding_from_segments(
                 normalized_audio_path,
                 speaker_segments,
@@ -855,14 +877,41 @@ class PipelineOrchestrator:
             )
             match = VOICE_PROFILE_MANAGER.match(embedding, profiles=profiles)
             suggested_name = None
+            matched_profile = None
             if match.best_match and not match.ambiguous_matches:
                 suggested_name = match.best_match.name
-                JOB_STORE.append_log(job_id, f"Auto-identified {speaker_id} as {suggested_name}")
+                matched_profile = SpeakerProfileMatch(
+                    profile_id=match.best_match.profile_id,
+                    name=match.best_match.name,
+                    score=match.best_match.score,
+                    status="matched",
+                )
+                JOB_STORE.append_log(
+                    job_id,
+                    f"Auto-identified {speaker_id} as {suggested_name} (score={match.best_match.score:.2f})",
+                )
+            elif match.best_match:
+                matched_profile = SpeakerProfileMatch(
+                    profile_id=match.best_match.profile_id,
+                    name=match.best_match.name,
+                    score=match.best_match.score,
+                    status="ambiguous",
+                    ambiguous_names=[item.name for item in match.ambiguous_matches],
+                )
+                JOB_STORE.append_log(
+                    job_id,
+                    (
+                        f"Profile candidates for {speaker_id}: "
+                        f"{match.best_match.name} ({match.best_match.score:.2f}), "
+                        + ", ".join(f"{item.name} ({item.score:.2f})" for item in match.ambiguous_matches)
+                    ),
+                )
 
             speakers.append(
                 SpeakerState(
                     speaker_id=speaker_id,
                     suggested_name=suggested_name,
+                    matched_profile=matched_profile,
                     snippets=snippet_by_speaker.get(speaker_id, []),
                 )
             )
@@ -875,6 +924,20 @@ class PipelineOrchestrator:
         for segment in segments:
             grouped.setdefault(segment.speaker_id, []).append((segment.start_s, segment.end_s))
         return grouped
+
+    @staticmethod
+    def _select_profile_segments(
+        segments: list[tuple[float, float]],
+        *,
+        max_segments: int = 8,
+        min_duration_s: float = 1.5,
+    ) -> list[tuple[float, float]]:
+        if not segments:
+            return []
+        eligible = [item for item in segments if (item[1] - item[0]) >= min_duration_s]
+        ranked = eligible or segments
+        ranked = sorted(ranked, key=lambda item: (item[1] - item[0]), reverse=True)
+        return ranked[:max_segments]
 
     @staticmethod
     def _collapse_labeled_segments(

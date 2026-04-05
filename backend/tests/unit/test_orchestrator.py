@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from backend.app.schemas import VoiceProfile
 from backend.pipeline.diarization import DiarizationSegment
 from backend.pipeline.openai_client import OpenAIDiarizationResult, OpenAIDiarizedSegment
 from backend.pipeline.orchestrator import PipelineOrchestrator
@@ -105,3 +106,64 @@ def test_plan_transcription_chunks_respects_max_chunk_duration() -> None:
     )
 
     assert len(chunks) == 2
+
+
+def test_select_profile_segments_prefers_longer_segments() -> None:
+    selected = PipelineOrchestrator._select_profile_segments(
+        [(0.0, 0.9), (1.0, 5.5), (6.0, 8.0), (8.5, 12.5)],
+        max_segments=2,
+        min_duration_s=1.5,
+    )
+
+    assert selected == [(1.0, 5.5), (8.5, 12.5)]
+
+
+def test_build_speaker_info_includes_profile_match_metadata(monkeypatch, tmp_path: Path) -> None:
+    orchestrator = PipelineOrchestrator()
+
+    monkeypatch.setattr(
+        "backend.pipeline.orchestrator.VOICE_PROFILE_MANAGER.load_mono_audio",
+        lambda path: ([], 16000),
+    )
+    monkeypatch.setattr(
+        "backend.pipeline.orchestrator.VOICE_PROFILE_MANAGER.list_profiles",
+        lambda: [
+            VoiceProfile(
+                profile_id="p1",
+                name="Alice",
+                created_at="2026-01-01T00:00:00Z",
+                embedding=[1.0] * 20,
+                model_version="simple-spectrum-v1",
+                threshold=0.82,
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        "backend.pipeline.orchestrator.VOICE_PROFILE_MANAGER.compute_embedding_from_segments",
+        lambda *args, **kwargs: [1.0] * 20,
+    )
+    monkeypatch.setattr(
+        "backend.pipeline.orchestrator.VOICE_PROFILE_MANAGER.match",
+        lambda *args, **kwargs: type(
+            "Match",
+            (),
+            {
+                "best_match": type("Best", (), {"profile_id": "p1", "name": "Alice", "score": 0.93})(),
+                "ambiguous_matches": [],
+            },
+        )(),
+    )
+    logs = []
+    monkeypatch.setattr("backend.pipeline.orchestrator.JOB_STORE.append_log", lambda job_id, message: logs.append(message))
+
+    info = orchestrator._build_speaker_info(
+        "job-1",
+        tmp_path / "audio.wav",
+        {"SPEAKER_0": [(0.0, 4.0)]},
+        [],
+    )
+
+    assert info.speakers[0].suggested_name == "Alice"
+    assert info.speakers[0].matched_profile is not None
+    assert info.speakers[0].matched_profile.status == "matched"
+    assert "Auto-identified SPEAKER_0 as Alice" in logs[0]

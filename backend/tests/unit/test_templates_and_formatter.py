@@ -5,7 +5,7 @@ import urllib.error
 from pathlib import Path
 
 from backend.app.config import SETTINGS
-from backend.pipeline.formatter import Formatter, _extract_model_text, _strip_runtime_logs
+from backend.pipeline.formatter import Formatter, _extract_model_text, _strip_runtime_logs, validate_markdown_output
 from backend.pipeline.template_manager import TemplateManager
 
 
@@ -25,7 +25,7 @@ class _FakeHTTPResponse:
 
 def test_formatter_prompt_assembly(isolated_settings) -> None:
     manager = TemplateManager()
-    prompt = manager.build_formatter_prompt(
+    bundle = manager.build_formatter_request(
         template_id="default",
         transcript=[
             {
@@ -39,9 +39,10 @@ def test_formatter_prompt_assembly(isolated_settings) -> None:
         title="Sprint Review",
     )
 
-    assert "Final output must be in English" in prompt
-    assert "Sprint Review" in prompt
-    assert "Alice" in prompt
+    assert "Final output must be in English" in bundle.system_prompt
+    assert "Required section order" in bundle.system_prompt
+    assert "Sprint Review" in bundle.user_prompt
+    assert "Alice" in bundle.user_prompt
 
 
 def test_formatter_heuristic_transcript_markdown_has_no_timestamps() -> None:
@@ -75,6 +76,8 @@ def test_formatter_heuristic_transcript_markdown_has_no_timestamps() -> None:
 def test_formatter_uses_ollama_response(monkeypatch) -> None:
     def fake_urlopen(request, timeout=0):
         assert request.full_url.endswith("/api/generate")
+        payload = json.loads(request.data.decode("utf-8"))
+        assert payload["system"]
         return _FakeHTTPResponse({"response": "## Minutes\n- Item\n## Decisions\n- Keep\n"})
 
     monkeypatch.setattr("backend.pipeline.formatter.urllib.request.urlopen", fake_urlopen)
@@ -112,7 +115,7 @@ def test_formatter_handles_ollama_timeout(monkeypatch) -> None:
 def test_formatter_uses_openai_response(monkeypatch) -> None:
     monkeypatch.setattr(
         "backend.pipeline.formatter.OpenAIClient.generate_text",
-        lambda self, prompt, model, timeout_s: "## Minutes\n- Strong summary\n## Decisions\n- Ship it\n",
+        lambda self, prompt, model, timeout_s, instructions="": "## Minutes\n- Strong summary\n## Decisions\n- Ship it\n",
     )
     formatter = Formatter(openai_api_key="sk-test", openai_model="gpt-5-mini")
 
@@ -147,3 +150,16 @@ def test_extract_model_text_prefers_stdout() -> None:
     stdout = "## Minutes\n- Keep\n"
     stderr = "error\n"
     assert _extract_model_text(stdout, stderr).startswith("## Minutes")
+
+
+def test_validate_markdown_output_requires_template_headings() -> None:
+    manager = TemplateManager()
+    sections = manager.load("default").sections
+
+    result = validate_markdown_output(
+        "### Title: Minutes of Meeting - Test\n#### Participants:\nNone\n#### RISKS:\nNone\n",
+        sections,
+    )
+
+    assert not result["valid"]
+    assert any("Missing required heading '#### Concise Overview:'" in item for item in result["errors"])

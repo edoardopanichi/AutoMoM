@@ -49,12 +49,20 @@ class FormatterModelResponse(BaseModel):
     model_tag: str
 
 
+class TemplateSection(BaseModel):
+    heading: str
+    required: bool = True
+    allow_prefix: bool = False
+    empty_value: str = "None"
+
+
 class TemplateDefinition(BaseModel):
     template_id: str
     name: str
     version: str = "1.0.0"
     description: str = ""
     prompt_block: str
+    sections: list[TemplateSection] = Field(default_factory=list)
 
 
 class TemplateSummary(BaseModel):
@@ -71,9 +79,18 @@ class SpeakerSnippet(BaseModel):
     end_s: float
 
 
+class SpeakerProfileMatch(BaseModel):
+    profile_id: str
+    name: str
+    score: float
+    status: Literal["matched", "ambiguous"]
+    ambiguous_names: list[str] = Field(default_factory=list)
+
+
 class SpeakerState(BaseModel):
     speaker_id: str
     suggested_name: str | None = None
+    matched_profile: SpeakerProfileMatch | None = None
     snippets: list[SpeakerSnippet] = Field(default_factory=list)
 
 
@@ -122,9 +139,11 @@ class VoiceProfile(BaseModel):
     profile_id: str
     name: str
     created_at: datetime
+    updated_at: datetime | None = None
     embedding: list[float]
     model_version: str
     threshold: float
+    sample_count: int = 1
 
 
 class CreateVoiceProfileRequest(BaseModel):

@@ -11,6 +11,10 @@ from pathlib import Path
 
 OPENAI_API_BASE_URL = "https://api.openai.com/v1"
 OPENAI_MAX_FILE_BYTES = 25 * 1024 * 1024
+DEFAULT_FORMATTER_INSTRUCTIONS = (
+    "Write concise, professional markdown minutes of meeting in English. "
+    "Return only the final markdown document."
+)
 
 
 class OpenAIAPIError(RuntimeError):
@@ -90,15 +94,12 @@ class OpenAIClient:
             raise OpenAIAPIError("OpenAI transcription returned empty text.")
         return text
 
-    def generate_text(self, prompt: str, model: str, timeout_s: int) -> str:
+    def generate_text(self, prompt: str, model: str, timeout_s: int, *, instructions: str = "") -> str:
         payload = self._post_json(
             "/responses",
             body={
                 "model": model,
-                "instructions": (
-                    "Write concise, professional markdown minutes of meeting in English. "
-                    "Return only the final markdown document."
-                ),
+                "instructions": instructions or DEFAULT_FORMATTER_INSTRUCTIONS,
                 "input": prompt,
             },
             timeout_s=timeout_s,

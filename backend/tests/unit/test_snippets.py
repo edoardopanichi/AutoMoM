@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
+import soundfile as sf
+
 from backend.pipeline.diarization import DiarizationSegment
 from backend.pipeline.snippets import extract_snippets, pick_snippet_ranges
 
@@ -35,3 +38,21 @@ def test_extract_snippets_invokes_segment_extraction(monkeypatch, tmp_path: Path
     assert len(out) == 2
     assert calls[0][4] == "ffmpeg"
     assert out[0].path.exists()
+
+
+def test_pick_snippet_ranges_prefers_clearer_audio_regions(tmp_path: Path) -> None:
+    sample_rate = 16000
+    quiet = np.full(sample_rate * 6, 0.005, dtype=np.float32)
+    clear = np.full(sample_rate * 6, 0.2, dtype=np.float32)
+    audio = np.concatenate([quiet, clear])
+    audio_path = tmp_path / "speaker.wav"
+    sf.write(audio_path, audio, sample_rate)
+
+    segments = [
+        DiarizationSegment("SPEAKER_0", 0.0, 6.0, confidence=0.9),
+        DiarizationSegment("SPEAKER_0", 6.0, 12.0, confidence=0.9),
+    ]
+
+    selected = pick_snippet_ranges(segments, per_speaker=1, audio_path=audio_path)
+
+    assert selected["SPEAKER_0"] == [(6.0, 12.0)]

@@ -349,6 +349,7 @@ function speakerFormFingerprint(jobState) {
   const speakers = speakerInfo.speakers.map((speaker) => ({
     speaker_id: speaker.speaker_id,
     suggested_name: speaker.suggested_name || "",
+    matched_profile: speaker.matched_profile || null,
     snippets: (speaker.snippets || []).map((snippet) => snippet.snippet_path),
   }));
   return JSON.stringify({
@@ -379,8 +380,26 @@ function renderSpeakerForm(jobState) {
     const card = document.createElement("div");
     card.className = "speaker-card";
 
+    const header = document.createElement("div");
+    header.className = "speaker-card-header";
+
     const title = document.createElement("h4");
     title.textContent = speaker.speaker_id;
+    header.appendChild(title);
+
+    if (speaker.matched_profile) {
+      const badge = document.createElement("span");
+      badge.className = `speaker-match-badge ${speaker.matched_profile.status}`;
+      if (speaker.matched_profile.status === "matched") {
+        badge.textContent = `Auto-recognized: ${speaker.matched_profile.name} (${speaker.matched_profile.score.toFixed(2)})`;
+      } else {
+        const alternatives = (speaker.matched_profile.ambiguous_names || []).join(", ");
+        badge.textContent = alternatives
+          ? `Possible match: ${speaker.matched_profile.name} (${speaker.matched_profile.score.toFixed(2)}), also ${alternatives}`
+          : `Possible match: ${speaker.matched_profile.name} (${speaker.matched_profile.score.toFixed(2)})`;
+      }
+      header.appendChild(badge);
+    }
 
     const input = document.createElement("input");
     input.type = "text";
@@ -399,9 +418,10 @@ function renderSpeakerForm(jobState) {
     toggle.dataset.speakerId = speaker.speaker_id;
     toggle.className = "speaker-save-profile";
     toggle.checked = Boolean(existingSaveProfile.get(speaker.speaker_id));
-    toggleWrap.append(toggle, "Save as voice profile");
+    toggleWrap.append(toggle, speaker.matched_profile ? "Save or update shared voice profile" : "Save as voice profile");
 
     const snippets = document.createElement("div");
+    snippets.className = "speaker-snippets";
     speaker.snippets.forEach((snippet) => {
       const audio = document.createElement("audio");
       audio.controls = true;
@@ -416,7 +436,13 @@ function renderSpeakerForm(jobState) {
       snippets.appendChild(audio);
     });
 
-    card.append(title, input, toggleWrap, snippets);
+    const hint = document.createElement("div");
+    hint.className = "speaker-card-hint";
+    hint.textContent = speaker.matched_profile
+      ? "Matched profiles prefill the name field. You can keep it, correct it, or update the shared profile."
+      : "Review the proposed snippets, assign a name, and save a profile only if this sample is representative.";
+
+    card.append(header, input, toggleWrap, hint, snippets);
     form.appendChild(card);
   });
 }
@@ -432,6 +458,25 @@ async function submitSpeakerMapping() {
       save_voice_profile: Boolean(save && save.checked),
     };
   });
+
+  const grouped = new Map();
+  mappings.forEach((item) => {
+    const key = item.name.trim().toLowerCase();
+    if (!key) return;
+    const existing = grouped.get(key) || [];
+    existing.push(item);
+    grouped.set(key, existing);
+  });
+  const duplicates = Array.from(grouped.values()).filter((items) => items.length > 1);
+  if (duplicates.length) {
+    const duplicateNames = duplicates.map((items) => items[0].name).join(", ");
+    const confirmed = window.confirm(
+      `You assigned the same speaker name to multiple diarized speakers: ${duplicateNames}. This will merge them into one speaker in the final transcript and update a shared voice profile. Continue?`,
+    );
+    if (!confirmed) {
+      return;
+    }
+  }
 
   await fetchJSON(`/api/jobs/${state.currentJobId}/speaker-mapping`, {
     method: "POST",
