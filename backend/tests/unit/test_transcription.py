@@ -301,3 +301,65 @@ def test_voxtral_runtime_summary_reports_verified_cuda(monkeypatch, tmp_path: Pa
     assert transcriber.transcribe(segment) == "hello"
     assert transcriber.compute_mode() == "cuda"
     assert transcriber.runtime_summary() == "compute=cuda (verified active)"
+
+
+def test_binary_selection_prefers_configured_gpu_capable_binary(monkeypatch, tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    configured = tmp_path / "configured-whisper-cli"
+    repo_cuda = repo_root / "tools" / "whisper.cpp" / "build-cuda" / "bin" / "whisper-cli"
+    repo_cpu = repo_root / "tools" / "whisper.cpp" / "build" / "bin" / "whisper-cli"
+    for path in (configured, repo_cuda, repo_cpu):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("bin", encoding="utf-8")
+
+    monkeypatch.setattr("backend.pipeline.transcription.REPO_ROOT", repo_root)
+    monkeypatch.setattr(
+        "backend.pipeline.transcription._probe_asr_binary",
+        lambda path: ASRBinaryCapabilities(path, True, tuple(), ("cuda",) if path == str(configured) else ("cpu",), path == str(configured)),
+    )
+
+    resolved = VoxtralTranscriber._resolve_preferred_binary_path(str(configured))
+
+    assert resolved == str(configured)
+
+
+def test_binary_selection_prefers_repo_cuda_when_configured_binary_is_cpu_only(monkeypatch, tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    configured = tmp_path / "configured-whisper-cli"
+    repo_cuda = repo_root / "tools" / "whisper.cpp" / "build-cuda" / "bin" / "whisper-cli"
+    repo_cpu = repo_root / "tools" / "whisper.cpp" / "build" / "bin" / "whisper-cli"
+    for path in (configured, repo_cuda, repo_cpu):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("bin", encoding="utf-8")
+
+    monkeypatch.setattr("backend.pipeline.transcription.REPO_ROOT", repo_root)
+
+    def fake_probe(path: str) -> ASRBinaryCapabilities:
+        if path == str(repo_cuda):
+            return ASRBinaryCapabilities(path, True, tuple(), ("cpu", "cuda"), True)
+        return ASRBinaryCapabilities(path, True, tuple(), ("cpu",), False)
+
+    monkeypatch.setattr("backend.pipeline.transcription._probe_asr_binary", fake_probe)
+
+    resolved = VoxtralTranscriber._resolve_preferred_binary_path(str(configured))
+
+    assert resolved == str(repo_cuda)
+
+
+def test_binary_selection_falls_back_to_configured_cpu_binary_when_no_gpu_binary_exists(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo_root = tmp_path / "repo"
+    configured = tmp_path / "configured-whisper-cli"
+    configured.parent.mkdir(parents=True, exist_ok=True)
+    configured.write_text("bin", encoding="utf-8")
+
+    monkeypatch.setattr("backend.pipeline.transcription.REPO_ROOT", repo_root)
+    monkeypatch.setattr(
+        "backend.pipeline.transcription._probe_asr_binary",
+        lambda path: ASRBinaryCapabilities(path, True, tuple(), ("cpu",), False),
+    )
+
+    resolved = VoxtralTranscriber._resolve_preferred_binary_path(str(configured))
+
+    assert resolved == str(configured)

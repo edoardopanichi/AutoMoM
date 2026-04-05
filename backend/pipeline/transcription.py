@@ -13,6 +13,8 @@ from backend.pipeline.compute import should_enable_native_gpu
 from backend.pipeline.diarization import merge_transcript_segments
 from backend.pipeline.openai_client import OpenAIAPIError, OpenAIClient
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
 TIMESTAMP_RANGE_PATTERN = re.compile(
     r"\[\s*\d{1,2}:\d{2}:\d{2}(?:[.,]\d{1,3})?\s*-->\s*\d{1,2}:\d{2}:\d{2}(?:[.,]\d{1,3})?\s*\]"
 )
@@ -72,7 +74,7 @@ class VoxtralTranscriber:
     ) -> None:
         self.binary_path = binary_path or ""
         self.model_path = model_path or ""
-        self._resolved_binary_path = self._resolve_binary_path(self.binary_path)
+        self._resolved_binary_path = self._resolve_preferred_binary_path(self.binary_path)
         self._cuda_device_id = max(0, int(cuda_device_id))
         self._gpu_layers = max(0, int(gpu_layers))
         self._threads = max(1, int(threads))
@@ -210,6 +212,27 @@ class VoxtralTranscriber:
         which_path = shutil.which(binary_path)
         if which_path:
             return which_path
+        return None
+
+    @classmethod
+    def _resolve_preferred_binary_path(cls, binary_path: str) -> str | None:
+        configured = cls._resolve_binary_path(binary_path)
+        repo_cuda = cls._resolve_binary_path(str(REPO_ROOT / "tools" / "whisper.cpp" / "build-cuda" / "bin" / "whisper-cli"))
+        repo_cpu = cls._resolve_binary_path(str(REPO_ROOT / "tools" / "whisper.cpp" / "build" / "bin" / "whisper-cli"))
+        path_binary = cls._resolve_binary_path("whisper-cli")
+
+        if configured:
+            configured_caps = _probe_asr_binary(configured)
+            if configured_caps.gpu_backend_available:
+                return configured
+
+        if repo_cuda and repo_cuda != configured and _probe_asr_binary(repo_cuda).gpu_backend_available:
+            return repo_cuda
+
+        for candidate in (configured, repo_cpu, path_binary):
+            if candidate:
+                return candidate
+
         return None
 
     def _missing_runtime_message(self) -> str:
