@@ -64,75 +64,108 @@
               <button type="button" id="cancel-template-inline" class="small-btn danger-btn">Cancel</button>
             </div>
           </div>
-          <label>
-            Language mode
-            <select id="language-mode">
-              <option value="auto">Auto detect</option>
-              <option value="en">English</option>
-            </select>
-          </label>
           <section class="cloud-panel">
             <div class="cloud-panel-header">
-              <h3>Paid Cloud Models</h3>
-              <p>Optional OpenAI API key. Use one key across diarization, transcription, and MoM generation.</p>
+              <h3>Processing Engine</h3>
+              <p>Each stage runs locally by default. Switch a stage to OpenAI only when you want the cloud path.</p>
             </div>
-            <label>
-              OpenAI API key
-              <input
-                type="password"
-                id="openai-api-key"
-                placeholder="sk-..."
-                autocomplete="off"
-                spellcheck="false"
-              />
-            </label>
-            <div class="cloud-grid">
+            <div class="engine-grid">
+              <article class="engine-card" data-stage="diarization">
+                <div class="engine-card-head">
+                  <div>
+                    <h4>Diarization</h4>
+                    <p>Identify who spoke and split the meeting by speaker.</p>
+                  </div>
+                  <div class="engine-toggle" role="group" aria-label="Diarization execution">
+                    <button type="button" class="engine-option active" data-stage="diarization" data-mode="local">Local</button>
+                    <button type="button" class="engine-option" data-stage="diarization" data-mode="api">OpenAI</button>
+                  </div>
+                </div>
+                <input type="hidden" id="diarization-execution" value="local" />
+                <label class="engine-model-field" data-mode="local">
+                  Local model
+                  <select id="local-diarization-model">
+                    <option value="pyannote-local">Pyannote local pipeline</option>
+                  </select>
+                </label>
+                <label class="engine-model-field hidden" data-mode="api">
+                  OpenAI model
+                  <select id="openai-diarization-model">
+                    <option value="gpt-4o-transcribe-diarize">gpt-4o-transcribe-diarize</option>
+                  </select>
+                </label>
+              </article>
+
+              <article class="engine-card" data-stage="transcription">
+                <div class="engine-card-head">
+                  <div>
+                    <h4>Transcription</h4>
+                    <p>Convert speaker segments into text.</p>
+                  </div>
+                  <div class="engine-toggle" role="group" aria-label="Transcription execution">
+                    <button type="button" class="engine-option active" data-stage="transcription" data-mode="local">Local</button>
+                    <button type="button" class="engine-option" data-stage="transcription" data-mode="api">OpenAI</button>
+                  </div>
+                </div>
+                <input type="hidden" id="transcription-execution" value="local" />
+                <label class="engine-model-field" data-mode="local">
+                  Local model
+                  <select id="local-transcription-model">
+                    <option value="whisper-cli-local">whisper-cli local ASR</option>
+                  </select>
+                </label>
+                <label class="engine-model-field hidden" data-mode="api">
+                  OpenAI model
+                  <select id="openai-transcription-model">
+                    <option value="gpt-4o-transcribe">gpt-4o-transcribe</option>
+                    <option value="gpt-4o-mini-transcribe">gpt-4o-mini-transcribe</option>
+                  </select>
+                </label>
+              </article>
+
+              <article class="engine-card" data-stage="formatter">
+                <div class="engine-card-head">
+                  <div>
+                    <h4>MoM Generation</h4>
+                    <p>Turn the transcript into final minutes.</p>
+                  </div>
+                  <div class="engine-toggle" role="group" aria-label="Minutes generation execution">
+                    <button type="button" class="engine-option active" data-stage="formatter" data-mode="local">Local</button>
+                    <button type="button" class="engine-option" data-stage="formatter" data-mode="api">OpenAI</button>
+                  </div>
+                </div>
+                <input type="hidden" id="formatter-execution" value="local" />
+                <label class="engine-model-field" data-mode="local">
+                  Local model
+                  <select id="local-formatter-model">
+                    <option value="ollama-current">Current Ollama formatter model</option>
+                  </select>
+                </label>
+                <label class="engine-model-field hidden" data-mode="api">
+                  OpenAI model
+                  <select id="openai-formatter-model">
+                    <option value="gpt-5-mini">gpt-5-mini</option>
+                    <option value="gpt-4.1">gpt-4.1</option>
+                    <option value="gpt-5-nano">gpt-5-nano</option>
+                  </select>
+                </label>
+              </article>
+            </div>
+            <div id="api-key-panel" class="api-key-panel hidden">
               <label>
-                Diarization
-                <select id="diarization-execution">
-                  <option value="local">Local model</option>
-                  <option value="api">OpenAI API</option>
-                </select>
+                OpenAI API key
+                <input
+                  type="password"
+                  id="openai-api-key"
+                  placeholder="sk-..."
+                  autocomplete="off"
+                  spellcheck="false"
+                />
               </label>
-              <label>
-                Diarization API model
-                <select id="openai-diarization-model">
-                  <option value="gpt-4o-transcribe-diarize">gpt-4o-transcribe-diarize</option>
-                </select>
-              </label>
-              <label>
-                Transcription
-                <select id="transcription-execution">
-                  <option value="local">Local model</option>
-                  <option value="api">OpenAI API</option>
-                </select>
-              </label>
-              <label>
-                Transcription API model
-                <select id="openai-transcription-model">
-                  <option value="gpt-4o-transcribe">gpt-4o-transcribe</option>
-                  <option value="gpt-4o-mini-transcribe">gpt-4o-mini-transcribe</option>
-                </select>
-              </label>
-              <label>
-                MoM generation
-                <select id="formatter-execution">
-                  <option value="local">Local model</option>
-                  <option value="api">OpenAI API</option>
-                </select>
-              </label>
-              <label>
-                MoM API model
-                <select id="openai-formatter-model">
-                  <option value="gpt-5-mini">gpt-5-mini</option>
-                  <option value="gpt-4.1">gpt-4.1</option>
-                  <option value="gpt-5-nano">gpt-5-nano</option>
-                </select>
-              </label>
+              <p class="cloud-note">Required only when at least one stage is set to OpenAI.</p>
             </div>
             <p class="cloud-note">
-              Recommended pairing: `gpt-4o-transcribe-diarize` for diarization, `gpt-4o-transcribe` for ASR,
-              and `gpt-5-mini` for minutes generation.
+              Local is the default path. The model selectors are separated by stage so you can add more local options later without changing this layout.
             </p>
           </section>
           <label>

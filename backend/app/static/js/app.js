@@ -38,6 +38,7 @@ async function loadStartupData() {
   state.formatterModelTag = formatterModel.model_tag || "";
   state.modelDownloads = Object.fromEntries(downloads.map((item) => [item.model_id, item]));
   renderTemplateSelect(templates);
+  renderExecutionModelLabels();
   renderTemplates(templates);
   renderModels(models);
   renderProfiles(profiles);
@@ -53,6 +54,18 @@ function renderTemplateSelect(templates) {
     option.textContent = `${template.name} (${template.version})`;
     select.appendChild(option);
   });
+}
+
+function renderExecutionModelLabels() {
+  const formatterLocalSelect = qs("#local-formatter-model");
+  if (!formatterLocalSelect) return;
+  formatterLocalSelect.innerHTML = "";
+  const option = document.createElement("option");
+  option.value = state.formatterModelTag || "ollama-current";
+  option.textContent = state.formatterModelTag
+    ? `Ollama: ${state.formatterModelTag}`
+    : "Current Ollama formatter model";
+  formatterLocalSelect.appendChild(option);
 }
 
 function resetTemplateCreator() {
@@ -71,17 +84,39 @@ function toggleTemplateCreator(show) {
   }
 }
 
-function syncCloudExecutionControls() {
-  [
-    ["#diarization-execution", "#openai-diarization-model"],
-    ["#transcription-execution", "#openai-transcription-model"],
-    ["#formatter-execution", "#openai-formatter-model"],
-  ].forEach(([executionSelector, modelSelector]) => {
-    const execution = qs(executionSelector);
-    const model = qs(modelSelector);
-    if (!execution || !model) return;
-    model.disabled = execution.value !== "api";
+function setExecutionMode(stage, mode) {
+  const hiddenInput = qs(`#${stage}-execution`);
+  const card = qsa(".engine-card").find((item) => item.dataset.stage === stage);
+  if (!hiddenInput || !card) return;
+
+  hiddenInput.value = mode;
+  qsa(`.engine-option[data-stage="${stage}"]`).forEach((button) => {
+    button.classList.toggle("active", button.dataset.mode === mode);
   });
+
+  qsa(`.engine-card[data-stage="${stage}"] .engine-model-field`).forEach((field) => {
+    const isActive = field.dataset.mode === mode;
+    field.classList.toggle("hidden", !isActive);
+    const select = field.querySelector("select");
+    if (select) {
+      select.disabled = !isActive;
+    }
+  });
+
+  card.dataset.mode = mode;
+}
+
+function syncCloudExecutionControls() {
+  ["diarization", "transcription", "formatter"].forEach((stage) => {
+    const input = qs(`#${stage}-execution`);
+    if (!input) return;
+    setExecutionMode(stage, input.value || "local");
+  });
+
+  const apiSelected = ["diarization", "transcription", "formatter"].some(
+    (stage) => qs(`#${stage}-execution`)?.value === "api",
+  );
+  qs("#api-key-panel").classList.toggle("hidden", !apiSelected);
 }
 
 function renderTemplates(templates) {
@@ -225,6 +260,7 @@ async function refreshSettings() {
   state.formatterModelTag = formatterModel.model_tag || "";
   state.modelDownloads = Object.fromEntries(downloads.map((item) => [item.model_id, item]));
   renderTemplateSelect(templates);
+  renderExecutionModelLabels();
   renderTemplates(templates);
   renderModels(models);
   renderProfiles(profiles);
@@ -475,12 +511,17 @@ async function startJob(event) {
   const formData = new FormData();
   formData.append("audio_file", fileInput.files[0]);
   formData.append("template_id", qs("#template-select").value);
-  formData.append("language_mode", qs("#language-mode").value);
   formData.append("title", qs("#meeting-title").value);
   formData.append("diarization_execution", qs("#diarization-execution").value);
   formData.append("transcription_execution", qs("#transcription-execution").value);
   formData.append("formatter_execution", qs("#formatter-execution").value);
-  formData.append("openai_api_key", qs("#openai-api-key").value);
+  if (
+    ["#diarization-execution", "#transcription-execution", "#formatter-execution"].some(
+      (selector) => qs(selector).value === "api",
+    )
+  ) {
+    formData.append("openai_api_key", qs("#openai-api-key").value);
+  }
   formData.append("openai_diarization_model", qs("#openai-diarization-model").value);
   formData.append("openai_transcription_model", qs("#openai-transcription-model").value);
   formData.append("openai_formatter_model", qs("#openai-formatter-model").value);
@@ -550,8 +591,11 @@ function bindEvents() {
   qs("#open-template-creator").addEventListener("click", () => toggleTemplateCreator(true));
   qs("#cancel-template-inline").addEventListener("click", () => toggleTemplateCreator(false));
   qs("#save-template-inline").addEventListener("click", saveTemplateInline);
-  ["#diarization-execution", "#transcription-execution", "#formatter-execution"].forEach((selector) => {
-    qs(selector).addEventListener("change", syncCloudExecutionControls);
+  qsa(".engine-option").forEach((button) => {
+    button.addEventListener("click", () => {
+      setExecutionMode(button.dataset.stage, button.dataset.mode);
+      syncCloudExecutionControls();
+    });
   });
 }
 
