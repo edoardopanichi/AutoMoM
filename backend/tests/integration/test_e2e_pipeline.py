@@ -39,12 +39,12 @@ def test_end_to_end_job_with_golden_outputs(isolated_settings, monkeypatch, tmp_
     )
     job_id = runtime.state.job_id
 
-    def fake_normalize(input_path: Path, output_path: Path, ffmpeg_bin: str):
+    def fake_normalize(input_path: Path, output_path: Path, ffmpeg_bin: str, job_id=None):
         data, sr = sf.read(str(input_path), always_2d=False)
         sf.write(output_path, data, sr)
         return {"path": str(output_path), "duration_s": len(data) / sr, "sample_rate": sr, "channels": 1}
 
-    def fake_extract_segment(input_path: Path, output_path: Path, start_s: float, end_s: float, ffmpeg_bin: str):
+    def fake_extract_segment(input_path: Path, output_path: Path, start_s: float, end_s: float, ffmpeg_bin: str, job_id=None):
         sample_rate = 16000
         duration = max(0.2, end_s - start_s)
         t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
@@ -189,12 +189,12 @@ def test_end_to_end_passthrough_uses_raw_formatter_output(isolated_settings, mon
     )
     job_id = runtime.state.job_id
 
-    def fake_normalize(input_path: Path, output_path: Path, ffmpeg_bin: str):
+    def fake_normalize(input_path: Path, output_path: Path, ffmpeg_bin: str, job_id=None):
         data, sr = sf.read(str(input_path), always_2d=False)
         sf.write(output_path, data, sr)
         return {"path": str(output_path), "duration_s": len(data) / sr, "sample_rate": sr, "channels": 1}
 
-    def fake_extract_segment(input_path: Path, output_path: Path, start_s: float, end_s: float, ffmpeg_bin: str):
+    def fake_extract_segment(input_path: Path, output_path: Path, start_s: float, end_s: float, ffmpeg_bin: str, job_id=None):
         sample_rate = 16000
         duration = max(0.2, end_s - start_s)
         t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
@@ -316,12 +316,12 @@ def test_end_to_end_stderr_prefixed_output_passthrough(isolated_settings, monkey
     )
     job_id = runtime.state.job_id
 
-    def fake_normalize(input_path: Path, output_path: Path, ffmpeg_bin: str):
+    def fake_normalize(input_path: Path, output_path: Path, ffmpeg_bin: str, job_id=None):
         data, sr = sf.read(str(input_path), always_2d=False)
         sf.write(output_path, data, sr)
         return {"path": str(output_path), "duration_s": len(data) / sr, "sample_rate": sr, "channels": 1}
 
-    def fake_extract_segment(input_path: Path, output_path: Path, start_s: float, end_s: float, ffmpeg_bin: str):
+    def fake_extract_segment(input_path: Path, output_path: Path, start_s: float, end_s: float, ffmpeg_bin: str, job_id=None):
         sample_rate = 16000
         duration = max(0.2, end_s - start_s)
         t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
@@ -446,12 +446,12 @@ def test_end_to_end_nonzero_formatter_exit_with_stdout_still_passthrough(
     )
     job_id = runtime.state.job_id
 
-    def fake_normalize(input_path: Path, output_path: Path, ffmpeg_bin: str):
+    def fake_normalize(input_path: Path, output_path: Path, ffmpeg_bin: str, job_id=None):
         data, sr = sf.read(str(input_path), always_2d=False)
         sf.write(output_path, data, sr)
         return {"path": str(output_path), "duration_s": len(data) / sr, "sample_rate": sr, "channels": 1}
 
-    def fake_extract_segment(input_path: Path, output_path: Path, start_s: float, end_s: float, ffmpeg_bin: str):
+    def fake_extract_segment(input_path: Path, output_path: Path, start_s: float, end_s: float, ffmpeg_bin: str, job_id=None):
         sample_rate = 16000
         duration = max(0.2, end_s - start_s)
         t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)

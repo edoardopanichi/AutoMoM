@@ -12,6 +12,7 @@ from functools import lru_cache
 from backend.pipeline.compute import should_enable_native_gpu
 from backend.pipeline.diarization import merge_transcript_segments
 from backend.pipeline.openai_client import OpenAIAPIError, OpenAIClient
+from backend.pipeline.subprocess_utils import run_cancellable_subprocess
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -66,6 +67,7 @@ class VoxtralTranscriber:
         binary_path: str | None,
         model_path: str | None,
         *,
+        job_id: str | None = None,
         compute_device: str = "auto",
         cuda_device_id: int = 0,
         gpu_layers: int = 99,
@@ -74,6 +76,7 @@ class VoxtralTranscriber:
     ) -> None:
         self.binary_path = binary_path or ""
         self.model_path = model_path or ""
+        self._job_id = job_id
         self._resolved_binary_path = self._resolve_preferred_binary_path(self.binary_path)
         self._cuda_device_id = max(0, int(cuda_device_id))
         self._gpu_layers = max(0, int(gpu_layers))
@@ -110,13 +113,13 @@ class VoxtralTranscriber:
 
         use_gpu = self._gpu_requested and not self._gpu_retry_disabled
         command = self._build_command(segment_path, use_gpu=use_gpu)
-        process = subprocess.run(command, capture_output=True, text=True)
+        process = run_cancellable_subprocess(command, job_id=self._job_id)
         invocation_failed = _invocation_failed(process)
         self._record_runtime_result(process, requested_gpu=use_gpu)
         if invocation_failed and use_gpu:
             # If GPU flags are unsupported, retry once on CPU and keep running.
             retry_command = self._build_command(segment_path, use_gpu=False)
-            retry_process = subprocess.run(retry_command, capture_output=True, text=True)
+            retry_process = run_cancellable_subprocess(retry_command, job_id=self._job_id)
             if not _invocation_failed(retry_process):
                 process = retry_process
                 invocation_failed = False

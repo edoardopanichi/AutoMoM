@@ -3,17 +3,23 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from functools import lru_cache
 from importlib import metadata as importlib_metadata
+import json
 import os
 from pathlib import Path
 import copy
 import math
+import subprocess
+import sys
+import tempfile
 import warnings
 from typing import Callable
 
 import numpy as np
 import soundfile as sf
 
+from backend.app.job_store import JOB_STORE
 from backend.pipeline.compute import resolve_torch_device
+from backend.pipeline.subprocess_utils import SubprocessCancelledError
 from backend.pipeline.vad import SpeechRegion
 
 
@@ -60,6 +66,7 @@ def diarize(
     embedding_model: str | None = None,
     compute_device: str = "auto",
     cuda_device_id: int = 0,
+    job_id: str | None = None,
     progress_callback: Callable[[dict[str, object]], None] | None = None,
 ) -> DiarizationResult:
     normalized_min = int(min_speakers) if min_speakers is not None else 0
@@ -86,6 +93,7 @@ def diarize(
             compute_device=compute_device,
             cuda_device_id=cuda_device_id,
             embedding_model=embedding_model,
+            job_id=job_id,
             progress_callback=progress_callback,
         )
         if pyannote_result is not None:
@@ -170,6 +178,52 @@ def _embedding_error_message(error: str | None) -> str:
 
 
 def _diarize_with_pyannote(
+    audio_path: Path,
+    speech_regions: list[SpeechRegion],
+    min_speakers: int | None,
+    max_speakers: int | None,
+    model_path: Path | None,
+    compute_device: str,
+    cuda_device_id: int,
+    pipeline_path: str | None = None,
+    embedding_model: str | None = None,
+    job_id: str | None = None,
+    progress_callback: Callable[[dict[str, object]], None] | None = None,
+) -> tuple[DiarizationResult | None, str | None]:
+    pipeline_ref = _resolve_pyannote_pipeline_ref(model_path, pipeline_path)
+    if not pipeline_ref:
+        return None, "pyannote_pipeline_not_configured"
+
+    if _diarization_subprocess_enabled():
+        return _diarize_with_pyannote_subprocess(
+            audio_path=audio_path,
+            speech_regions=speech_regions,
+            min_speakers=min_speakers,
+            max_speakers=max_speakers,
+            model_path=model_path,
+            compute_device=compute_device,
+            cuda_device_id=cuda_device_id,
+            pipeline_path=pipeline_path,
+            embedding_model=embedding_model,
+            job_id=job_id,
+            progress_callback=progress_callback,
+        )
+
+    return _diarize_with_pyannote_impl(
+        audio_path=audio_path,
+        speech_regions=speech_regions,
+        min_speakers=min_speakers,
+        max_speakers=max_speakers,
+        model_path=model_path,
+        compute_device=compute_device,
+        cuda_device_id=cuda_device_id,
+        pipeline_path=pipeline_path,
+        embedding_model=embedding_model,
+        progress_callback=progress_callback,
+    )
+
+
+def _diarize_with_pyannote_impl(
     audio_path: Path,
     speech_regions: list[SpeechRegion],
     min_speakers: int | None,
@@ -270,6 +324,131 @@ def _diarize_with_pyannote(
             details=f"pyannote_pipeline:device:{active_device}",
         ),
         None,
+    )
+
+
+def _diarization_subprocess_enabled() -> bool:
+    return os.getenv("AUTOMOM_DIARIZATION_SUBPROCESS", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _diarize_with_pyannote_subprocess(
+    *,
+    audio_path: Path,
+    speech_regions: list[SpeechRegion],
+    min_speakers: int | None,
+    max_speakers: int | None,
+    model_path: Path | None,
+    compute_device: str,
+    cuda_device_id: int,
+    pipeline_path: str | None,
+    embedding_model: str | None,
+    job_id: str | None,
+    progress_callback: Callable[[dict[str, object]], None] | None,
+) -> tuple[DiarizationResult | None, str | None]:
+    request_payload = {
+        "audio_path": str(audio_path),
+        "speech_regions": [asdict(region) for region in speech_regions],
+        "min_speakers": min_speakers,
+        "max_speakers": max_speakers,
+        "model_path": str(model_path) if model_path is not None else None,
+        "compute_device": compute_device,
+        "cuda_device_id": cuda_device_id,
+        "pipeline_path": pipeline_path,
+        "embedding_model": embedding_model,
+    }
+    temp_path: str | None = None
+    process: subprocess.Popen[str] | None = None
+    diagnostic_lines: list[str] = []
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as handle:
+            json.dump(request_payload, handle)
+            temp_path = handle.name
+
+        command = [sys.executable, "-m", "backend.pipeline.diarization_worker", temp_path]
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            start_new_session=True,
+        )
+        if job_id:
+            JOB_STORE.register_process(job_id, process)
+
+        result_payload: dict[str, object] | None = None
+        error_payload: str | None = None
+        if process.stdout is not None:
+            for raw_line in process.stdout:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                if not line.startswith("{"):
+                    diagnostic_lines.append(line)
+                    continue
+                try:
+                    message = json.loads(line)
+                except json.JSONDecodeError:
+                    diagnostic_lines.append(line)
+                    continue
+                kind = str(message.get("type") or "")
+                if kind == "progress":
+                    event = message.get("event")
+                    if isinstance(event, dict) and progress_callback is not None:
+                        progress_callback(event)
+                elif kind == "result":
+                    payload = message.get("result")
+                    if isinstance(payload, dict):
+                        result_payload = payload
+                elif kind == "error":
+                    error_payload = str(message.get("error") or "pyannote_worker_error")
+
+        return_code = process.wait()
+        if job_id and JOB_STORE.is_cancelled(job_id):
+            raise SubprocessCancelledError("Job cancelled")
+        if result_payload is not None:
+            return _result_from_worker_payload(result_payload), None
+        if error_payload is not None:
+            return None, error_payload
+        if return_code != 0:
+            diagnostics = "; ".join(diagnostic_lines[-5:])
+            if diagnostics:
+                return None, f"pyannote_subprocess_error:exit_{return_code}:{diagnostics}"
+            return None, f"pyannote_subprocess_error:exit_{return_code}"
+        return None, "pyannote_subprocess_no_result"
+    except SubprocessCancelledError:
+        raise
+    except Exception as exc:
+        return None, f"pyannote_subprocess_error:{exc.__class__.__name__}"
+    finally:
+        if job_id and process is not None:
+            JOB_STORE.unregister_process(job_id, process)
+        if temp_path:
+            try:
+                Path(temp_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
+def _result_from_worker_payload(payload: dict[str, object]) -> DiarizationResult:
+    raw_segments = payload.get("segments") or []
+    segments = [
+        DiarizationSegment(
+            speaker_id=str(item.get("speaker_id", "")),
+            start_s=float(item.get("start_s", 0.0)),
+            end_s=float(item.get("end_s", 0.0)),
+            confidence=None if item.get("confidence") is None else float(item.get("confidence")),
+        )
+        for item in raw_segments
+        if isinstance(item, dict)
+    ]
+    return DiarizationResult(
+        segments=segments,
+        speaker_count=int(payload.get("speaker_count", 0) or 0),
+        mode=str(payload.get("mode", "pyannote")),
+        details=str(payload.get("details")) if payload.get("details") is not None else None,
+        chunk_plan=payload.get("chunk_plan") if isinstance(payload.get("chunk_plan"), list) else None,
+        stitching_debug=payload.get("stitching_debug") if isinstance(payload.get("stitching_debug"), dict) else None,
     )
 
 

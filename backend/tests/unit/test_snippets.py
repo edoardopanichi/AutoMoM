@@ -26,7 +26,7 @@ def test_pick_snippet_ranges_groups_by_speaker() -> None:
 def test_extract_snippets_invokes_segment_extraction(monkeypatch, tmp_path: Path) -> None:
     calls = []
 
-    def fake_extract_segment(input_path, output_path, start_s, end_s, ffmpeg_bin):
+    def fake_extract_segment(input_path, output_path, start_s, end_s, ffmpeg_bin, job_id=None):
         calls.append((input_path, output_path, start_s, end_s, ffmpeg_bin))
         output_path.write_bytes(b"wav")
 

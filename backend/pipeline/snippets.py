@@ -112,12 +112,21 @@ def extract_snippets(
     output_dir: Path,
     snippet_ranges: dict[str, list[tuple[float, float]]],
     ffmpeg_bin: str = "ffmpeg",
+    *,
+    job_id: str | None = None,
 ) -> list[Snippet]:
     output_dir.mkdir(parents=True, exist_ok=True)
     snippets: list[Snippet] = []
     for speaker_id, ranges in snippet_ranges.items():
         for index, (start_s, end_s) in enumerate(ranges, start=1):
             snippet_path = output_dir / f"{speaker_id}_{index}.wav"
-            extract_segment(source_audio_path, snippet_path, start_s=start_s, end_s=end_s, ffmpeg_bin=ffmpeg_bin)
+            extract_segment(
+                source_audio_path,
+                snippet_path,
+                start_s=start_s,
+                end_s=end_s,
+                ffmpeg_bin=ffmpeg_bin,
+                job_id=job_id,
+            )
             snippets.append(Snippet(speaker_id=speaker_id, path=snippet_path, start_s=start_s, end_s=end_s))
     return snippets

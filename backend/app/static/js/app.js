@@ -20,6 +20,30 @@ function switchTab(tabId) {
   qsa(".panel").forEach((panel) => panel.classList.toggle("active", panel.id === tabId));
 }
 
+function resetJobUi() {
+  if (state.eventSource) {
+    state.eventSource.close();
+    state.eventSource = null;
+  }
+  state.currentJobId = null;
+  state.latestJobState = null;
+  state.speakerFormFingerprint = null;
+  qs("#audio-file").value = "";
+  qs("#meeting-title").value = "";
+  qs("#start-error").textContent = "";
+  qs("#speaker-count").textContent = "Detected speakers: -";
+  qs("#speaker-form").innerHTML = "";
+  qs("#mom-preview").textContent = "";
+  qs("#download-link").removeAttribute("href");
+  qs("#overall-value").textContent = "0.0%";
+  qs("#stage-value").textContent = "-";
+  qs("#stage-percent").textContent = "0.0%";
+  qs("#segment-progress").textContent = "-";
+  qs("#logs").textContent = "";
+  setProgressBars(0, 0);
+  switchTab("new-job");
+}
+
 async function fetchJSON(url, options = {}) {
   const response = await fetch(url, options);
   if (!response.ok) {
@@ -604,6 +628,10 @@ function openJobEventStream(jobId) {
     if (jobState.status === "failed" || jobState.status === "cancelled") {
       alert(`Job ${jobState.status}: ${jobState.error || "No details"}`);
       source.close();
+      state.eventSource = null;
+      if (jobState.status === "cancelled") {
+        resetJobUi();
+      }
     }
   };
 
@@ -662,6 +690,7 @@ async function startJob(event) {
 async function cancelJob() {
   if (!state.currentJobId) return;
   await fetchJSON(`/api/jobs/${state.currentJobId}/cancel`, { method: "POST" });
+  resetJobUi();
 }
 
 async function saveTemplateInline() {

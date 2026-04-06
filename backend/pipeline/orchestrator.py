@@ -23,6 +23,7 @@ from backend.pipeline.diarization import (
 from backend.pipeline.formatter import Formatter
 from backend.pipeline.openai_client import OpenAIAPIError, OpenAIClient, OpenAIDiarizationResult
 from backend.pipeline.snippets import extract_snippets, pick_snippet_ranges
+from backend.pipeline.subprocess_utils import SubprocessCancelledError
 from backend.pipeline.template_manager import TEMPLATE_MANAGER
 from backend.pipeline.transcription import OpenAITranscriber, TranscriptionError, VoxtralTranscriber, transcribe_segments
 from backend.pipeline.vad import detect_speech_regions
@@ -111,7 +112,12 @@ class PipelineOrchestrator:
             JOB_STORE.append_log(job_id, "Stage 1/9: validating, normalizing, and denoising audio")
             validate_audio_input(runtime.audio_path)
             normalized_audio_path = job_dir / "audio_normalized.wav"
-            audio_metadata_payload = normalize_audio(runtime.audio_path, normalized_audio_path, ffmpeg_bin=SETTINGS.ffmpeg_bin)
+            audio_metadata_payload = normalize_audio(
+                runtime.audio_path,
+                normalized_audio_path,
+                ffmpeg_bin=SETTINGS.ffmpeg_bin,
+                job_id=job_id,
+            )
             write_json(job_dir / "audio_metadata.json", audio_metadata_payload)
             JOB_STORE.set_artifact(job_id, "audio_normalized", normalized_audio_path)
             JOB_STORE.set_stage_percent(job_id, 100.0, overall_percent=self._overall(0, 100.0))
@@ -202,6 +208,7 @@ class PipelineOrchestrator:
                         embedding_model=diarization_model.embedding_model_ref,
                         compute_device=SETTINGS.compute_device,
                         cuda_device_id=SETTINGS.cuda_device_id,
+                        job_id=job_id,
                         progress_callback=_diarization_progress if use_chunked_progress else None,
                     )
                 finally:
@@ -245,6 +252,7 @@ class PipelineOrchestrator:
                 output_dir=job_dir / "snippets",
                 snippet_ranges=snippet_ranges,
                 ffmpeg_bin=SETTINGS.ffmpeg_bin,
+                job_id=job_id,
             )
             write_json(
                 job_dir / "snippets.json",
@@ -412,6 +420,7 @@ class PipelineOrchestrator:
                             start_s,
                             end_s,
                             ffmpeg_bin=SETTINGS.ffmpeg_bin,
+                            job_id=job_id,
                         )
                         segment_jobs.append(
                             {
@@ -435,6 +444,7 @@ class PipelineOrchestrator:
                 transcriber = VoxtralTranscriber(
                     SETTINGS.voxtral_binary,
                     SETTINGS.voxtral_model_path,
+                    job_id=job_id,
                     compute_device=SETTINGS.compute_device,
                     cuda_device_id=SETTINGS.cuda_device_id,
                     gpu_layers=SETTINGS.voxtral_gpu_layers,
@@ -451,7 +461,14 @@ class PipelineOrchestrator:
                     start_s = max(0.0, float(segment["start_s"]) - padding)
                     end_s = float(segment["end_s"]) + padding
                     segment_path = transcription_dir / f"segment_{idx:04d}.wav"
-                    extract_segment(normalized_audio_path, segment_path, start_s, end_s, ffmpeg_bin=SETTINGS.ffmpeg_bin)
+                    extract_segment(
+                        normalized_audio_path,
+                        segment_path,
+                        start_s,
+                        end_s,
+                        ffmpeg_bin=SETTINGS.ffmpeg_bin,
+                        job_id=job_id,
+                    )
                     segment_jobs.append(
                         {
                             "segment_path": str(segment_path),
@@ -543,6 +560,7 @@ class PipelineOrchestrator:
                 ollama_model=SETTINGS.formatter_ollama_model,
                 openai_api_key=api_config.api_key if use_api_formatter else "",
                 openai_model=api_config.formatter_model if use_api_formatter else "",
+                job_id=job_id,
                 timeout_s=SETTINGS.formatter_timeout_s,
             )
             title = runtime.title or runtime.audio_path.stem
@@ -623,7 +641,7 @@ class PipelineOrchestrator:
 
             JOB_STORE.mark_completed(job_id)
             JOB_STORE.append_log(job_id, "Job completed successfully")
-        except CancelledError as exc:
+        except (CancelledError, SubprocessCancelledError) as exc:
             JOB_STORE.append_log(job_id, str(exc))
             JOB_STORE.cancel(job_id)
         except Exception as exc:  # pragma: no cover - this is fallback guard

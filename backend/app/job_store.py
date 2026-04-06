@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import signal
+import subprocess
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -36,6 +39,7 @@ class JobRuntime:
     speaker_mapping_event: threading.Event = field(default_factory=threading.Event)
     speaker_mapping_payload: list[SpeakerMappingItem] | None = None
     cancel_event: threading.Event = field(default_factory=threading.Event)
+    active_processes: set[subprocess.Popen[str]] = field(default_factory=set)
 
 
 class JobStore:
@@ -240,19 +244,43 @@ class JobStore:
             self._persist_state(job_id)
 
     def cancel(self, job_id: str) -> None:
+        active_processes: list[subprocess.Popen[str]] = []
         with self._lock:
             runtime = self.get_runtime(job_id)
             if runtime.state.status in {"completed", "failed", "cancelled"}:
                 return
             runtime.cancel_event.set()
+            runtime.speaker_mapping_event.set()
+            active_processes = list(runtime.active_processes)
             runtime.state.status = "cancelled"
+            runtime.state.error = "Job cancelled by user"
             runtime.state.stage_detail = None
             runtime.state.updated_at = datetime.now(timezone.utc)
             self._persist_state(job_id)
+        for process in active_processes:
+            try:
+                if process.poll() is not None:
+                    continue
+                if os.name != "nt":
+                    os.killpg(process.pid, signal.SIGTERM)
+                else:
+                    process.terminate()
+            except Exception:
+                continue
 
     def is_cancelled(self, job_id: str) -> bool:
         runtime = self.get_runtime(job_id)
         return runtime.cancel_event.is_set()
+
+    def register_process(self, job_id: str, process: subprocess.Popen[str]) -> None:
+        with self._lock:
+            runtime = self.get_runtime(job_id)
+            runtime.active_processes.add(process)
+
+    def unregister_process(self, job_id: str, process: subprocess.Popen[str]) -> None:
+        with self._lock:
+            runtime = self.get_runtime(job_id)
+            runtime.active_processes.discard(process)
 
     def _persist_state(self, job_id: str) -> None:
         with self._lock:

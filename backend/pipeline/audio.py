@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import os
-import subprocess
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
+
+from backend.pipeline.subprocess_utils import run_cancellable_subprocess
 
 
 class AudioError(RuntimeError):
@@ -52,6 +53,7 @@ def normalize_audio(
     output_path: Path,
     ffmpeg_bin: str = "ffmpeg",
     *,
+    job_id: str | None = None,
     denoise_enabled: bool | None = None,
     denoise_filter: str | None = None,
 ) -> dict[str, float | int | str]:
@@ -70,7 +72,7 @@ def normalize_audio(
     if enabled:
         command.extend(["-af", filter_expr])
     command.append(str(output_path))
-    process = subprocess.run(command, capture_output=True, text=True)
+    process = run_cancellable_subprocess(command, job_id=job_id)
     if process.returncode != 0:
         raise AudioError(process.stderr.strip() or "Audio normalization failed")
 
@@ -105,6 +107,8 @@ def extract_segment(
     start_s: float,
     end_s: float,
     ffmpeg_bin: str = "ffmpeg",
+    *,
+    job_id: str | None = None,
 ) -> None:
     duration = max(0.0, end_s - start_s)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -123,6 +127,6 @@ def extract_segment(
         "16000",
         str(output_path),
     ]
-    process = subprocess.run(command, capture_output=True, text=True)
+    process = run_cancellable_subprocess(command, job_id=job_id)
     if process.returncode != 0:
         raise AudioError(process.stderr.strip() or f"Segment extraction failed for {output_path}")

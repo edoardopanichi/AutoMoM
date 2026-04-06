@@ -15,6 +15,7 @@ from pathlib import Path
 from backend.app.config import SETTINGS
 from backend.app.schemas import TemplateSection
 from backend.pipeline.openai_client import OpenAIAPIError, OpenAIClient
+from backend.pipeline.subprocess_utils import run_cancellable_subprocess
 from backend.pipeline.template_manager import TEMPLATE_MANAGER, FormatterPromptBundle
 
 ACTION_OWNER_PATTERN = re.compile(r"(?P<owner>[A-Z][a-z]+) will (?P<task>[^.]+)", re.IGNORECASE)
@@ -62,6 +63,7 @@ class Formatter:
         openai_api_key: str | None = None,
         openai_model: str | None = None,
         *,
+        job_id: str | None = None,
         timeout_s: int | None = None,
         **_: object,
     ) -> None:
@@ -71,6 +73,7 @@ class Formatter:
         self.ollama_model = (ollama_model or SETTINGS.formatter_ollama_model).strip()
         self.openai_api_key = (openai_api_key or "").strip()
         self.openai_model = (openai_model or "").strip()
+        self.job_id = job_id
         self.timeout_s = int(timeout_s or SETTINGS.formatter_timeout_s)
         self.last_raw_output: str = ""
         self.last_stdout: str = ""
@@ -178,11 +181,10 @@ class Formatter:
         command = self.command_template.format(model=self.model_path)
         full_prompt = f"SYSTEM:\n{system_prompt}\n\nUSER:\n{prompt}" if system_prompt else prompt
         try:
-            process = subprocess.run(
+            process = run_cancellable_subprocess(
                 shlex.split(command),
-                input=full_prompt,
-                capture_output=True,
-                text=True,
+                input_text=full_prompt,
+                job_id=self.job_id,
                 timeout=self.timeout_s,
             )
         except Exception as exc:

@@ -144,6 +144,37 @@ def test_diarize_auto_raises_when_pyannote_unavailable(monkeypatch, tmp_path: Pa
     assert "Pyannote diarization unavailable (no_pipeline)" in str(exc_info.value)
 
 
+def test_diarize_pyannote_delegates_to_subprocess_helper(monkeypatch, tmp_path: Path) -> None:
+    sample_rate = 16000
+    path = tmp_path / "diar_subprocess.wav"
+    sf.write(path, np.zeros(sample_rate, dtype=np.float32), sample_rate)
+
+    monkeypatch.setattr(diarization_module, "_diarization_subprocess_enabled", lambda: True)
+    monkeypatch.setattr(
+        diarization_module,
+        "_diarize_with_pyannote_subprocess",
+        lambda **kwargs: (
+            diarization_module.DiarizationResult(
+                segments=[diarization_module.DiarizationSegment("SPEAKER_0", 0.0, 1.0)],
+                speaker_count=1,
+                mode="pyannote",
+                details="subprocess",
+            ),
+            None,
+        ),
+    )
+
+    result = diarization_module.diarize(
+        path,
+        [SpeechRegion(start_s=0.0, end_s=1.0)],
+        backend="pyannote",
+        model_path=tmp_path / "config.yaml",
+        pipeline_path=str(tmp_path / "config.yaml"),
+    )
+
+    assert result.details == "subprocess"
+
+
 def test_diarize_forced_embedding_raises_when_unavailable(monkeypatch, tmp_path: Path) -> None:
     sample_rate = 16000
     t = np.linspace(0, 1.0, sample_rate, endpoint=False)
