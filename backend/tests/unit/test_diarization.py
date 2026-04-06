@@ -64,6 +64,7 @@ def test_pyannote_import_skipped_when_pipeline_missing(monkeypatch, tmp_path: Pa
     monkeypatch.setattr(builtins, "__import__", guarded_import)
     result, error = diarization_module._diarize_with_pyannote(
         audio_path=tmp_path / "dummy.wav",
+        speech_regions=[],
         min_speakers=1,
         max_speakers=2,
         model_path=tmp_path / "missing.bin",
@@ -73,6 +74,58 @@ def test_pyannote_import_skipped_when_pipeline_missing(monkeypatch, tmp_path: Pa
 
     assert result is None
     assert error == "pyannote_pipeline_not_configured"
+
+
+def test_plan_chunked_diarization_uses_ceil_20_min_windows() -> None:
+    chunks = diarization_module._plan_chunked_diarization(
+        speech_regions=[],
+        total_duration_s=57 * 60.0,
+    )
+
+    assert len(chunks) == 3
+    assert max(float(item["own_end_s"]) - float(item["own_start_s"]) for item in chunks) <= 20 * 60.0
+    assert chunks[0]["own_start_s"] == 0.0
+    assert chunks[-1]["own_end_s"] == 57 * 60.0
+
+
+def test_filter_segments_to_owned_window_clips_and_deduplicates_overlap() -> None:
+    segments = [
+        diarization_module.DiarizationSegment("A", 590.0, 605.0),
+        diarization_module.DiarizationSegment("A", 605.0, 615.0),
+        diarization_module.DiarizationSegment("B", 1185.0, 1210.0),
+    ]
+
+    filtered = diarization_module._filter_segments_to_owned_window(
+        segments,
+        own_start_s=600.0,
+        own_end_s=1200.0,
+    )
+
+    assert [(item.speaker_id, item.start_s, item.end_s) for item in filtered] == [
+        ("A", 605.0, 615.0),
+        ("B", 1185.0, 1200.0),
+    ]
+
+
+def test_assign_chunk_speakers_to_global_reuses_matching_speaker() -> None:
+    representative = {
+        "chunk_speaker_0": np.array([1.0, 0.0], dtype=np.float32),
+        "chunk_speaker_1": np.array([0.0, 1.0], dtype=np.float32),
+    }
+    global_bank = {
+        "GLOBAL_0": [np.array([1.0, 0.0], dtype=np.float32)],
+    }
+    speaker_order = ["GLOBAL_0"]
+
+    mapping, debug_rows = diarization_module._assign_chunk_speakers_to_global(
+        representative,
+        global_bank,
+        speaker_order,
+    )
+
+    assert mapping["chunk_speaker_0"] == "GLOBAL_0"
+    assert mapping["chunk_speaker_1"] == "GLOBAL_1"
+    assert any(row["assigned_global_speaker_id"] == "GLOBAL_0" for row in debug_rows)
 
 
 def test_diarize_auto_raises_when_pyannote_unavailable(monkeypatch, tmp_path: Path) -> None:

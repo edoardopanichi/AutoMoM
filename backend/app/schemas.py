@@ -126,6 +126,7 @@ class JobState(BaseModel):
     current_stage: PipelineStage | None = None
     stage_percent: float = 0.0
     overall_percent: float = 0.0
+    stage_detail: str | None = None
     logs: list[str] = Field(default_factory=list)
     error: str | None = None
     artifact_paths: dict[str, str] = Field(default_factory=dict)

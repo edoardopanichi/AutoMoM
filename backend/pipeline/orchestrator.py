@@ -14,7 +14,12 @@ from backend.app.job_store import JOB_STORE, OpenAIJobConfig, ensure_job_artifac
 from backend.app.schemas import JobSpeakerInfo, SpeakerProfileMatch, SpeakerSnippet, SpeakerState
 from backend.models.diarization_registry import resolve_local_diarization_model
 from backend.pipeline.audio import extract_segment, normalize_audio, validate_audio_input
-from backend.pipeline.diarization import DiarizationResult, DiarizationSegment, diarize
+from backend.pipeline.diarization import (
+    CHUNKED_LOCAL_DIARIZATION_THRESHOLD_S,
+    DiarizationResult,
+    DiarizationSegment,
+    diarize,
+)
 from backend.pipeline.formatter import Formatter
 from backend.pipeline.openai_client import OpenAIAPIError, OpenAIClient, OpenAIDiarizationResult
 from backend.pipeline.snippets import extract_snippets, pick_snippet_ranges
@@ -163,7 +168,27 @@ class PipelineOrchestrator:
                 max_speakers = SETTINGS.diarization_max_speakers if SETTINGS.diarization_max_speakers > 0 else None
                 JOB_STORE.set_stage_percent(job_id, 6.0, overall_percent=self._overall(2, 6.0))
                 JOB_STORE.append_log(job_id, "Loading local diarization pipeline")
-                diarization_progress_stop, diarization_progress_thread = self._start_stage_heartbeat(job_id, 2)
+                use_chunked_progress = bool(audio_metadata_payload) and float(audio_metadata_payload.get("duration_s", 0.0)) > CHUNKED_LOCAL_DIARIZATION_THRESHOLD_S
+                if not use_chunked_progress:
+                    diarization_progress_stop, diarization_progress_thread = self._start_stage_heartbeat(job_id, 2)
+
+                def _diarization_progress(event: dict[str, object]) -> None:
+                    total_s = max(1.0, float(event.get("total_s", 0.0) or 0.0))
+                    processed_s = max(0.0, float(event.get("processed_s", 0.0) or 0.0))
+                    phase = str(event.get("phase") or "")
+                    detail = str(event.get("detail") or "").strip()
+                    if phase == "finalizing":
+                        stage_percent = 99.0
+                    else:
+                        stage_percent = min(99.0, (processed_s / total_s) * 99.0)
+                    if detail:
+                        JOB_STORE.set_stage_percent(
+                            job_id,
+                            stage_percent,
+                            overall_percent=self._overall(2, stage_percent),
+                            stage_detail=detail,
+                        )
+
                 try:
                     diarization_result = diarize(
                         normalized_audio_path,
@@ -177,6 +202,7 @@ class PipelineOrchestrator:
                         embedding_model=diarization_model.embedding_model_ref,
                         compute_device=SETTINGS.compute_device,
                         cuda_device_id=SETTINGS.cuda_device_id,
+                        progress_callback=_diarization_progress if use_chunked_progress else None,
                     )
                 finally:
                     if diarization_progress_stop is not None:
@@ -185,6 +211,12 @@ class PipelineOrchestrator:
                         diarization_progress_thread.join(timeout=0.2)
             write_json(job_dir / "diarization.json", diarization_result.to_json())
             JOB_STORE.set_artifact(job_id, "diarization", job_dir / "diarization.json")
+            if diarization_result.chunk_plan:
+                write_json(job_dir / "diarization_chunks.json", diarization_result.chunk_plan)
+                JOB_STORE.set_artifact(job_id, "diarization_chunks", job_dir / "diarization_chunks.json")
+            if diarization_result.stitching_debug:
+                write_json(job_dir / "diarization_stitching.json", diarization_result.stitching_debug)
+                JOB_STORE.set_artifact(job_id, "diarization_stitching", job_dir / "diarization_stitching.json")
             JOB_STORE.append_log(job_id, f"Diarization mode: {diarization_result.mode}")
             if diarization_result.details:
                 JOB_STORE.append_log(job_id, f"Diarization details: {diarization_result.details}")

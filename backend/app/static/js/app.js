@@ -405,7 +405,7 @@ function updateProgressView(jobState) {
   qs("#overall-value").textContent = `${jobState.overall_percent.toFixed(1)}%`;
   qs("#stage-value").textContent = jobState.current_stage || "-";
   qs("#stage-percent").textContent = `${jobState.stage_percent.toFixed(1)}%`;
-  qs("#segment-progress").textContent = jobState.transcript_segment_progress || "-";
+  qs("#segment-progress").textContent = jobState.transcript_segment_progress || jobState.stage_detail || "-";
   setProgressBars(jobState.overall_percent, jobState.stage_percent);
   qs("#logs").textContent = (jobState.logs || []).join("\n");
 }

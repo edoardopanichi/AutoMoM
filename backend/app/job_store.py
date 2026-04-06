@@ -131,16 +131,25 @@ class JobStore:
             runtime = self.get_runtime(job_id)
             runtime.state.current_stage = stage
             runtime.state.stage_percent = 0.0
+            runtime.state.stage_detail = None
             runtime.state.overall_percent = max(0.0, min(100.0, overall_percent))
             runtime.state.updated_at = datetime.now(timezone.utc)
             self._persist_state(job_id)
 
-    def set_stage_percent(self, job_id: str, value: float, overall_percent: float | None = None) -> None:
+    def set_stage_percent(
+        self,
+        job_id: str,
+        value: float,
+        overall_percent: float | None = None,
+        stage_detail: str | None = None,
+    ) -> None:
         with self._lock:
             runtime = self.get_runtime(job_id)
             runtime.state.stage_percent = max(0.0, min(100.0, value))
             if overall_percent is not None:
                 runtime.state.overall_percent = max(0.0, min(100.0, overall_percent))
+            if stage_detail is not None:
+                runtime.state.stage_detail = stage_detail
             runtime.state.updated_at = datetime.now(timezone.utc)
             self._persist_state(job_id)
 
@@ -158,6 +167,7 @@ class JobStore:
             if overall_percent is not None:
                 runtime.state.overall_percent = max(0.0, min(100.0, overall_percent))
             runtime.state.transcript_segment_progress = f"{completed} of {total}"
+            runtime.state.stage_detail = None
             runtime.state.updated_at = datetime.now(timezone.utc)
             self._persist_state(job_id)
 
@@ -184,6 +194,7 @@ class JobStore:
             runtime.state.status = "waiting_speaker_input"
             runtime.state.speaker_info = speaker_info
             runtime.state.stage_percent = 0.0
+            runtime.state.stage_detail = None
             runtime.state.updated_at = datetime.now(timezone.utc)
             runtime.speaker_mapping_event.clear()
             self._persist_state(job_id)
@@ -196,6 +207,7 @@ class JobStore:
             runtime.speaker_mapping_payload = mappings
             runtime.state.stage_percent = 100.0
             runtime.state.status = "running"
+            runtime.state.stage_detail = None
             runtime.state.updated_at = datetime.now(timezone.utc)
             runtime.speaker_mapping_event.set()
             self._persist_state(job_id)
@@ -213,6 +225,7 @@ class JobStore:
             runtime = self.get_runtime(job_id)
             runtime.state.status = "completed"
             runtime.state.stage_percent = 100.0
+            runtime.state.stage_detail = None
             runtime.state.overall_percent = 100.0
             runtime.state.updated_at = datetime.now(timezone.utc)
             self._persist_state(job_id)
@@ -222,6 +235,7 @@ class JobStore:
             runtime = self.get_runtime(job_id)
             runtime.state.status = "failed"
             runtime.state.error = error
+            runtime.state.stage_detail = None
             runtime.state.updated_at = datetime.now(timezone.utc)
             self._persist_state(job_id)
 
@@ -232,6 +246,7 @@ class JobStore:
                 return
             runtime.cancel_event.set()
             runtime.state.status = "cancelled"
+            runtime.state.stage_detail = None
             runtime.state.updated_at = datetime.now(timezone.utc)
             self._persist_state(job_id)
 
