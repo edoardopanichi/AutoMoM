@@ -146,6 +146,19 @@ button:hover {
   animation: rise 240ms ease;
 }
 
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.9rem;
+}
+
+.panel-header h2 {
+  margin: 0;
+}
+
 @keyframes rise {
   from {
     opacity: 0;

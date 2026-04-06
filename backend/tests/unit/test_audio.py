@@ -16,14 +16,14 @@ def test_normalize_audio_invokes_ffmpeg(monkeypatch, tmp_path: Path) -> None:
 
     called = {}
 
-    def fake_run(command, capture_output, text):
+    def fake_run(command, job_id=None, **kwargs):
         called["command"] = command
         # create a valid output wav so metadata can be read
         samples = np.zeros(16000, dtype=np.float32)
         sf.write(output_path, samples, 16000)
         return SimpleNamespace(returncode=0, stderr="")
 
-    monkeypatch.setattr(audio.subprocess, "run", fake_run)
+    monkeypatch.setattr(audio, "run_cancellable_subprocess", fake_run)
 
     metadata = audio.normalize_audio(input_path, output_path, ffmpeg_bin="ffmpeg")
 
@@ -45,13 +45,13 @@ def test_normalize_audio_can_disable_denoise(monkeypatch, tmp_path: Path) -> Non
 
     called = {}
 
-    def fake_run(command, capture_output, text):
+    def fake_run(command, job_id=None, **kwargs):
         called["command"] = command
         samples = np.zeros(16000, dtype=np.float32)
         sf.write(output_path, samples, 16000)
         return SimpleNamespace(returncode=0, stderr="")
 
-    monkeypatch.setattr(audio.subprocess, "run", fake_run)
+    monkeypatch.setattr(audio, "run_cancellable_subprocess", fake_run)
 
     metadata = audio.normalize_audio(input_path, output_path, ffmpeg_bin="ffmpeg", denoise_enabled=False)
 
@@ -67,13 +67,13 @@ def test_normalize_audio_uses_custom_denoise_filter(monkeypatch, tmp_path: Path)
 
     called = {}
 
-    def fake_run(command, capture_output, text):
+    def fake_run(command, job_id=None, **kwargs):
         called["command"] = command
         samples = np.zeros(16000, dtype=np.float32)
         sf.write(output_path, samples, 16000)
         return SimpleNamespace(returncode=0, stderr="")
 
-    monkeypatch.setattr(audio.subprocess, "run", fake_run)
+    monkeypatch.setattr(audio, "run_cancellable_subprocess", fake_run)
 
     metadata = audio.normalize_audio(
         input_path,

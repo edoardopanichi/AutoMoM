@@ -47,7 +47,7 @@ def test_formatter_prompt_assembly(isolated_settings) -> None:
 
 def test_formatter_heuristic_transcript_markdown_has_no_timestamps() -> None:
     formatter = Formatter(command_template="", model_path="")
-    markdown, structured, _ = formatter.build_structured_summary(
+    structured = formatter._heuristic_structuring(
         transcript=[
             {
                 "speaker_name": "Alice",
@@ -64,13 +64,11 @@ def test_formatter_heuristic_transcript_markdown_has_no_timestamps() -> None:
         ],
         speakers=["Alice", "Bob"],
         title="Sync",
-        template_id="default",
     )
 
     transcript_md = str(structured["transcript_markdown"])
     assert "- **Alice**: We aligned on scope." in transcript_md
     assert "- **Bob**: I will share the plan." in transcript_md
-    assert markdown == ""
 
 
 def test_formatter_uses_ollama_response(monkeypatch) -> None:

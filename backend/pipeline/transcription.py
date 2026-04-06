@@ -281,17 +281,11 @@ class OpenAITranscriber:
         self._client = OpenAIClient(api_key)
         self._model = model.strip() or "gpt-4o-transcribe"
 
-    def available(self) -> bool:
-        return True
-
     def transcribe(self, segment_path: Path) -> str:
         try:
             return self._client.transcribe_audio(segment_path, model=self._model)
         except OpenAIAPIError as exc:
             raise TranscriptionError(f"OpenAI transcription failed for '{segment_path.name}': {exc}") from exc
-
-    def compute_mode(self) -> str:
-        return f"api:{self._model}"
 
 
 def transcribe_segments(

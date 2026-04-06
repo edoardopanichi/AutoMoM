@@ -181,7 +181,10 @@
       </section>
 
       <section id="progress" class="panel">
-        <h2>Progress</h2>
+        <div class="panel-header">
+          <h2>Progress</h2>
+          <button id="cancel-job" class="danger-btn">Cancel Job</button>
+        </div>
         <div class="kpi-grid">
           <div class="kpi"><span>Overall</span><strong id="overall-value">0%</strong></div>
           <div class="kpi"><span>Stage</span><strong id="stage-value">-</strong></div>
@@ -194,7 +197,6 @@
         <div class="progress-wrap">
           <div id="stage-bar" class="progress-bar stage"></div>
         </div>
-        <button id="cancel-job" class="danger-btn">Cancel Job</button>
         <section id="speaker-naming-section" class="speaker-naming-section hidden">
           <div class="speaker-naming-head">
             <div>

@@ -23,7 +23,7 @@ def test_voxtral_invocation_wrapper_uses_subprocess(monkeypatch, tmp_path: Path)
     model.write_text("model", encoding="utf-8")
     segment.write_text("wav", encoding="utf-8")
 
-    def fake_run(command, capture_output, text):
+    def fake_run(command, job_id=None, **kwargs):
         assert str(binary) in command
         assert str(model) in command
         assert "-t" in command
@@ -36,7 +36,7 @@ def test_voxtral_invocation_wrapper_uses_subprocess(monkeypatch, tmp_path: Path)
         lambda *_: ASRBinaryCapabilities(str(binary), True, ("-t", "-p"), ("cpu",), False),
     )
     monkeypatch.setattr("backend.pipeline.transcription._binary_supports_any_flag", lambda *_: True)
-    monkeypatch.setattr("backend.pipeline.transcription.subprocess.run", fake_run)
+    monkeypatch.setattr("backend.pipeline.transcription.run_cancellable_subprocess", fake_run)
 
     transcriber = VoxtralTranscriber(str(binary), str(model), threads=8, processors=2)
     text = transcriber.transcribe(segment)
@@ -164,13 +164,13 @@ def test_voxtral_gpu_retry_falls_back_to_cpu(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setattr("backend.pipeline.transcription._binary_supports_any_flag", lambda *_: True)
     calls: list[list[str]] = []
 
-    def fake_run(command, capture_output, text):
+    def fake_run(command, job_id=None, **kwargs):
         calls.append(command)
         if "-ngl" in command:
             return SimpleNamespace(returncode=1, stdout="", stderr="unsupported flag")
         return SimpleNamespace(returncode=0, stdout="ok text", stderr="")
 
-    monkeypatch.setattr("backend.pipeline.transcription.subprocess.run", fake_run)
+    monkeypatch.setattr("backend.pipeline.transcription.run_cancellable_subprocess", fake_run)
 
     transcriber = VoxtralTranscriber(str(binary), str(model), compute_device="auto", gpu_layers=99)
     text = transcriber.transcribe(segment)
@@ -197,13 +197,13 @@ def test_voxtral_gpu_retry_handles_rc0_with_stderr_error(monkeypatch, tmp_path: 
     monkeypatch.setattr("backend.pipeline.transcription._binary_supports_any_flag", lambda *_: True)
     calls: list[list[str]] = []
 
-    def fake_run(command, capture_output, text):
+    def fake_run(command, job_id=None, **kwargs):
         calls.append(command)
         if "-ngl" in command:
             return SimpleNamespace(returncode=0, stdout="", stderr="error: unknown argument: -ngl")
         return SimpleNamespace(returncode=0, stdout="[00:00:00.000 --> 00:00:01.000] hello", stderr="")
 
-    monkeypatch.setattr("backend.pipeline.transcription.subprocess.run", fake_run)
+    monkeypatch.setattr("backend.pipeline.transcription.run_cancellable_subprocess", fake_run)
 
     transcriber = VoxtralTranscriber(str(binary), str(model), compute_device="auto", gpu_layers=99)
     text = transcriber.transcribe(segment)
@@ -232,11 +232,11 @@ def test_voxtral_does_not_add_gpu_layers_when_binary_does_not_support_them(monke
     )
     calls: list[list[str]] = []
 
-    def fake_run(command, capture_output, text):
+    def fake_run(command, job_id=None, **kwargs):
         calls.append(command)
         return SimpleNamespace(returncode=0, stdout="hello", stderr="")
 
-    monkeypatch.setattr("backend.pipeline.transcription.subprocess.run", fake_run)
+    monkeypatch.setattr("backend.pipeline.transcription.run_cancellable_subprocess", fake_run)
 
     transcriber = VoxtralTranscriber(str(binary), str(model), compute_device="auto", cuda_device_id=1, gpu_layers=99)
     text = transcriber.transcribe(segment)
@@ -261,7 +261,7 @@ def test_voxtral_runtime_summary_reports_cpu_when_gpu_backend_unavailable(monkey
         lambda *_: ASRBinaryCapabilities(str(binary), True, ("-dev", "-t", "-p"), ("cpu",), False),
     )
     monkeypatch.setattr(
-        "backend.pipeline.transcription.subprocess.run",
+        "backend.pipeline.transcription.run_cancellable_subprocess",
         lambda *args, **kwargs: SimpleNamespace(
             returncode=0,
             stdout="hello",
@@ -289,7 +289,7 @@ def test_voxtral_runtime_summary_reports_verified_cuda(monkeypatch, tmp_path: Pa
         lambda *_: ASRBinaryCapabilities(str(binary), True, ("-dev", "-t", "-p"), ("cuda",), True),
     )
     monkeypatch.setattr(
-        "backend.pipeline.transcription.subprocess.run",
+        "backend.pipeline.transcription.run_cancellable_subprocess",
         lambda *args, **kwargs: SimpleNamespace(
             returncode=0,
             stdout="hello",

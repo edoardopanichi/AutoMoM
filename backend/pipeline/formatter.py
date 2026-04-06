@@ -219,19 +219,6 @@ class Formatter:
         self.last_mode = "model_plaintext"
         return {"_raw_model_text": output}
 
-    def build_structured_summary(
-        self,
-        transcript: list[dict[str, object]],
-        speakers: list[str],
-        title: str,
-        template_id: str,
-    ) -> tuple[str, dict[str, object], str]:
-        bundle = TEMPLATE_MANAGER.build_formatter_request(template_id, transcript, speakers, title)
-        self.run_model(bundle.user_prompt, system_prompt=bundle.system_prompt)
-        structured = self._heuristic_structuring(transcript, speakers, title)
-        markdown = self.last_raw_output if self.last_raw_output else ""
-        return markdown, structured, f"{bundle.system_prompt}\n\n{bundle.user_prompt}"
-
     def write_model_output_to_mom(
         self,
         transcript: list[dict[str, object]],
