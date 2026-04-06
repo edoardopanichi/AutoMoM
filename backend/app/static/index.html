@@ -19,7 +19,6 @@
       <nav class="tabs">
         <button class="tab active" data-tab="new-job">New Job</button>
         <button class="tab" data-tab="progress">Progress</button>
-        <button class="tab" data-tab="speaker">Speaker Naming</button>
         <button class="tab" data-tab="result">Result</button>
         <button class="tab" data-tab="settings">Settings</button>
       </nav>
@@ -196,14 +195,18 @@
           <div id="stage-bar" class="progress-bar stage"></div>
         </div>
         <button id="cancel-job" class="danger-btn">Cancel Job</button>
+        <section id="speaker-naming-section" class="speaker-naming-section hidden">
+          <div class="speaker-naming-head">
+            <div>
+              <h3>Speaker Naming</h3>
+              <p>Review the proposed clips, confirm names, and optionally save representative voice profiles.</p>
+            </div>
+            <p id="speaker-count"></p>
+          </div>
+          <form id="speaker-form" class="stack"></form>
+          <button id="submit-speakers">Submit Speaker Mapping</button>
+        </section>
         <pre id="logs" class="logs"></pre>
-      </section>
-
-      <section id="speaker" class="panel">
-        <h2>Speaker Naming</h2>
-        <p id="speaker-count"></p>
-        <form id="speaker-form" class="stack"></form>
-        <button id="submit-speakers">Submit Speaker Mapping</button>
       </section>
 
       <section id="result" class="panel">

@@ -478,9 +478,42 @@ textarea {
   line-height: 1.35;
 }
 
+.speaker-naming-section {
+  margin-top: 1rem;
+  padding: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff8e7;
+}
+
+.speaker-naming-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.8rem;
+  margin-bottom: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.speaker-naming-head h3 {
+  margin: 0;
+}
+
+.speaker-naming-head p {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+}
+
 .speaker-snippets {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.45rem;
+  margin-top: 0.2rem;
+}
+
+.speaker-snippets audio {
+  width: min(240px, 100%);
+  flex: 1 1 220px;
 }
 
 @media (max-width: 680px) {
@@ -500,5 +533,10 @@ textarea {
 
   .engine-card-head {
     flex-direction: column;
+  }
+
+  .speaker-snippets audio {
+    width: 100%;
+    flex-basis: 100%;
   }
 }

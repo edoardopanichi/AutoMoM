@@ -33,6 +33,7 @@ function resetJobUi() {
   qs("#start-error").textContent = "";
   qs("#speaker-count").textContent = "Detected speakers: -";
   qs("#speaker-form").innerHTML = "";
+  qs("#speaker-naming-section").classList.add("hidden");
   qs("#mom-preview").textContent = "";
   qs("#download-link").removeAttribute("href");
   qs("#overall-value").textContent = "0.0%";
@@ -432,6 +433,7 @@ function updateProgressView(jobState) {
   qs("#segment-progress").textContent = jobState.transcript_segment_progress || jobState.stage_detail || "-";
   setProgressBars(jobState.overall_percent, jobState.stage_percent);
   qs("#logs").textContent = (jobState.logs || []).join("\n");
+  qs("#speaker-naming-section").classList.toggle("hidden", jobState.status !== "waiting_speaker_input");
 }
 
 function speakerFormFingerprint(jobState) {
@@ -612,7 +614,7 @@ function openJobEventStream(jobId) {
         renderSpeakerForm(jobState);
         state.speakerFormFingerprint = nextFingerprint;
       }
-      switchTab("speaker");
+      switchTab("progress");
       return;
     }
 
