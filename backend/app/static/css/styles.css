@@ -436,6 +436,13 @@ textarea {
   margin: 0 0 0.5rem;
 }
 
+.engine-maintenance {
+  margin-top: 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
 .speaker-card-header {
   display: flex;
   justify-content: space-between;

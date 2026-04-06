@@ -15,6 +15,7 @@ def test_job_id_uses_timestamp_and_title(isolated_settings, tmp_path: Path) -> N
         template_id="default",
         language_mode="auto",
         title="Weekly Sync",
+        local_diarization_model_id="pyannote-community-1",
     )
 
     assert "-weekly_sync" in runtime.state.job_id
@@ -31,6 +32,7 @@ def test_job_id_falls_back_to_meeting_when_title_missing(isolated_settings, tmp_
         template_id="default",
         language_mode="auto",
         title=None,
+        local_diarization_model_id="pyannote-community-1",
     )
 
     assert runtime.state.job_id.endswith("-meeting")
@@ -46,6 +48,7 @@ def test_submit_speaker_mapping_requires_waiting_state(isolated_settings, tmp_pa
         template_id="default",
         language_mode="auto",
         title="Weekly Sync",
+        local_diarization_model_id="pyannote-community-1",
     )
 
     try:

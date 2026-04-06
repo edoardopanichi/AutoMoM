@@ -85,7 +85,7 @@
                 <label class="engine-model-field" data-mode="local">
                   Local model
                   <select id="local-diarization-model">
-                    <option value="pyannote-local">Pyannote local pipeline</option>
+                    <option value="pyannote-community-1">Pyannote Community-1</option>
                   </select>
                 </label>
                 <label class="engine-model-field hidden" data-mode="api">
@@ -94,6 +94,10 @@
                     <option value="gpt-4o-transcribe-diarize">gpt-4o-transcribe-diarize</option>
                   </select>
                 </label>
+                <div class="engine-maintenance">
+                  <button type="button" id="refresh-profiles-btn" class="small-btn">Refresh Saved Profiles</button>
+                  <p id="refresh-profiles-status" class="cloud-note">Creates missing profile representations for the currently selected diarization engine/model.</p>
+                </div>
               </article>
 
               <article class="engine-card" data-stage="transcription">

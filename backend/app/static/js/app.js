@@ -4,8 +4,10 @@ const state = {
   latestJobState: null,
   modelDownloads: {},
   modelDownloadPoller: null,
+  profileRefreshPoller: null,
   speakerFormFingerprint: null,
   formatterModelTag: "",
+  diarizationModels: [],
 };
 
 const qs = (selector) => document.querySelector(selector);
@@ -28,21 +30,37 @@ async function fetchJSON(url, options = {}) {
 }
 
 async function loadStartupData() {
-  const [templates, models, profiles, downloads, formatterModel] = await Promise.all([
+  const [templates, models, profiles, downloads, formatterModel, diarizationModelPayload] = await Promise.all([
     fetchJSON("/api/templates"),
     fetchJSON("/api/models"),
     fetchJSON("/api/profiles"),
     fetchJSON("/api/models/downloads"),
     fetchJSON("/api/models/formatter"),
+    fetchJSON("/api/models/diarization"),
   ]);
   state.formatterModelTag = formatterModel.model_tag || "";
+  state.diarizationModels = diarizationModelPayload.models || [];
   state.modelDownloads = Object.fromEntries(downloads.map((item) => [item.model_id, item]));
+  renderDiarizationModels(diarizationModelPayload);
   renderTemplateSelect(templates);
   renderExecutionModelLabels();
   renderTemplates(templates);
   renderModels(models);
   renderProfiles(profiles);
   startModelDownloadPolling();
+}
+
+function renderDiarizationModels(payload) {
+  const select = qs("#local-diarization-model");
+  if (!select) return;
+  select.innerHTML = "";
+  (payload.models || []).forEach((model) => {
+    const option = document.createElement("option");
+    option.value = model.model_id;
+    option.textContent = model.name;
+    select.appendChild(option);
+  });
+  select.value = payload.selected_model_id || (payload.models || [])[0]?.model_id || "";
 }
 
 function renderTemplateSelect(templates) {
@@ -244,21 +262,72 @@ function renderProfiles(profiles) {
   profiles.forEach((profile) => {
     const card = document.createElement("div");
     card.className = "profile-card";
-    card.textContent = `${profile.name} (${profile.profile_id})`;
+    const modelSummary = Array.from(
+      new Set(
+        (profile.samples || []).flatMap((sample) => (sample.embeddings || []).map((item) => item.diarization_model_id)),
+      ),
+    );
+    card.textContent = `${profile.name} (${profile.sample_count} samples${modelSummary.length ? ` | ${modelSummary.join(", ")}` : ""})`;
     container.appendChild(card);
   });
 }
 
+async function refreshProfilesForSelectedModel() {
+  const status = qs("#refresh-profiles-status");
+  const payload = {
+    diarization_execution: qs("#diarization-execution").value,
+    local_diarization_model_id: qs("#local-diarization-model").value,
+    openai_diarization_model: qs("#openai-diarization-model").value,
+  };
+  status.textContent = "Starting profile refresh...";
+  try {
+    const task = await fetchJSON("/api/profiles/rebuild", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    pollProfileRefreshTask(task.task_id);
+  } catch (error) {
+    status.textContent = error.message;
+  }
+}
+
+async function pollProfileRefreshTask(taskId) {
+  clearInterval(state.profileRefreshPoller);
+  const status = qs("#refresh-profiles-status");
+  const tick = async () => {
+    try {
+      const task = await fetchJSON(`/api/profiles/rebuild/${taskId}`);
+      const total = task.total_samples || 0;
+      status.textContent = `${task.status}: ${task.message || ""}${total ? ` (${task.processed_samples}/${total})` : ""}`.trim();
+      if (task.status === "completed" || task.status === "failed") {
+        clearInterval(state.profileRefreshPoller);
+        state.profileRefreshPoller = null;
+        await refreshSettings();
+      }
+    } catch (error) {
+      clearInterval(state.profileRefreshPoller);
+      state.profileRefreshPoller = null;
+      status.textContent = error.message;
+    }
+  };
+  await tick();
+  state.profileRefreshPoller = setInterval(tick, 1500);
+}
+
 async function refreshSettings() {
-  const [templates, models, profiles, downloads, formatterModel] = await Promise.all([
+  const [templates, models, profiles, downloads, formatterModel, diarizationModelPayload] = await Promise.all([
     fetchJSON("/api/templates"),
     fetchJSON("/api/models"),
     fetchJSON("/api/profiles"),
     fetchJSON("/api/models/downloads"),
     fetchJSON("/api/models/formatter"),
+    fetchJSON("/api/models/diarization"),
   ]);
   state.formatterModelTag = formatterModel.model_tag || "";
+  state.diarizationModels = diarizationModelPayload.models || [];
   state.modelDownloads = Object.fromEntries(downloads.map((item) => [item.model_id, item]));
+  renderDiarizationModels(diarizationModelPayload);
   renderTemplateSelect(templates);
   renderExecutionModelLabels();
   renderTemplates(templates);
@@ -560,6 +629,7 @@ async function startJob(event) {
   formData.append("diarization_execution", qs("#diarization-execution").value);
   formData.append("transcription_execution", qs("#transcription-execution").value);
   formData.append("formatter_execution", qs("#formatter-execution").value);
+  formData.append("local_diarization_model_id", qs("#local-diarization-model").value);
   if (
     ["#diarization-execution", "#transcription-execution", "#formatter-execution"].some(
       (selector) => qs(selector).value === "api",
@@ -632,6 +702,7 @@ function bindEvents() {
   });
   qs("#job-form").addEventListener("submit", startJob);
   qs("#cancel-job").addEventListener("click", cancelJob);
+  qs("#refresh-profiles-btn").addEventListener("click", refreshProfilesForSelectedModel);
   qs("#submit-speakers").addEventListener("click", submitSpeakerMapping);
   qs("#open-template-creator").addEventListener("click", () => toggleTemplateCreator(true));
   qs("#cancel-template-inline").addEventListener("click", () => toggleTemplateCreator(false));

@@ -30,6 +30,7 @@ class JobRuntime:
     template_id: str
     language_mode: str
     title: str | None
+    local_diarization_model_id: str
     api_config: OpenAIJobConfig | None
     state: JobState
     speaker_mapping_event: threading.Event = field(default_factory=threading.Event)
@@ -49,6 +50,7 @@ class JobStore:
         template_id: str,
         language_mode: str,
         title: str | None,
+        local_diarization_model_id: str,
         api_config: OpenAIJobConfig | None = None,
     ) -> JobRuntime:
         now = datetime.now(timezone.utc)
@@ -65,6 +67,7 @@ class JobStore:
             template_id=template_id,
             language_mode=language_mode,
             title=title,
+            local_diarization_model_id=local_diarization_model_id,
             api_config=api_config,
             state=state,
         )

@@ -1,59 +1,153 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 
 import numpy as np
 import soundfile as sf
 
-from backend.app.config import SETTINGS
 from backend.profiles.manager import VoiceProfileManager
 
 
-def _tone(path: Path, freq: float) -> None:
+def _tone(path: Path, freq: float, duration_s: float = 1.5) -> None:
     sample_rate = 16000
-    t = np.linspace(0, 1.5, int(sample_rate * 1.5), endpoint=False)
+    t = np.linspace(0, duration_s, int(sample_rate * duration_s), endpoint=False)
     audio = 0.2 * np.sin(2 * np.pi * freq * t).astype(np.float32)
     sf.write(path, audio, sample_rate)
 
 
-def test_embedding_generation_and_matching(isolated_settings, tmp_path: Path) -> None:
-    _tone(tmp_path / "alice.wav", 220.0)
-    _tone(tmp_path / "bob.wav", 480.0)
+def _fake_embedding(audio_path: Path, *, model_ref: str, **_: object) -> np.ndarray:
+    key = f"{audio_path.stem}:{model_ref}"
+    if "alice" in key:
+        base = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    elif "bob" in key:
+        base = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+    else:
+        base = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+    if "alt" in key:
+        base = base + np.array([0.0, 0.0, 0.5], dtype=np.float32)
+    return base / np.linalg.norm(base)
+
+
+def test_save_profile_sample_creates_profile_directory_and_sample_audio(
+    isolated_settings, monkeypatch, tmp_path: Path
+) -> None:
+    _tone(tmp_path / "alice.wav", 220.0, duration_s=4.0)
+    monkeypatch.setattr("backend.profiles.manager.compute_profile_embedding", _fake_embedding)
 
     manager = VoiceProfileManager()
-    alice_embedding = manager.compute_embedding(tmp_path / "alice.wav")
-    manager.upsert_profile("Alice", alice_embedding)
+    profile = manager.save_profile_sample(
+        name="Alice Smith",
+        source_audio_path=tmp_path / "alice.wav",
+        clip_ranges=[(0.0, 1.2), (2.0, 3.0)],
+        diarization_model_id="pyannote-community-1",
+        embedding_model_ref="local-embed-v1",
+    )
 
-    same_alice = manager.compute_embedding(tmp_path / "alice.wav")
-    result = manager.match(same_alice, threshold=0.75)
+    assert profile.sample_count == 1
+    assert profile.samples[0].reference_audio_path.endswith(".wav")
+    assert Path(profile.samples[0].reference_audio_path).exists()
+    assert profile.samples[0].embeddings[0].diarization_model_id == "pyannote-community-1"
+    assert profile.samples[0].embeddings[0].embedding_model_ref == "local-embed-v1"
 
-    assert result.best_match is not None
-    assert result.best_match.name == "Alice"
-    assert result.best_match.score > 0.75
 
-
-def test_upsert_profile_merges_samples_for_same_name(isolated_settings, tmp_path: Path) -> None:
-    _tone(tmp_path / "alice_a.wav", 220.0)
-    _tone(tmp_path / "alice_b.wav", 235.0)
+def test_same_name_appends_new_sample_instead_of_overwriting(isolated_settings, monkeypatch, tmp_path: Path) -> None:
+    _tone(tmp_path / "alice_a.wav", 220.0, duration_s=4.0)
+    _tone(tmp_path / "alice_b.wav", 240.0, duration_s=4.0)
+    monkeypatch.setattr("backend.profiles.manager.compute_profile_embedding", _fake_embedding)
 
     manager = VoiceProfileManager()
-    first = manager.upsert_profile("Alice", manager.compute_embedding(tmp_path / "alice_a.wav"))
-    second = manager.upsert_profile("alice", manager.compute_embedding(tmp_path / "alice_b.wav"))
+    first = manager.save_profile_sample(
+        name="Alice",
+        source_audio_path=tmp_path / "alice_a.wav",
+        clip_ranges=[(0.0, 1.0)],
+        diarization_model_id="pyannote-community-1",
+        embedding_model_ref="local-embed-v1",
+    )
+    second = manager.save_profile_sample(
+        name="alice",
+        source_audio_path=tmp_path / "alice_b.wav",
+        clip_ranges=[(0.0, 1.0)],
+        diarization_model_id="pyannote-community-1",
+        embedding_model_ref="local-embed-v1",
+    )
 
-    profiles = manager.list_profiles()
-    assert len(profiles) == 1
     assert first.profile_id == second.profile_id
     assert second.sample_count == 2
-    assert second.updated_at is not None
+    assert len(second.samples) == 2
 
 
-def test_profile_filename_includes_speaker_name(isolated_settings, tmp_path: Path) -> None:
+def test_match_ignores_embeddings_from_other_models(isolated_settings, monkeypatch, tmp_path: Path) -> None:
     _tone(tmp_path / "alice.wav", 220.0)
+    monkeypatch.setattr("backend.profiles.manager.compute_profile_embedding", _fake_embedding)
 
     manager = VoiceProfileManager()
-    profile = manager.upsert_profile("Alice Smith", manager.compute_embedding(tmp_path / "alice.wav"))
+    manager.save_profile_sample(
+        name="Alice",
+        source_audio_path=tmp_path / "alice.wav",
+        clip_ranges=[(0.0, 1.0)],
+        diarization_model_id="pyannote-community-1",
+        embedding_model_ref="local-embed-v1",
+    )
+    probe = manager.compute_embedding(
+        tmp_path / "alice.wav",
+        diarization_model_id="pyannote-community-1",
+        embedding_model_ref="local-embed-alt",
+    )
 
-    paths = sorted(SETTINGS.profiles_dir.glob("*.json"))
-    assert len(paths) == 1
-    assert paths[0].name.startswith("alice_smith--")
-    assert profile.profile_id in paths[0].name
+    result = manager.match(
+        probe,
+        diarization_model_id="pyannote-community-1",
+        embedding_model_ref="local-embed-alt",
+    )
+
+    assert result.best_match is None
+
+
+def test_refresh_task_adds_only_missing_embeddings(isolated_settings, monkeypatch, tmp_path: Path) -> None:
+    _tone(tmp_path / "alice.wav", 220.0)
+    calls: list[str] = []
+
+    def tracked_embedding(audio_path: Path, *, model_ref: str, **_: object) -> np.ndarray:
+        calls.append(model_ref)
+        return _fake_embedding(audio_path, model_ref=model_ref)
+
+    monkeypatch.setattr("backend.profiles.manager.compute_profile_embedding", tracked_embedding)
+
+    manager = VoiceProfileManager()
+    manager.save_profile_sample(
+        name="Alice",
+        source_audio_path=tmp_path / "alice.wav",
+        clip_ranges=[(0.0, 1.0)],
+        diarization_model_id="pyannote-community-1",
+        embedding_model_ref="local-embed-v1",
+    )
+    task = manager.start_refresh_task(
+        diarization_execution="local",
+        local_diarization_model_id="pyannote-community-1",
+        openai_diarization_model=None,
+        embedding_model_ref="local-embed-v2",
+    )
+
+    for _ in range(20):
+        latest = manager.get_refresh_task(task.task_id)
+        if latest.status in {"completed", "failed"}:
+            break
+        time.sleep(0.01)
+    latest = manager.get_refresh_task(task.task_id)
+
+    assert latest.status == "completed"
+    assert calls.count("local-embed-v2") == 1
+
+    task_2 = manager.start_refresh_task(
+        diarization_execution="local",
+        local_diarization_model_id="pyannote-community-1",
+        openai_diarization_model=None,
+        embedding_model_ref="local-embed-v2",
+    )
+    for _ in range(20):
+        latest_2 = manager.get_refresh_task(task_2.task_id)
+        if latest_2.status in {"completed", "failed"}:
+            break
+        time.sleep(0.01)
+    assert calls.count("local-embed-v2") == 1

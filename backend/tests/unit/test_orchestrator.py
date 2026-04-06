@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from backend.app.schemas import VoiceProfile
+from datetime import datetime
+
+from backend.app.schemas import VoiceProfile, VoiceProfileEmbedding, VoiceProfileSample
 from backend.pipeline.diarization import DiarizationSegment
 from backend.pipeline.openai_client import OpenAIDiarizationResult, OpenAIDiarizedSegment
 from backend.pipeline.orchestrator import PipelineOrchestrator
@@ -120,26 +122,42 @@ def test_select_profile_segments_prefers_longer_segments() -> None:
 
 def test_build_speaker_info_includes_profile_match_metadata(monkeypatch, tmp_path: Path) -> None:
     orchestrator = PipelineOrchestrator()
+    now = datetime.fromisoformat("2026-01-01T00:00:00+00:00")
 
-    monkeypatch.setattr(
-        "backend.pipeline.orchestrator.VOICE_PROFILE_MANAGER.load_mono_audio",
-        lambda path: ([], 16000),
-    )
     monkeypatch.setattr(
         "backend.pipeline.orchestrator.VOICE_PROFILE_MANAGER.list_profiles",
         lambda: [
             VoiceProfile(
                 profile_id="p1",
                 name="Alice",
-                created_at="2026-01-01T00:00:00Z",
-                embedding=[1.0] * 20,
-                model_version="simple-spectrum-v1",
-                threshold=0.82,
+                created_at=now,
+                updated_at=now,
+                sample_count=1,
+                samples=[
+                    VoiceProfileSample(
+                        sample_id="s1",
+                        created_at=now,
+                        reference_audio_path=str(tmp_path / "sample.wav"),
+                        embeddings=[
+                            VoiceProfileEmbedding(
+                                embedding_id="e1",
+                                engine_kind="local_pyannote",
+                                diarization_model_id="pyannote-community-1",
+                                embedding_model_ref="local-embed-v1",
+                                library_version="test",
+                                threshold=0.82,
+                                vector=[1.0, 0.0],
+                                created_at=now,
+                                model_key="local_pyannote::pyannote-community-1::local-embed-v1",
+                            )
+                        ],
+                    )
+                ],
             )
         ],
     )
     monkeypatch.setattr(
-        "backend.pipeline.orchestrator.VOICE_PROFILE_MANAGER.compute_embedding_from_segments",
+        "backend.pipeline.orchestrator.VOICE_PROFILE_MANAGER.compute_embedding",
         lambda *args, **kwargs: [1.0] * 20,
     )
     monkeypatch.setattr(
@@ -148,15 +166,34 @@ def test_build_speaker_info_includes_profile_match_metadata(monkeypatch, tmp_pat
             "Match",
             (),
             {
-                "best_match": type("Best", (), {"profile_id": "p1", "name": "Alice", "score": 0.93})(),
+                "best_match": type(
+                    "Best",
+                    (),
+                    {
+                        "profile_id": "p1",
+                        "sample_id": "s1",
+                        "name": "Alice",
+                        "score": 0.93,
+                        "model_key": "local_pyannote::pyannote-community-1::local-embed-v1",
+                    },
+                )(),
                 "ambiguous_matches": [],
             },
         )(),
     )
     logs = []
     monkeypatch.setattr("backend.pipeline.orchestrator.JOB_STORE.append_log", lambda job_id, message: logs.append(message))
+    runtime = type(
+        "Runtime",
+        (),
+        {
+            "api_config": None,
+            "local_diarization_model_id": "pyannote-community-1",
+        },
+    )()
 
     info = orchestrator._build_speaker_info(
+        runtime,
         "job-1",
         tmp_path / "audio.wav",
         {"SPEAKER_0": [(0.0, 4.0)]},
@@ -165,5 +202,6 @@ def test_build_speaker_info_includes_profile_match_metadata(monkeypatch, tmp_pat
 
     assert info.speakers[0].suggested_name == "Alice"
     assert info.speakers[0].matched_profile is not None
+    assert info.speakers[0].matched_profile.sample_id == "s1"
     assert info.speakers[0].matched_profile.status == "matched"
     assert "Auto-identified SPEAKER_0 as Alice" in logs[0]

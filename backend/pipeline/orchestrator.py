@@ -5,12 +5,14 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 import statistics
+import threading
 import time
 from typing import Any
 
 from backend.app.config import SETTINGS
 from backend.app.job_store import JOB_STORE, OpenAIJobConfig, ensure_job_artifact_dir, write_json
 from backend.app.schemas import JobSpeakerInfo, SpeakerProfileMatch, SpeakerSnippet, SpeakerState
+from backend.models.diarization_registry import resolve_local_diarization_model
 from backend.pipeline.audio import extract_segment, normalize_audio, validate_audio_input
 from backend.pipeline.diarization import DiarizationResult, DiarizationSegment, diarize
 from backend.pipeline.formatter import Formatter
@@ -147,6 +149,9 @@ class PipelineOrchestrator:
                 self._begin_stage_timing(2)
             )
             JOB_STORE.append_log(job_id, "Stage 3/9: speaker diarization")
+            diarization_model = resolve_local_diarization_model(runtime.local_diarization_model_id)
+            diarization_progress_stop: threading.Event | None = None
+            diarization_progress_thread: threading.Thread | None = None
             if api_config is not None and api_config.diarization_execution == "api":
                 api_diarization_result = self._diarize_with_openai(
                     runtime=runtime,
@@ -156,19 +161,28 @@ class PipelineOrchestrator:
             else:
                 min_speakers = SETTINGS.diarization_min_speakers if SETTINGS.diarization_min_speakers > 0 else None
                 max_speakers = SETTINGS.diarization_max_speakers if SETTINGS.diarization_max_speakers > 0 else None
-                diarization_result = diarize(
-                    normalized_audio_path,
-                    speech_regions,
-                    min_speakers=min_speakers,
-                    max_speakers=max_speakers,
-                    max_chunk_s=SETTINGS.diarization_max_chunk_s,
-                    backend=SETTINGS.diarization_backend,
-                    model_path=Path(SETTINGS.diarization_model_path),
-                    pipeline_path=SETTINGS.diarization_pipeline_path,
-                    embedding_model=SETTINGS.diarization_embedding_model,
-                    compute_device=SETTINGS.compute_device,
-                    cuda_device_id=SETTINGS.cuda_device_id,
-                )
+                JOB_STORE.set_stage_percent(job_id, 6.0, overall_percent=self._overall(2, 6.0))
+                JOB_STORE.append_log(job_id, "Loading local diarization pipeline")
+                diarization_progress_stop, diarization_progress_thread = self._start_stage_heartbeat(job_id, 2)
+                try:
+                    diarization_result = diarize(
+                        normalized_audio_path,
+                        speech_regions,
+                        min_speakers=min_speakers,
+                        max_speakers=max_speakers,
+                        max_chunk_s=SETTINGS.diarization_max_chunk_s,
+                        backend=SETTINGS.diarization_backend,
+                        model_path=Path(diarization_model.pipeline_path),
+                        pipeline_path=diarization_model.pipeline_path,
+                        embedding_model=diarization_model.embedding_model_ref,
+                        compute_device=SETTINGS.compute_device,
+                        cuda_device_id=SETTINGS.cuda_device_id,
+                    )
+                finally:
+                    if diarization_progress_stop is not None:
+                        diarization_progress_stop.set()
+                    if diarization_progress_thread is not None:
+                        diarization_progress_thread.join(timeout=0.2)
             write_json(job_dir / "diarization.json", diarization_result.to_json())
             JOB_STORE.set_artifact(job_id, "diarization", job_dir / "diarization.json")
             JOB_STORE.append_log(job_id, f"Diarization mode: {diarization_result.mode}")
@@ -232,7 +246,13 @@ class PipelineOrchestrator:
             )
             JOB_STORE.append_log(job_id, "Stage 5/9: waiting for speaker naming")
             segments_by_speaker = self._group_segments_by_speaker(diarization_result.segments)
-            speaker_info = self._build_speaker_info(job_id, normalized_audio_path, segments_by_speaker, snippets)
+            speaker_info = self._build_speaker_info(
+                runtime,
+                job_id,
+                normalized_audio_path,
+                segments_by_speaker,
+                snippets,
+            )
             JOB_STORE.set_waiting_for_speaker_input(job_id, speaker_info)
             mapping_items = JOB_STORE.wait_for_mapping(job_id)
             if mapping_items is None:
@@ -248,9 +268,18 @@ class PipelineOrchestrator:
             for mapping in mapping_items:
                 if not mapping.save_voice_profile:
                     continue
-                segments = self._select_profile_segments(segments_by_speaker.get(mapping.speaker_id, []))
-                embedding = VOICE_PROFILE_MANAGER.compute_embedding_from_segments(normalized_audio_path, segments)
-                profile = VOICE_PROFILE_MANAGER.upsert_profile(mapping.name, embedding)
+                segments = self._select_profile_segments(segments_by_speaker.get(mapping.speaker_id, []), max_segments=2)
+                profile = VOICE_PROFILE_MANAGER.save_profile_sample(
+                    name=mapping.name,
+                    source_audio_path=normalized_audio_path,
+                    clip_ranges=segments,
+                    diarization_model_id=diarization_model.model_id,
+                    embedding_model_ref=diarization_model.embedding_model_ref,
+                    source_job_id=job_id,
+                    source_speaker_id=mapping.speaker_id,
+                    compute_device=SETTINGS.compute_device,
+                    cuda_device_id=SETTINGS.cuda_device_id,
+                )
                 action = "updated" if profile.sample_count > 1 else "saved"
                 JOB_STORE.append_log(
                     job_id,
@@ -713,6 +742,7 @@ class PipelineOrchestrator:
     @staticmethod
     def _build_execution_summary(runtime, transcription_runtime_payload: dict[str, object] | None, formatter: Formatter | None) -> dict[str, dict[str, object]]:
         api_config = runtime.api_config
+        diarization_model = resolve_local_diarization_model(runtime.local_diarization_model_id)
         diarization_api = api_config is not None and api_config.diarization_execution == "api"
         transcription_api = api_config is not None and api_config.transcription_execution == "api"
         formatter_api = api_config is not None and api_config.formatter_execution == "api"
@@ -731,7 +761,9 @@ class PipelineOrchestrator:
         return {
             "diarization": {
                 "mode": "api" if diarization_api else "local",
-                "model": api_config.diarization_model if diarization_api else SETTINGS.diarization_model_path,
+                "model": api_config.diarization_model if diarization_api else diarization_model.pipeline_path,
+                "model_id": None if diarization_api else diarization_model.model_id,
+                "embedding_model_ref": None if diarization_api else diarization_model.embedding_model_ref,
                 "backend": "openai" if diarization_api else SETTINGS.diarization_backend,
                 "compute_requested": "cloud" if diarization_api else SETTINGS.compute_device,
                 "compute_active": "cloud" if diarization_api else SETTINGS.compute_device,
@@ -848,6 +880,7 @@ class PipelineOrchestrator:
 
     def _build_speaker_info(
         self,
+        runtime,
         job_id: str,
         normalized_audio_path: Path,
         segments_by_speaker: dict[str, list[tuple[float, float]]],
@@ -864,26 +897,58 @@ class PipelineOrchestrator:
                 )
             )
 
-        audio_data, sample_rate = VOICE_PROFILE_MANAGER.load_mono_audio(normalized_audio_path)
+        if runtime.api_config is not None and runtime.api_config.diarization_execution == "api":
+            return JobSpeakerInfo(
+                detected_speakers=len(segments_by_speaker),
+                speakers=[
+                    SpeakerState(
+                        speaker_id=speaker_id,
+                        snippets=snippet_by_speaker.get(speaker_id, []),
+                    )
+                    for speaker_id in sorted(segments_by_speaker)
+                ],
+            )
+
         profiles = VOICE_PROFILE_MANAGER.list_profiles()
+        if not profiles:
+            return JobSpeakerInfo(
+                detected_speakers=len(segments_by_speaker),
+                speakers=[
+                    SpeakerState(
+                        speaker_id=speaker_id,
+                        snippets=snippet_by_speaker.get(speaker_id, []),
+                    )
+                    for speaker_id in sorted(segments_by_speaker)
+                ],
+            )
+        diarization_model = resolve_local_diarization_model(runtime.local_diarization_model_id)
         speakers: list[SpeakerState] = []
         for speaker_id in sorted(segments_by_speaker):
             speaker_segments = self._select_profile_segments(segments_by_speaker[speaker_id])
-            embedding = VOICE_PROFILE_MANAGER.compute_embedding_from_segments(
+            embedding = VOICE_PROFILE_MANAGER.compute_embedding(
                 normalized_audio_path,
-                speaker_segments,
-                audio_data=audio_data,
-                sample_rate=sample_rate,
+                diarization_model_id=diarization_model.model_id,
+                embedding_model_ref=diarization_model.embedding_model_ref,
+                compute_device=SETTINGS.compute_device,
+                cuda_device_id=SETTINGS.cuda_device_id,
+                segments=speaker_segments,
             )
-            match = VOICE_PROFILE_MANAGER.match(embedding, profiles=profiles)
+            match = VOICE_PROFILE_MANAGER.match(
+                embedding,
+                diarization_model_id=diarization_model.model_id,
+                embedding_model_ref=diarization_model.embedding_model_ref,
+                profiles=profiles,
+            )
             suggested_name = None
             matched_profile = None
             if match.best_match and not match.ambiguous_matches:
                 suggested_name = match.best_match.name
                 matched_profile = SpeakerProfileMatch(
                     profile_id=match.best_match.profile_id,
+                    sample_id=getattr(match.best_match, "sample_id", None),
                     name=match.best_match.name,
                     score=match.best_match.score,
+                    model_key=getattr(match.best_match, "model_key", None),
                     status="matched",
                 )
                 JOB_STORE.append_log(
@@ -893,8 +958,10 @@ class PipelineOrchestrator:
             elif match.best_match:
                 matched_profile = SpeakerProfileMatch(
                     profile_id=match.best_match.profile_id,
+                    sample_id=getattr(match.best_match, "sample_id", None),
                     name=match.best_match.name,
                     score=match.best_match.score,
+                    model_key=getattr(match.best_match, "model_key", None),
                     status="ambiguous",
                     ambiguous_names=[item.name for item in match.ambiguous_matches],
                 )
@@ -1000,6 +1067,29 @@ class PipelineOrchestrator:
 
     def _set_stage(self, job_id: str, stage_index: int) -> None:
         JOB_STORE.set_stage(job_id, STAGES[stage_index], overall_percent=self._overall(stage_index, 0.0))
+
+    def _start_stage_heartbeat(
+        self,
+        job_id: str,
+        stage_index: int,
+        *,
+        start_percent: float = 10.0,
+        cap_percent: float = 92.0,
+        interval_s: float = 0.8,
+        assumed_duration_s: float = 90.0,
+    ) -> tuple[threading.Event, threading.Thread]:
+        stop_event = threading.Event()
+
+        def run() -> None:
+            started = time.monotonic()
+            while not stop_event.wait(interval_s):
+                elapsed = time.monotonic() - started
+                progress = min(cap_percent, start_percent + (elapsed / max(1.0, assumed_duration_s)) * (cap_percent - start_percent))
+                JOB_STORE.set_stage_percent(job_id, progress, overall_percent=self._overall(stage_index, progress))
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        return stop_event, thread
 
     def _overall(self, stage_index: int, stage_percent: float) -> float:
         base = 100 / len(STAGES)

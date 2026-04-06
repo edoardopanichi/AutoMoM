@@ -81,8 +81,10 @@ class SpeakerSnippet(BaseModel):
 
 class SpeakerProfileMatch(BaseModel):
     profile_id: str
+    sample_id: str | None = None
     name: str
     score: float
+    model_key: str | None = None
     status: Literal["matched", "ambiguous"]
     ambiguous_names: list[str] = Field(default_factory=list)
 
@@ -140,23 +142,82 @@ class VoiceProfile(BaseModel):
     name: str
     created_at: datetime
     updated_at: datetime | None = None
-    embedding: list[float]
-    model_version: str
+    sample_count: int = 0
+    samples: list["VoiceProfileSample"] = Field(default_factory=list)
+
+
+class VoiceProfileClipRange(BaseModel):
+    start_s: float
+    end_s: float
+
+
+class VoiceProfileEmbedding(BaseModel):
+    embedding_id: str
+    engine_kind: Literal["local_pyannote"]
+    diarization_model_id: str
+    embedding_model_ref: str
+    library_version: str
     threshold: float
-    sample_count: int = 1
+    vector: list[float]
+    created_at: datetime
+    model_key: str
+
+
+class VoiceProfileSample(BaseModel):
+    sample_id: str
+    created_at: datetime
+    source_job_id: str | None = None
+    source_speaker_id: str | None = None
+    reference_audio_path: str
+    clip_ranges: list[VoiceProfileClipRange] = Field(default_factory=list)
+    embeddings: list[VoiceProfileEmbedding] = Field(default_factory=list)
 
 
 class CreateVoiceProfileRequest(BaseModel):
     name: str
     audio_path: str | None = None
+    diarization_model_id: str | None = None
 
 
 class MatchResult(BaseModel):
     profile_id: str
+    sample_id: str | None = None
     name: str
     score: float
+    model_key: str | None = None
 
 
 class MatchResponse(BaseModel):
     best_match: MatchResult | None
     ambiguous_matches: list[MatchResult] = Field(default_factory=list)
+
+
+class DiarizationLocalModel(BaseModel):
+    model_id: str
+    name: str
+    pipeline_path: str
+    embedding_model_ref: str
+
+
+class DiarizationLocalModelResponse(BaseModel):
+    selected_model_id: str
+    models: list[DiarizationLocalModel]
+
+
+class ProfileRefreshRequest(BaseModel):
+    diarization_execution: Literal["local", "api"] = "local"
+    local_diarization_model_id: str | None = None
+    openai_diarization_model: str | None = None
+
+
+class ProfileRefreshTask(BaseModel):
+    task_id: str
+    status: Literal["queued", "running", "completed", "failed"]
+    diarization_execution: Literal["local", "api"]
+    local_diarization_model_id: str | None = None
+    openai_diarization_model: str | None = None
+    total_samples: int = 0
+    processed_samples: int = 0
+    created_at: datetime
+    updated_at: datetime
+    message: str | None = None

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from functools import lru_cache
+from importlib import metadata as importlib_metadata
 import os
 from pathlib import Path
+import copy
 import warnings
 
 import numpy as np
@@ -181,7 +183,7 @@ def _diarize_with_pyannote(
         kwargs["use_auth_token"] = token
 
     try:
-        pipeline = Pipeline.from_pretrained(pipeline_ref, **kwargs)
+        pipeline = copy.deepcopy(_load_pyannote_pipeline(pipeline_ref, token))
         target_device = resolve_torch_device(compute_device, cuda_device_id)
 
         audio, sample_rate = sf.read(str(audio_path), dtype="float32", always_2d=False)
@@ -236,6 +238,22 @@ def _diarize_with_pyannote(
         ),
         None,
     )
+
+
+@lru_cache(maxsize=2)
+def _load_pyannote_pipeline(pipeline_ref: str, token: str | None):
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            category=UserWarning,
+            module=r"pyannote\.audio\.core\.io",
+        )
+        from pyannote.audio import Pipeline
+
+    kwargs: dict[str, object] = {}
+    if token:
+        kwargs["use_auth_token"] = token
+    return Pipeline.from_pretrained(pipeline_ref, **kwargs)
 
 
 def _run_pyannote_pipeline(
@@ -388,6 +406,78 @@ def _diarize_with_embeddings(
         ),
         None,
     )
+
+
+def resolve_profile_embedding_model_ref(
+    *,
+    model_path: Path | None = None,
+    pipeline_path: str | None = None,
+    embedding_model: str | None = None,
+) -> str:
+    pipeline_ref = _resolve_pyannote_pipeline_ref(model_path, pipeline_path)
+    if pipeline_ref:
+        pipeline_dir = Path(pipeline_ref).expanduser().resolve().parent
+        embedded_model = pipeline_dir / "embedding"
+        if embedded_model.exists():
+            return str(embedded_model)
+    normalized = (embedding_model or os.getenv("AUTOMOM_DIARIZATION_EMBEDDING_MODEL", "")).strip()
+    if normalized:
+        return normalized
+    return "pyannote/wespeaker-voxceleb-resnet34-LM"
+
+
+def pyannote_audio_version() -> str:
+    try:
+        return importlib_metadata.version("pyannote.audio")
+    except Exception:
+        return "unknown"
+
+
+def compute_profile_embedding(
+    audio_path: Path,
+    *,
+    model_ref: str,
+    compute_device: str = "auto",
+    cuda_device_id: int = 0,
+    segments: list[tuple[float, float]] | None = None,
+) -> np.ndarray:
+    import torch
+
+    token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN") or None
+    target_device = resolve_torch_device(compute_device, cuda_device_id)
+    inference, _ = _load_embedding_inference(model_ref, token, target_device, cuda_device_id)
+    audio, sample_rate = sf.read(str(audio_path), dtype="float32", always_2d=False)
+
+    if isinstance(audio, np.ndarray) and audio.ndim > 1:
+        waveform = np.ascontiguousarray(audio.T)
+    else:
+        waveform = np.ascontiguousarray(np.atleast_2d(audio))
+    waveform_t = torch.from_numpy(waveform)
+
+    windows = segments or [(0.0, float(waveform_t.shape[1]) / max(1, int(sample_rate)))]
+    embeddings: list[np.ndarray] = []
+    for start_s, end_s in windows:
+        start_idx = max(0, int(start_s * sample_rate))
+        end_idx = min(int(end_s * sample_rate), waveform_t.shape[1])
+        if end_idx - start_idx <= 1:
+            continue
+        clip = waveform_t[:, start_idx:end_idx]
+        embedding = inference({"waveform": clip, "sample_rate": int(sample_rate)})
+        embedding_array = np.asarray(embedding, dtype=np.float32).reshape(-1)
+        if embedding_array.size == 0 or not np.all(np.isfinite(embedding_array)):
+            continue
+        embeddings.append(embedding_array)
+    if not embeddings:
+        raise RuntimeError("Profile embedding generation returned no usable vectors.")
+    stacked = np.vstack(embeddings)
+    return _normalize_embedding(stacked.mean(axis=0))
+
+
+def _normalize_embedding(vector: np.ndarray) -> np.ndarray:
+    norm = np.linalg.norm(vector)
+    if norm == 0:
+        return vector.astype(np.float32)
+    return (vector / norm).astype(np.float32)
 
 
 @lru_cache(maxsize=3)

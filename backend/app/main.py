@@ -17,13 +17,21 @@ from backend.app.job_store import JOB_STORE
 from backend.app.job_store import OpenAIJobConfig
 from backend.app.schemas import (
     CreateVoiceProfileRequest,
+    DiarizationLocalModelResponse,
     FormatterModelRequest,
     FormatterModelResponse,
     JobListResponse,
     ModelConsentRequest,
     ModelDownloadRequest,
+    ProfileRefreshRequest,
+    ProfileRefreshTask,
     SubmitSpeakerMappingRequest,
     TemplateDefinition,
+)
+from backend.models.diarization_registry import (
+    DEFAULT_LOCAL_DIARIZATION_MODEL_ID,
+    list_local_diarization_models,
+    resolve_local_diarization_model,
 )
 from backend.models.manager import MODEL_MANAGER
 from backend.pipeline.orchestrator import ORCHESTRATOR
@@ -84,6 +92,14 @@ def set_formatter_model(request: FormatterModelRequest) -> FormatterModelRespons
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return FormatterModelResponse(model_tag=model_tag)
+
+
+@app.get("/api/models/diarization", response_model=DiarizationLocalModelResponse)
+def get_diarization_models() -> DiarizationLocalModelResponse:
+    return DiarizationLocalModelResponse(
+        selected_model_id=DEFAULT_LOCAL_DIARIZATION_MODEL_ID,
+        models=list_local_diarization_models(),
+    )
 
 
 @app.post("/api/models/consent")
@@ -169,8 +185,19 @@ def create_profile(request: CreateVoiceProfileRequest) -> dict[str, object]:
     if not audio_path.exists():
         raise HTTPException(status_code=404, detail="audio_path not found")
 
-    embedding = VOICE_PROFILE_MANAGER.compute_embedding(audio_path)
-    profile = VOICE_PROFILE_MANAGER.upsert_profile(request.name, embedding)
+    diarization_model = resolve_local_diarization_model(request.diarization_model_id)
+    audio_data, sample_rate = VOICE_PROFILE_MANAGER.load_mono_audio(audio_path)
+    profile = VOICE_PROFILE_MANAGER.save_profile_sample(
+        name=request.name,
+        source_audio_path=audio_path,
+        clip_ranges=[(0.0, max(0.1, len(audio_data) / max(1, sample_rate)))],
+        diarization_model_id=diarization_model.model_id,
+        embedding_model_ref=diarization_model.embedding_model_ref,
+        audio_data=audio_data,
+        sample_rate=sample_rate,
+        compute_device=SETTINGS.compute_device,
+        cuda_device_id=SETTINGS.cuda_device_id,
+    )
     return profile.model_dump(mode="json")
 
 
@@ -178,6 +205,38 @@ def create_profile(request: CreateVoiceProfileRequest) -> dict[str, object]:
 def delete_profile(profile_id: str) -> dict[str, str]:
     VOICE_PROFILE_MANAGER.delete(profile_id)
     return {"status": "ok"}
+
+
+@app.post("/api/profiles/rebuild", response_model=ProfileRefreshTask)
+def rebuild_profiles(request: ProfileRefreshRequest) -> ProfileRefreshTask:
+    execution = request.diarization_execution.strip().lower()
+    if execution not in OPENAI_STEP_CHOICES:
+        raise HTTPException(status_code=400, detail="Invalid execution mode for diarization")
+
+    local_model = None
+    if execution == "local":
+        try:
+            local_model = resolve_local_diarization_model(request.local_diarization_model_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    task = VOICE_PROFILE_MANAGER.start_refresh_task(
+        diarization_execution=execution,
+        local_diarization_model_id=local_model.model_id if local_model is not None else None,
+        openai_diarization_model=(request.openai_diarization_model or "").strip() or None,
+        embedding_model_ref=local_model.embedding_model_ref if local_model is not None else None,
+        compute_device=SETTINGS.compute_device,
+        cuda_device_id=SETTINGS.cuda_device_id,
+    )
+    return task
+
+
+@app.get("/api/profiles/rebuild/{task_id}", response_model=ProfileRefreshTask)
+def rebuild_profiles_status(task_id: str) -> ProfileRefreshTask:
+    try:
+        return VOICE_PROFILE_MANAGER.get_refresh_task(task_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Profile refresh task not found") from exc
 
 
 @app.post("/api/jobs")
@@ -189,6 +248,7 @@ async def create_job(
     diarization_execution: str = Form("local"),
     transcription_execution: str = Form("local"),
     formatter_execution: str = Form("local"),
+    local_diarization_model_id: str = Form(DEFAULT_LOCAL_DIARIZATION_MODEL_ID),
     openai_api_key: str | None = Form(None),
     openai_diarization_model: str = Form("gpt-4o-transcribe-diarize"),
     openai_transcription_model: str = Form("gpt-4o-transcribe"),
@@ -222,6 +282,11 @@ async def create_job(
     validation_ok, message = MODEL_MANAGER.validate_for_job_start(required_local_models)
     if not validation_ok:
         raise HTTPException(status_code=400, detail=message)
+
+    try:
+        selected_local_diarization_model = resolve_local_diarization_model(local_diarization_model_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     try:
         TEMPLATE_MANAGER.load(template_id)
@@ -264,6 +329,7 @@ async def create_job(
         template_id=template_id,
         language_mode=language_mode,
         title=title,
+        local_diarization_model_id=selected_local_diarization_model.model_id,
         api_config=api_config,
     )
     ORCHESTRATOR.submit(runtime.state.job_id)
