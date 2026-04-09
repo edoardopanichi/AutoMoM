@@ -7,10 +7,14 @@ from backend.pipeline.openai_client import (
 
 
 def test_extract_response_output_text_reads_top_level_field() -> None:
+    """! @brief Test extract response output text reads top level field.
+    """
     assert _extract_response_output_text({"output_text": "Hello"}) == "Hello"
 
 
 def test_extract_response_output_text_reads_output_blocks() -> None:
+    """! @brief Test extract response output text reads output blocks.
+    """
     payload = {
         "output": [
             {
@@ -26,6 +30,9 @@ def test_extract_response_output_text_reads_output_blocks() -> None:
 
 
 def test_build_multipart_body_contains_fields_and_file(tmp_path) -> None:
+    """! @brief Test bUIld multipart body contains fields and file.
+    @param tmp_path Value for tmp path.
+    """
     file_path = tmp_path / "clip.wav"
     file_path.write_bytes(b"abc123")
 

@@ -9,10 +9,17 @@ from backend.pipeline.vad import SpeechRegion
 
 
 def _emit(message: dict[str, object]) -> None:
+    """! @brief Emit operation.
+    @param message Value for message.
+    """
     print(json.dumps(message), flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:
+    """! @brief Run the module entry point.
+    @param argv Optional argument vector for the entry point.
+    @return int result produced by the operation.
+    """
     args = argv if argv is not None else sys.argv[1:]
     if len(args) != 1:
         _emit({"type": "error", "error": "pyannote_worker_invalid_args"})

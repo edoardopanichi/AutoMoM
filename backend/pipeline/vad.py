@@ -20,6 +20,13 @@ def detect_speech_regions(
     energy_threshold_ratio: float = 0.6,
     min_region_ms: int = 250,
 ) -> list[SpeechRegion]:
+    """! @brief Detect speech regions.
+    @param audio_path Path to the audio file.
+    @param frame_ms Value for frame ms.
+    @param energy_threshold_ratio Value for energy threshold ratio.
+    @param min_region_ms Value for min region ms.
+    @return List produced by the operation.
+    """
     audio, sample_rate = sf.read(str(audio_path), always_2d=False)
     if isinstance(audio, np.ndarray) and audio.ndim > 1:
         audio = audio.mean(axis=1)

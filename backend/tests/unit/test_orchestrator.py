@@ -11,6 +11,8 @@ from backend.pipeline.orchestrator import PipelineOrchestrator
 
 
 def test_collapse_labeled_segments_merges_ids_with_same_label() -> None:
+    """! @brief Test collapse labeled segments merges ids with same label.
+    """
     segments = [
         DiarizationSegment("SPEAKER_0", 0.0, 1.0),
         DiarizationSegment("SPEAKER_2", 1.2, 2.4),
@@ -32,6 +34,8 @@ def test_collapse_labeled_segments_merges_ids_with_same_label() -> None:
 
 
 def test_collapse_labeled_segments_keeps_turn_boundaries_when_not_adjacent() -> None:
+    """! @brief Test collapse labeled segments keeps turn boundaries when not adjacent.
+    """
     segments = [
         DiarizationSegment("SPEAKER_0", 0.0, 1.0),
         DiarizationSegment("SPEAKER_1", 1.1, 2.0),
@@ -50,6 +54,9 @@ def test_collapse_labeled_segments_keeps_turn_boundaries_when_not_adjacent() -> 
 
 
 def test_pick_openai_audio_source_prefers_supported_original(tmp_path: Path) -> None:
+    """! @brief Test pick openai audio source prefers supported original.
+    @param tmp_path Value for tmp path.
+    """
     original = tmp_path / "meeting.m4a"
     normalized = tmp_path / "meeting.wav"
     original.write_bytes(b"x" * 1024)
@@ -61,6 +68,8 @@ def test_pick_openai_audio_source_prefers_supported_original(tmp_path: Path) -> 
 
 
 def test_transcript_segments_from_openai_diarization_applies_speaker_mapping() -> None:
+    """! @brief Test transcript segments from openai diarization applies speaker mapping.
+    """
     result = OpenAIDiarizationResult(
         text="hello",
         segments=[
@@ -81,6 +90,8 @@ def test_transcript_segments_from_openai_diarization_applies_speaker_mapping() -
 
 
 def test_plan_transcription_chunks_merges_short_same_speaker_gaps() -> None:
+    """! @brief Test plan transcription chunks merges short same speaker gaps.
+    """
     chunks = PipelineOrchestrator._plan_transcription_chunks(
         [
             {"speaker_id": "SPEAKER_0", "speaker_name": "Alice", "start_s": 0.0, "end_s": 4.0},
@@ -98,6 +109,8 @@ def test_plan_transcription_chunks_merges_short_same_speaker_gaps() -> None:
 
 
 def test_plan_transcription_chunks_respects_max_chunk_duration() -> None:
+    """! @brief Test plan transcription chunks respects max chunk duration.
+    """
     chunks = PipelineOrchestrator._plan_transcription_chunks(
         [
             {"speaker_id": "SPEAKER_0", "speaker_name": "Alice", "start_s": 0.0, "end_s": 12.0},
@@ -111,6 +124,8 @@ def test_plan_transcription_chunks_respects_max_chunk_duration() -> None:
 
 
 def test_select_profile_segments_prefers_longer_segments() -> None:
+    """! @brief Test select profile segments prefers longer segments.
+    """
     selected = PipelineOrchestrator._select_profile_segments(
         [(0.0, 0.9), (1.0, 5.5), (6.0, 8.0), (8.5, 12.5)],
         max_segments=2,
@@ -121,6 +136,10 @@ def test_select_profile_segments_prefers_longer_segments() -> None:
 
 
 def test_build_speaker_info_includes_profile_match_metadata(monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test bUIld speaker info includes profile match metadata.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Value for tmp path.
+    """
     orchestrator = PipelineOrchestrator()
     now = datetime.fromisoformat("2026-01-01T00:00:00+00:00")
 

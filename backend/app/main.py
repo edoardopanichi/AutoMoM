@@ -67,26 +67,41 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.get("/")
 def root() -> FileResponse:
+    """! @brief Root operation.
+    @return Result produced by the operation.
+    """
     return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
+    """! @brief Health operation.
+    @return Dictionary produced by the operation.
+    """
     return {"status": "ok"}
 
 
 @app.get("/api/models")
 def models() -> list[dict[str, object]]:
+    """! @brief Models operation.
+    @return List produced by the operation.
+    """
     return [item.model_dump() for item in MODEL_MANAGER.statuses()]
 
 
 @app.get("/api/models/formatter", response_model=FormatterModelResponse)
 def get_formatter_model() -> FormatterModelResponse:
+    """! @brief Get formatter model.
+    @return Result produced by the operation.
+    """
     return FormatterModelResponse(model_tag=MODEL_MANAGER.get_formatter_model())
 
 
 @app.post("/api/models/formatter", response_model=FormatterModelResponse)
 def set_formatter_model(request: FormatterModelRequest) -> FormatterModelResponse:
+    """! @brief Set formatter model.
+    @param request Request payload for the operation.
+    """
     try:
         model_tag = MODEL_MANAGER.set_formatter_model(request.model_tag)
     except ValueError as exc:
@@ -96,6 +111,9 @@ def set_formatter_model(request: FormatterModelRequest) -> FormatterModelRespons
 
 @app.get("/api/models/diarization", response_model=DiarizationLocalModelResponse)
 def get_diarization_models() -> DiarizationLocalModelResponse:
+    """! @brief Get diarization models.
+    @return Result produced by the operation.
+    """
     return DiarizationLocalModelResponse(
         selected_model_id=DEFAULT_LOCAL_DIARIZATION_MODEL_ID,
         models=list_local_diarization_models(),
@@ -104,6 +122,10 @@ def get_diarization_models() -> DiarizationLocalModelResponse:
 
 @app.post("/api/models/consent")
 def model_consent(request: ModelConsentRequest) -> dict[str, str]:
+    """! @brief Model consent.
+    @param request Request payload for the operation.
+    @return Dictionary produced by the operation.
+    """
     try:
         MODEL_MANAGER.set_consent(request.model_id, request.approved)
     except KeyError as exc:
@@ -113,6 +135,10 @@ def model_consent(request: ModelConsentRequest) -> dict[str, str]:
 
 @app.post("/api/models/download")
 def model_download(request: ModelDownloadRequest) -> dict[str, object]:
+    """! @brief Model download.
+    @param request Request payload for the operation.
+    @return Dictionary produced by the operation.
+    """
     try:
         result = MODEL_MANAGER.start_download(request.model_id)
     except KeyError as exc:
@@ -127,11 +153,18 @@ def model_download(request: ModelDownloadRequest) -> dict[str, object]:
 
 @app.get("/api/models/downloads")
 def model_downloads() -> list[dict[str, object]]:
+    """! @brief Model downloads.
+    @return List produced by the operation.
+    """
     return MODEL_MANAGER.all_download_statuses()
 
 
 @app.get("/api/models/downloads/{model_id}")
 def model_download_status(model_id: str) -> dict[str, object]:
+    """! @brief Model download status.
+    @param model_id Identifier of the target model.
+    @return Dictionary produced by the operation.
+    """
     try:
         return MODEL_MANAGER.download_status(model_id)
     except KeyError as exc:
@@ -140,11 +173,18 @@ def model_download_status(model_id: str) -> dict[str, object]:
 
 @app.get("/api/templates")
 def list_templates() -> list[dict[str, object]]:
+    """! @brief List templates.
+    @return List produced by the operation.
+    """
     return [item.model_dump() for item in TEMPLATE_MANAGER.list_templates()]
 
 
 @app.get("/api/templates/{template_id}")
 def get_template(template_id: str) -> dict[str, object]:
+    """! @brief Get template.
+    @param template_id Identifier of the template.
+    @return Dictionary produced by the operation.
+    """
     try:
         template = TEMPLATE_MANAGER.load(template_id)
     except ValueError as exc:
@@ -156,12 +196,20 @@ def get_template(template_id: str) -> dict[str, object]:
 
 @app.post("/api/templates")
 def save_template(template: TemplateDefinition) -> dict[str, str]:
+    """! @brief Save template.
+    @param template Template payload used by the operation.
+    @return Dictionary produced by the operation.
+    """
     TEMPLATE_MANAGER.save(template)
     return {"status": "ok"}
 
 
 @app.delete("/api/templates/{template_id}")
 def delete_template(template_id: str) -> dict[str, str]:
+    """! @brief Delete template.
+    @param template_id Identifier of the template.
+    @return Dictionary produced by the operation.
+    """
     try:
         TEMPLATE_MANAGER.delete(template_id)
     except FileNotFoundError as exc:
@@ -173,11 +221,18 @@ def delete_template(template_id: str) -> dict[str, str]:
 
 @app.get("/api/profiles")
 def list_profiles() -> list[dict[str, object]]:
+    """! @brief List profiles.
+    @return List produced by the operation.
+    """
     return [item.model_dump(mode="json") for item in VOICE_PROFILE_MANAGER.list_profiles()]
 
 
 @app.post("/api/profiles")
 def create_profile(request: CreateVoiceProfileRequest) -> dict[str, object]:
+    """! @brief Create profile.
+    @param request Request payload for the operation.
+    @return Dictionary produced by the operation.
+    """
     if not request.audio_path:
         raise HTTPException(status_code=400, detail="audio_path is required")
 
@@ -203,12 +258,20 @@ def create_profile(request: CreateVoiceProfileRequest) -> dict[str, object]:
 
 @app.delete("/api/profiles/{profile_id}")
 def delete_profile(profile_id: str) -> dict[str, str]:
+    """! @brief Delete profile.
+    @param profile_id Identifier of the voice profile.
+    @return Dictionary produced by the operation.
+    """
     VOICE_PROFILE_MANAGER.delete(profile_id)
     return {"status": "ok"}
 
 
 @app.post("/api/profiles/rebuild", response_model=ProfileRefreshTask)
 def rebuild_profiles(request: ProfileRefreshRequest) -> ProfileRefreshTask:
+    """! @brief Rebuild profiles.
+    @param request Request payload for the operation.
+    @return Result produced by the operation.
+    """
     execution = request.diarization_execution.strip().lower()
     if execution not in OPENAI_STEP_CHOICES:
         raise HTTPException(status_code=400, detail="Invalid execution mode for diarization")
@@ -233,6 +296,10 @@ def rebuild_profiles(request: ProfileRefreshRequest) -> ProfileRefreshTask:
 
 @app.get("/api/profiles/rebuild/{task_id}", response_model=ProfileRefreshTask)
 def rebuild_profiles_status(task_id: str) -> ProfileRefreshTask:
+    """! @brief Rebuild profiles status.
+    @param task_id Identifier of the background task.
+    @return Result produced by the operation.
+    """
     try:
         return VOICE_PROFILE_MANAGER.get_refresh_task(task_id)
     except KeyError as exc:
@@ -254,6 +321,21 @@ async def create_job(
     openai_transcription_model: str = Form("gpt-4o-transcribe"),
     openai_formatter_model: str = Form("gpt-5-mini"),
 ) -> dict[str, object]:
+    """! @brief Create job.
+    @param audio_file Value for audio file.
+    @param template_id Identifier of the template.
+    @param language_mode Value for language mode.
+    @param title Meeting title associated with the request.
+    @param diarization_execution Value for diarization execution.
+    @param transcription_execution Value for transcription execution.
+    @param formatter_execution Value for formatter execution.
+    @param local_diarization_model_id Value for local diarization model id.
+    @param openai_api_key Value for openai api key.
+    @param openai_diarization_model Value for openai diarization model.
+    @param openai_transcription_model Value for openai transcription model.
+    @param openai_formatter_model Value for openai formatter model.
+    @return Dictionary produced by the operation.
+    """
     execution_values = {
         "diarization_execution": diarization_execution.strip().lower(),
         "transcription_execution": transcription_execution.strip().lower(),
@@ -343,11 +425,18 @@ async def create_job(
 
 @app.get("/api/jobs")
 def list_jobs() -> JobListResponse:
+    """! @brief List jobs.
+    @return Result produced by the operation.
+    """
     return JobListResponse(jobs=JOB_STORE.list_states())
 
 
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str) -> dict[str, object]:
+    """! @brief Get job.
+    @param job_id Identifier of the job being processed.
+    @return Dictionary produced by the operation.
+    """
     try:
         state = JOB_STORE.get_state(job_id)
     except KeyError as exc:
@@ -357,12 +446,19 @@ def get_job(job_id: str) -> dict[str, object]:
 
 @app.get("/api/jobs/{job_id}/events")
 async def stream_job_events(job_id: str) -> StreamingResponse:
+    """! @brief Stream job events.
+    @param job_id Identifier of the job being processed.
+    @return Result produced by the operation.
+    """
     try:
         JOB_STORE.get_state(job_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Job not found") from exc
 
     async def event_stream():
+        """! @brief Event stream.
+        @return Result produced by the operation.
+        """
         terminal = {"completed", "failed", "cancelled"}
         while True:
             state = JOB_STORE.get_state(job_id)
@@ -376,6 +472,10 @@ async def stream_job_events(job_id: str) -> StreamingResponse:
 
 @app.post("/api/jobs/{job_id}/cancel")
 def cancel_job(job_id: str) -> dict[str, str]:
+    """! @brief Cancel job.
+    @param job_id Identifier of the job being processed.
+    @return Dictionary produced by the operation.
+    """
     try:
         ORCHESTRATOR.cancel(job_id)
     except KeyError as exc:
@@ -385,6 +485,11 @@ def cancel_job(job_id: str) -> dict[str, str]:
 
 @app.post("/api/jobs/{job_id}/speaker-mapping")
 def submit_speaker_mapping(job_id: str, request: SubmitSpeakerMappingRequest) -> dict[str, str]:
+    """! @brief Submit speaker mapping.
+    @param job_id Identifier of the job being processed.
+    @param request Request payload for the operation.
+    @return Dictionary produced by the operation.
+    """
     try:
         JOB_STORE.submit_speaker_mapping(job_id, request.mappings)
     except KeyError as exc:
@@ -396,6 +501,11 @@ def submit_speaker_mapping(job_id: str, request: SubmitSpeakerMappingRequest) ->
 
 @app.get("/api/jobs/{job_id}/artifacts/{artifact_name}")
 def get_artifact(job_id: str, artifact_name: str) -> FileResponse:
+    """! @brief Get artifact.
+    @param job_id Identifier of the job being processed.
+    @param artifact_name Value for artifact name.
+    @return Result produced by the operation.
+    """
     try:
         state = JOB_STORE.get_state(job_id)
     except KeyError as exc:
@@ -414,6 +524,11 @@ def get_artifact(job_id: str, artifact_name: str) -> FileResponse:
 
 @app.get("/api/jobs/{job_id}/snippets/{snippet_name}")
 def get_snippet(job_id: str, snippet_name: str) -> FileResponse:
+    """! @brief Get snippet.
+    @param job_id Identifier of the job being processed.
+    @param snippet_name Value for snippet name.
+    @return Result produced by the operation.
+    """
     snippet_dir = (SETTINGS.jobs_dir / job_id / "snippets").resolve()
     snippet_leaf = Path(snippet_name).name
     if snippet_leaf != snippet_name or snippet_leaf in {"", ".", ".."}:
@@ -426,6 +541,10 @@ def get_snippet(job_id: str, snippet_name: str) -> FileResponse:
 
 
 def _resolve_mom_export_path(job_id: str) -> Path:
+    """! @brief Resolve MoM export path.
+    @param job_id Identifier of the job being processed.
+    @return Path result produced by the operation.
+    """
     try:
         state = JOB_STORE.get_state(job_id)
     except KeyError as exc:
@@ -443,6 +562,10 @@ def _resolve_mom_export_path(job_id: str) -> Path:
 
 @app.get("/api/jobs/{job_id}/mom")
 def get_mom(job_id: str) -> PlainTextResponse:
+    """! @brief Get MoM.
+    @param job_id Identifier of the job being processed.
+    @return Result produced by the operation.
+    """
     path = _resolve_mom_export_path(job_id)
     markdown = path.read_text(encoding="utf-8")
     return PlainTextResponse(markdown, media_type="text/markdown")
@@ -450,12 +573,19 @@ def get_mom(job_id: str) -> PlainTextResponse:
 
 @app.get("/api/jobs/{job_id}/download/mom")
 def download_mom(job_id: str) -> FileResponse:
+    """! @brief Download MoM.
+    @param job_id Identifier of the job being processed.
+    @return Result produced by the operation.
+    """
     path = _resolve_mom_export_path(job_id)
     return FileResponse(path, media_type="text/markdown", filename=f"{job_id}_mom.md")
 
 
 @app.get("/api/system/startup-check")
 def startup_check() -> dict[str, object]:
+    """! @brief Startup check.
+    @return Dictionary produced by the operation.
+    """
     statuses = [item.model_dump() for item in MODEL_MANAGER.statuses()]
     all_ready = all(item["installed"] for item in statuses)
     return {"all_models_ready": all_ready, "models": statuses}

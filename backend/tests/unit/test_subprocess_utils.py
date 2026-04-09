@@ -10,6 +10,10 @@ from backend.pipeline.subprocess_utils import SubprocessCancelledError, run_canc
 
 
 def test_run_cancellable_subprocess_stops_registered_job(isolated_settings, tmp_path: Path) -> None:
+    """! @brief Test run cancellable subprocess stops registered job.
+    @param isolated_settings Value for isolated settings.
+    @param tmp_path Value for tmp path.
+    """
     audio = tmp_path / "a.wav"
     audio.write_bytes(b"x")
     runtime = JOB_STORE.create_job(
@@ -24,6 +28,8 @@ def test_run_cancellable_subprocess_stops_registered_job(isolated_settings, tmp_
     result: dict[str, object] = {}
 
     def run() -> None:
+        """! @brief Run operation.
+        """
         try:
             run_cancellable_subprocess(
                 [sys.executable, "-c", "import time; time.sleep(30)"],

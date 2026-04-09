@@ -10,6 +10,11 @@ from backend.profiles.manager import VoiceProfileManager
 
 
 def _tone(path: Path, freq: float, duration_s: float = 1.5) -> None:
+    """! @brief Tone operation.
+    @param path Filesystem path used by the operation.
+    @param freq Value for freq.
+    @param duration_s Value for duration s.
+    """
     sample_rate = 16000
     t = np.linspace(0, duration_s, int(sample_rate * duration_s), endpoint=False)
     audio = 0.2 * np.sin(2 * np.pi * freq * t).astype(np.float32)
@@ -17,6 +22,12 @@ def _tone(path: Path, freq: float, duration_s: float = 1.5) -> None:
 
 
 def _fake_embedding(audio_path: Path, *, model_ref: str, **_: object) -> np.ndarray:
+    """! @brief Fake embedding.
+    @param audio_path Path to the audio file.
+    @param model_ref Value for model ref.
+    @param _ Value for _.
+    @return Result produced by the operation.
+    """
     key = f"{audio_path.stem}:{model_ref}"
     if "alice" in key:
         base = np.array([1.0, 0.0, 0.0], dtype=np.float32)
@@ -32,6 +43,11 @@ def _fake_embedding(audio_path: Path, *, model_ref: str, **_: object) -> np.ndar
 def test_save_profile_sample_creates_profile_directory_and_sample_audio(
     isolated_settings, monkeypatch, tmp_path: Path
 ) -> None:
+    """! @brief Test save profile sample creates profile directory and sample audio.
+    @param isolated_settings Value for isolated settings.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Value for tmp path.
+    """
     _tone(tmp_path / "alice.wav", 220.0, duration_s=4.0)
     monkeypatch.setattr("backend.profiles.manager.compute_profile_embedding", _fake_embedding)
 
@@ -52,6 +68,11 @@ def test_save_profile_sample_creates_profile_directory_and_sample_audio(
 
 
 def test_same_name_appends_new_sample_instead_of_overwriting(isolated_settings, monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test same name appends new sample instead of overwriting.
+    @param isolated_settings Value for isolated settings.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Value for tmp path.
+    """
     _tone(tmp_path / "alice_a.wav", 220.0, duration_s=4.0)
     _tone(tmp_path / "alice_b.wav", 240.0, duration_s=4.0)
     monkeypatch.setattr("backend.profiles.manager.compute_profile_embedding", _fake_embedding)
@@ -78,6 +99,11 @@ def test_same_name_appends_new_sample_instead_of_overwriting(isolated_settings, 
 
 
 def test_match_ignores_embeddings_from_other_models(isolated_settings, monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test match ignores embeddings from other models.
+    @param isolated_settings Value for isolated settings.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Value for tmp path.
+    """
     _tone(tmp_path / "alice.wav", 220.0)
     monkeypatch.setattr("backend.profiles.manager.compute_profile_embedding", _fake_embedding)
 
@@ -105,10 +131,21 @@ def test_match_ignores_embeddings_from_other_models(isolated_settings, monkeypat
 
 
 def test_refresh_task_adds_only_missing_embeddings(isolated_settings, monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test refresh task adds only missing embeddings.
+    @param isolated_settings Value for isolated settings.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Value for tmp path.
+    """
     _tone(tmp_path / "alice.wav", 220.0)
     calls: list[str] = []
 
     def tracked_embedding(audio_path: Path, *, model_ref: str, **_: object) -> np.ndarray:
+        """! @brief Tracked embedding.
+        @param audio_path Path to the audio file.
+        @param model_ref Value for model ref.
+        @param _ Value for _.
+        @return Result produced by the operation.
+        """
         calls.append(model_ref)
         return _fake_embedding(audio_path, model_ref=model_ref)
 

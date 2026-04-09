@@ -12,6 +12,11 @@ from backend.models.manager import ModelManager
 
 
 def test_download_flow_without_consent_gate(isolated_settings, monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test download flow without consent gate.
+    @param isolated_settings Value for isolated settings.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Value for tmp path.
+    """
     source_path = tmp_path / "source.bin"
     source_bytes = b"mock-model-bytes"
     source_path.write_bytes(source_bytes)
@@ -42,6 +47,10 @@ def test_download_flow_without_consent_gate(isolated_settings, monkeypatch, tmp_
 
 
 def test_async_download_status_progress(isolated_settings, tmp_path: Path) -> None:
+    """! @brief Test async download status progress.
+    @param isolated_settings Value for isolated settings.
+    @param tmp_path Value for tmp path.
+    """
     source_path = tmp_path / "large_source.bin"
     source_bytes = b"x" * (3 * 1024 * 1024)
     source_path.write_bytes(source_bytes)
@@ -81,10 +90,18 @@ def test_async_download_status_progress(isolated_settings, tmp_path: Path) -> No
 
 
 def test_formatter_model_selection_and_ollama_install_check(isolated_settings, monkeypatch) -> None:
+    """! @brief Test formatter model selection and ollama install check.
+    @param isolated_settings Value for isolated settings.
+    @param monkeypatch Value for monkeypatch.
+    """
     manager = ModelManager()
     manager.set_formatter_model("qwen2.5:7b")
 
     def fake_has_model(tag: str) -> bool:
+        """! @brief Fake has model.
+        @param tag Value for tag.
+        @return True when the requested condition is satisfied; otherwise False.
+        """
         return tag == "qwen2.5:7b"
 
     monkeypatch.setattr(manager, "_ollama_has_model", fake_has_model)
@@ -95,6 +112,10 @@ def test_formatter_model_selection_and_ollama_install_check(isolated_settings, m
 
 
 def test_formatter_pull_uses_stream_progress(isolated_settings, monkeypatch) -> None:
+    """! @brief Test formatter pull uses stream progress.
+    @param isolated_settings Value for isolated settings.
+    @param monkeypatch Value for monkeypatch.
+    """
     manager = ModelManager()
     manager.set_formatter_model("qwen2.5:3b-instruct-q5_K_M")
 
@@ -108,15 +129,30 @@ def test_formatter_pull_uses_stream_progress(isolated_settings, monkeypatch) -> 
 
     class _FakeResponse:
         def __init__(self, raw: bytes) -> None:
+            """! @brief Initialize the _FakeResponse instance.
+            @param raw Value for raw.
+            """
             self._stream = io.BytesIO(raw)
 
         def readline(self) -> bytes:
+            """! @brief Readline operation.
+            @return Result produced by the operation.
+            """
             return self._stream.readline()
 
         def __enter__(self):
+            """! @brief Enter operation.
+            @return Result produced by the operation.
+            """
             return self
 
         def __exit__(self, exc_type, exc, tb):
+            """! @brief Exit operation.
+            @param exc_type Value for exc type.
+            @param exc Value for exc.
+            @param tb Value for tb.
+            @return Result produced by the operation.
+            """
             return False
 
     monkeypatch.setattr("backend.models.manager.urllib.request.urlopen", lambda *_args, **_kwargs: _FakeResponse(payload))
@@ -130,11 +166,17 @@ def test_formatter_pull_uses_stream_progress(isolated_settings, monkeypatch) -> 
 
 
 def test_formatter_pull_surfaces_ollama_http_error(isolated_settings, monkeypatch) -> None:
+    """! @brief Test formatter pull surfaces ollama http error.
+    @param isolated_settings Value for isolated settings.
+    @param monkeypatch Value for monkeypatch.
+    """
     manager = ModelManager()
     manager.set_formatter_model("bad:model")
 
     class _FakeHTTPError(urllib.error.HTTPError):
         def __init__(self) -> None:
+            """! @brief Initialize the _FakeHTTPError instance.
+            """
             super().__init__(
                 url="http://127.0.0.1:11434/api/pull",
                 code=404,
@@ -144,6 +186,11 @@ def test_formatter_pull_surfaces_ollama_http_error(isolated_settings, monkeypatc
             )
 
     def _raise(*_args, **_kwargs):
+        """! @brief Raise operation.
+        @param _args Value for args.
+        @param _kwargs Value for kwargs.
+        @return Result produced by the operation.
+        """
         raise _FakeHTTPError()
 
     monkeypatch.setattr("backend.models.manager.urllib.request.urlopen", _raise)
@@ -157,6 +204,11 @@ def test_formatter_pull_surfaces_ollama_http_error(isolated_settings, monkeypatc
 
 
 def test_validate_for_job_start_can_skip_unused_local_models(isolated_settings, monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test validate for job start can skip unused local models.
+    @param isolated_settings Value for isolated settings.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Value for tmp path.
+    """
     manager = ModelManager()
     manager._specs = {
         "diarization": ModelSpec(

@@ -1,104 +1,243 @@
 # AutoMoM
 
-AutoMoM is a local/offline web tool that converts meeting audio into English Minutes of Meeting (MoM) in Markdown.
+AutoMoM is a local-first FastAPI web application that turns meeting audio into English Minutes of Meeting (MoM) in Markdown. The pipeline can run fully local, or switch diarization, transcription, and MoM generation independently to OpenAI on a per-job basis.
 
-## Features
-- Local job pipeline with 9 stages:
+## Verified Feature Set
+
+The items below were verified against the current source tree and test suite.
+
+- Nine-stage job pipeline:
   1. Validate/Normalize
   2. VAD
   3. Diarization
   4. Snippet extraction
-  5. Speaker naming (blocking user step)
+  5. Speaker naming
   6. Transcription
   7. Transcript assembly
   8. MoM formatting
   9. Export
-- Speaker count detection and speaker snippet playback for naming
-- Local voice profiles for speaker auto-identification
-- Model manager with local model checks and web-triggered downloads
-- Optional OpenAI API execution per stage with one API key across diarization, transcription, and MoM generation
-- Multiple templates with default template included
-- Stage progress reporting (overall, stage, segment-level)
-- Markdown export
+- Local-first browser UI with:
+  - audio upload
+  - template selection and inline template creation
+  - per-stage local/OpenAI execution toggles
+  - OpenAI API key field shown only when needed
+  - progress KPIs, progress bars, logs, and SSE updates
+  - speaker naming with snippet playback
+  - model manager, template inventory, and voice profile inventory
+- Per-stage local/OpenAI routing:
+  - diarization: local pyannote or OpenAI diarized transcription
+  - transcription: local whisper.cpp/Voxtral runtime or OpenAI transcription
+  - formatter: local Ollama model, legacy command backend, or OpenAI Responses API
+- Local diarization backends:
+  - `auto` which resolves to `pyannote`
+  - `pyannote`
+  - `embedding`
+  - `heuristic`
+- Long-recording local diarization support:
+  - recordings longer than 20 minutes are chunked
+  - chunk boundaries snap toward silence when possible
+  - chunk-local speaker ids are stitched into global speaker ids via embedding similarity
+  - pyannote GPU runs fall back to CPU on CUDA OOM
+- Speaker naming and voice profiles:
+  - snippet extraction chooses representative clips per speaker
+  - existing local profiles are matched by cosine similarity on embeddings
+  - ambiguous matches are surfaced separately from confident matches
+  - confirmed names can be saved back as shared voice profiles
+  - saved profiles can be refreshed for the currently selected local diarization model
+- Transcription runtime behavior:
+  - whisper.cpp binary probing and preferred binary selection
+  - optional GPU enablement based on available backend support
+  - one-shot GPU fallback to CPU if runtime invocation fails
+  - transcription chunk planning merges adjacent same-speaker spans within configured limits
+  - optional cap on chunk count
+  - optional preservation of intermediate transcription WAVs
+  - runtime summary written per job
+- Formatter behavior:
+  - prompt assembly from template definitions
+  - template heading/order validation
+  - retry loop with corrective feedback when structured output is invalid
+  - long-input reduction into structured notes when strict templates exceed the token budget
+  - raw stdout/stderr/prompt/validation artifacts persisted per job
+- Model management:
+  - local model presence checks before job start
+  - resumable file downloads for non-formatter models when URLs are configured
+  - checksum verification when SHA256 is configured
+  - Ollama tag selection for formatter models
+  - formatter model pull via Ollama `/api/pull`
+- API features:
+  - health and startup readiness endpoints
+  - job creation/listing/status/SSE/cancel
+  - artifact and snippet download endpoints
+  - template CRUD endpoints
+  - profile CRUD plus embedding refresh task endpoints
+  - model status/download/formatter selection endpoints
+- Utility scripts:
+  - `scripts/run_automom.sh`
+  - `scripts/prepare_mock_models.sh`
+  - `scripts/benchmark_local_transcription.py`
+  - `scripts/run_long_audio_test.py`
 
 ## Repository Layout
-- `backend/app`: FastAPI app, API routes, state schemas, job store
-- `backend/pipeline`: pipeline stages and orchestrator
-- `backend/models`: model manager (presence, consent, download)
-- `backend/profiles`: voice profile embedding/matching manager
-- `backend/tests`: unit + integration tests
-- `scripts`: run/start helper scripts
-- `data`: local runtime storage (jobs/models/templates/profiles/uploads)
 
-## Requirements
-- Python 3.11+
-- `ffmpeg` installed and available in PATH
+- `backend/app`
+  - FastAPI entrypoint, configuration, schemas, job store, static frontend
+- `backend/pipeline`
+  - audio normalization, VAD, diarization, snippets, transcription, formatter, orchestration, subprocess helpers
+- `backend/models`
+  - model registry and download manager
+- `backend/profiles`
+  - saved voice profiles, embedding persistence, matching, refresh tasks
+- `backend/tests`
+  - unit and integration coverage
+- `scripts`
+  - local validation and benchmark helpers
+- `data`
+  - runtime jobs, uploads, templates, models, profiles
 
-## Quick Start (One Command)
+## Runtime Artifacts
+
+Each job writes to `data/jobs/<job_id>/`. Depending on execution path, the job may contain:
+
+- `job_state.json`
+- `job_summary.json`
+- `audio_normalized.wav`
+- `audio_metadata.json`
+- `vad_regions.json`
+- `diarization.json`
+- `diarization_chunks.json`
+- `diarization_stitching.json`
+- `snippets.json`
+- `snippets/*.wav`
+- `speaker_mapping.json`
+- `segments_transcript.json`
+- `transcript.json`
+- `transcription_runtime.json`
+- `mom.md`
+- `mom_structured.json`
+- `formatter_system_prompt.txt`
+- `formatter_user_prompt.txt`
+- `formatter_stdout.txt`
+- `formatter_stderr.txt`
+- `formatter_raw_output.txt`
+- `formatter_validation.json`
+- `formatter_reduced_notes.json`
+- `export/mom.md`
+
+Artifact keys are exposed through the job API and are part of the runtime contract between the backend and frontend.
+
+## Key Configuration
+
+- Compute:
+  - `AUTOMOM_COMPUTE_DEVICE=auto|cpu|cuda`
+  - `AUTOMOM_CUDA_DEVICE_ID=<index>`
+  - `AUTOMOM_DISABLE_CUDA=1` to force CPU
+- Diarization:
+  - `AUTOMOM_DIARIZATION_BACKEND=auto|pyannote|embedding|heuristic`
+  - `AUTOMOM_DIARIZATION_MODEL`
+  - `AUTOMOM_DIARIZATION_PIPELINE`
+  - `AUTOMOM_DIARIZATION_EMBEDDING_MODEL`
+  - `AUTOMOM_DIARIZATION_MIN_SPEAKERS`
+  - `AUTOMOM_DIARIZATION_MAX_SPEAKERS`
+  - `AUTOMOM_DIARIZATION_SUBPROCESS`
+- Transcription:
+  - `AUTOMOM_VOXTRAL_BIN`
+  - `AUTOMOM_VOXTRAL_MODEL`
+  - `AUTOMOM_VOXTRAL_THREADS`
+  - `AUTOMOM_VOXTRAL_PROCESSORS`
+  - `AUTOMOM_VOXTRAL_GPU_LAYERS`
+  - `AUTOMOM_TRANSCRIPTION_MERGE_GAP_S`
+  - `AUTOMOM_TRANSCRIPTION_MAX_CHUNK_S`
+  - `AUTOMOM_TRANSCRIPTION_MAX_SEGMENTS`
+  - `AUTOMOM_TRANSCRIPTION_KEEP_SEGMENT_AUDIO`
+- Formatter:
+  - `AUTOMOM_FORMATTER_BACKEND=ollama|command`
+  - `AUTOMOM_FORMATTER_COMMAND`
+  - `AUTOMOM_OLLAMA_HOST`
+  - `AUTOMOM_FORMATTER_OLLAMA_MODEL`
+  - `AUTOMOM_FORMATTER_TIMEOUT_S`
+- Audio normalization:
+  - `AUTOMOM_AUDIO_DENOISE=1|0`
+  - `AUTOMOM_AUDIO_DENOISE_FILTER=<ffmpeg filter>`
+- Server:
+  - `AUTOMOM_HOST`
+  - `AUTOMOM_PORT`
+  - `AUTOMOM_MAX_WORKERS`
+  - `AUTOMOM_CORS_ORIGINS`
+
+## API Surface
+
+- `GET /`
+  - frontend entrypoint
+- `GET /api/health`
+- `GET /api/system/startup-check`
+- `GET /api/models`
+- `GET /api/models/formatter`
+- `POST /api/models/formatter`
+- `GET /api/models/diarization`
+- `POST /api/models/consent`
+- `POST /api/models/download`
+- `GET /api/models/downloads`
+- `GET /api/models/downloads/{model_id}`
+- `GET /api/templates`
+- `GET /api/templates/{template_id}`
+- `POST /api/templates`
+- `DELETE /api/templates/{template_id}`
+- `GET /api/profiles`
+- `POST /api/profiles`
+- `DELETE /api/profiles/{profile_id}`
+- `POST /api/profiles/rebuild`
+- `GET /api/profiles/rebuild/{task_id}`
+- `POST /api/jobs`
+- `GET /api/jobs`
+- `GET /api/jobs/{job_id}`
+- `GET /api/jobs/{job_id}/events`
+- `POST /api/jobs/{job_id}/cancel`
+- `POST /api/jobs/{job_id}/speaker-mapping`
+- `GET /api/jobs/{job_id}/artifacts/{artifact_name}`
+- `GET /api/jobs/{job_id}/snippets/{snippet_name}`
+- `GET /api/jobs/{job_id}/mom`
+- `GET /api/jobs/{job_id}/download/mom`
+
+## OpenAI Path Notes
+
+- OpenAI audio uploads are limited to 25 MB per request in the current implementation.
+- The backend prefers the original uploaded file for OpenAI audio when it is in a supported format and under the limit; otherwise it falls back to the normalized WAV if that file also fits.
+- If OpenAI diarization already returned text-bearing segments, the pipeline reuses that transcript instead of uploading per-speaker chunks for a second cloud transcription pass.
+
+## Development
+
+### One-command start
+
 ```bash
 ./scripts/run_automom.sh
 ```
 
-Then open:
-- `http://127.0.0.1:8000`
+The helper checks Ollama, starts `ollama serve` automatically when needed, and then launches the app.
 
-`run_automom.sh` now checks Ollama, starts `ollama serve` automatically when needed, and then launches the app.  
-Set `AUTOMOM_OLLAMA_AUTOSTART=0` to disable automatic Ollama startup.
+### Mock model placeholders
 
-## First Run and Model Checks
-At startup, required models are listed in Settings:
-- Diarization model
-- Voxtral weights
-- Formatter LLM
-
-Before a job starts, missing required models must be handled.
-For formatter, the web UI downloads via Ollama (`/api/pull`) using the selected model tag.
-
-### Dev shortcut (mock model placeholders)
 For local development only:
+
 ```bash
 ./scripts/prepare_mock_models.sh
 ```
 
-## Tests
+### Tests
+
 Run:
+
 ```bash
 source .venv/bin/activate
 pytest backend/tests -q
 ```
 
-Covers:
-- Unit tests for audio normalization, VAD, diarization, snippets, voice profiles, transcript merging, voxtral wrapper, template prompting, and model download flows
-- Integration test for end-to-end pipeline run with golden transcript and Markdown structure checks
+Verified on April 9, 2026:
 
-## Notes
-- Real diarization/ASR/formatter model inference is mandatory for job execution. If required models/runtimes are missing, the job fails with an actionable configuration error.
-- Compute selection:
-  - `AUTOMOM_COMPUTE_DEVICE=auto|cpu|cuda` (default: `auto`)
-  - `AUTOMOM_CUDA_DEVICE_ID` selects GPU index when CUDA is used
-  - `AUTOMOM_DISABLE_CUDA=1` forces CPU even if CUDA is available
-  - The pipeline auto-falls back to CPU if CUDA is unavailable or a model runtime rejects GPU flags
-- Diarization backends:
-  - `AUTOMOM_DIARIZATION_BACKEND=heuristic`: built-in heuristic clustering (explicit selection only)
-  - `AUTOMOM_DIARIZATION_BACKEND=embedding`: uses speaker embeddings (`AUTOMOM_DIARIZATION_EMBEDDING_MODEL`, default `pyannote/wespeaker-voxceleb-resnet34-LM`) and clustering
-  - `AUTOMOM_DIARIZATION_BACKEND=pyannote`: full pyannote pipeline mode (recommended for model-based diarization)
-  - `AUTOMOM_DIARIZATION_BACKEND=auto`: strict alias of `pyannote` (no backend fallback)
-  - `AUTOMOM_DIARIZATION_MIN_SPEAKERS` / `AUTOMOM_DIARIZATION_MAX_SPEAKERS`: optional speaker count bounds (`0` = auto/unbounded)
-  - For full pyannote pipeline mode, set `AUTOMOM_DIARIZATION_PIPELINE` (or `AUTOMOM_DIARIZATION_MODEL`) to a local pipeline config path. Most official pyannote pipelines are gated and require `HF_TOKEN`.
-  - In pyannote and embedding modes, device is selected dynamically from `AUTOMOM_COMPUTE_DEVICE`.
-- Runtime acceleration flags:
-  - `AUTOMOM_VOXTRAL_GPU_LAYERS` for whisper.cpp-based ASR binaries
-  - `AUTOMOM_VOXTRAL_THREADS` / `AUTOMOM_VOXTRAL_PROCESSORS` tune whisper.cpp CPU execution
-  - `AUTOMOM_TRANSCRIPTION_MERGE_GAP_S` / `AUTOMOM_TRANSCRIPTION_MAX_CHUNK_S` control same-speaker chunking before ASR
-  - `AUTOMOM_TRANSCRIPTION_KEEP_SEGMENT_AUDIO=1` preserves extracted transcription chunk WAVs for debugging
-  - Formatter default backend is Ollama (`AUTOMOM_FORMATTER_BACKEND=ollama`, `AUTOMOM_OLLAMA_HOST`, `AUTOMOM_FORMATTER_OLLAMA_MODEL`)
-  - Legacy formatter command backend is optional (`AUTOMOM_FORMATTER_BACKEND=command`, `AUTOMOM_FORMATTER_COMMAND`)
-- Cloud execution:
-  - On the New Job page you can optionally provide an OpenAI API key and choose `local` or `api` independently for diarization, transcription, and MoM formatting
-  - Recommended OpenAI models: `gpt-4o-transcribe-diarize`, `gpt-4o-transcribe`, and `gpt-5-mini`
-- Audio denoise controls (applied during normalization):
-  - `AUTOMOM_AUDIO_DENOISE=1|0` (default: `1`)
-  - `AUTOMOM_AUDIO_DENOISE_FILTER` (default: `afftdn`; FFmpeg audio filter expression)
-- Runtime artifacts are stored under `data/jobs/<job_id>/`.
-  - Local ASR jobs now include `transcription_runtime.json` with requested vs active compute mode and binary capability details.
-  - Job IDs are generated as `YYYY-MM-DD-HH:MM-meeting_title` (fallback: `...-meeting`).
+- `80` tests passed
+
+## Documentation Standard
+
+- Python functions and methods must carry Doxygen-style docstrings.
+- Frontend JavaScript functions must carry JSDoc/Doxygen-style comments.
+- Complex, fragile, or high-impact logic must also include inline comments that explain why the code is written that way.
+- When behavior, artifacts, endpoints, or configuration change, update both `README.md` and `AGENT.md` in the same change.

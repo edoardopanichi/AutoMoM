@@ -50,6 +50,9 @@ class DiarizationResult:
     stitching_debug: dict[str, object] | None = None
 
     def to_json(self) -> list[dict[str, object]]:
+        """! @brief To json.
+        @return List produced by the operation.
+        """
         return [asdict(item) for item in self.segments]
 
 
@@ -69,6 +72,22 @@ def diarize(
     job_id: str | None = None,
     progress_callback: Callable[[dict[str, object]], None] | None = None,
 ) -> DiarizationResult:
+    """! @brief Diarize operation.
+    @param audio_path Path to the audio file.
+    @param speech_regions Detected speech regions used as input.
+    @param min_speakers Optional minimum speaker count constraint.
+    @param max_speakers Optional maximum speaker count constraint.
+    @param max_chunk_s Maximum chunk duration in seconds.
+    @param backend Value for backend.
+    @param model_path Value for model path.
+    @param pipeline_path Value for pipeline path.
+    @param embedding_model Value for embedding model.
+    @param compute_device Requested compute device preference.
+    @param cuda_device_id CUDA device index to prefer when GPU execution is enabled.
+    @param job_id Identifier of the job being processed.
+    @param progress_callback Optional callback invoked with progress updates.
+    @return Result produced by the operation.
+    """
     normalized_min = int(min_speakers) if min_speakers is not None else 0
     normalized_max = int(max_speakers) if max_speakers is not None else 0
     min_speakers = normalized_min if normalized_min > 0 else None
@@ -131,6 +150,12 @@ def _pyannote_error_message(
     model_path: Path | None,
     pipeline_path: str | None,
 ) -> str:
+    """! @brief Pyannote error message.
+    @param error Value for error.
+    @param model_path Value for model path.
+    @param pipeline_path Value for pipeline path.
+    @return str result produced by the operation.
+    """
     pipeline_ref = (pipeline_path or "").strip()
     if not pipeline_ref and model_path is not None:
         pipeline_ref = str(model_path)
@@ -170,6 +195,10 @@ def _pyannote_error_message(
 
 
 def _embedding_error_message(error: str | None) -> str:
+    """! @brief Embedding error message.
+    @param error Value for error.
+    @return str result produced by the operation.
+    """
     reason = error or "unknown_embedding_error"
     return (
         f"Embedding diarization unavailable ({reason}). "
@@ -190,6 +219,20 @@ def _diarize_with_pyannote(
     job_id: str | None = None,
     progress_callback: Callable[[dict[str, object]], None] | None = None,
 ) -> tuple[DiarizationResult | None, str | None]:
+    """! @brief Diarize with pyannote.
+    @param audio_path Path to the audio file.
+    @param speech_regions Detected speech regions used as input.
+    @param min_speakers Optional minimum speaker count constraint.
+    @param max_speakers Optional maximum speaker count constraint.
+    @param model_path Value for model path.
+    @param compute_device Requested compute device preference.
+    @param cuda_device_id CUDA device index to prefer when GPU execution is enabled.
+    @param pipeline_path Value for pipeline path.
+    @param embedding_model Value for embedding model.
+    @param job_id Identifier of the job being processed.
+    @param progress_callback Optional callback invoked with progress updates.
+    @return Tuple produced by the operation.
+    """
     pipeline_ref = _resolve_pyannote_pipeline_ref(model_path, pipeline_path)
     if not pipeline_ref:
         return None, "pyannote_pipeline_not_configured"
@@ -235,6 +278,19 @@ def _diarize_with_pyannote_impl(
     embedding_model: str | None = None,
     progress_callback: Callable[[dict[str, object]], None] | None = None,
 ) -> tuple[DiarizationResult | None, str | None]:
+    """! @brief Diarize with pyannote impl.
+    @param audio_path Path to the audio file.
+    @param speech_regions Detected speech regions used as input.
+    @param min_speakers Optional minimum speaker count constraint.
+    @param max_speakers Optional maximum speaker count constraint.
+    @param model_path Value for model path.
+    @param compute_device Requested compute device preference.
+    @param cuda_device_id CUDA device index to prefer when GPU execution is enabled.
+    @param pipeline_path Value for pipeline path.
+    @param embedding_model Value for embedding model.
+    @param progress_callback Optional callback invoked with progress updates.
+    @return Tuple produced by the operation.
+    """
     pipeline_ref = _resolve_pyannote_pipeline_ref(model_path, pipeline_path)
     if not pipeline_ref:
         return None, "pyannote_pipeline_not_configured"
@@ -328,6 +384,9 @@ def _diarize_with_pyannote_impl(
 
 
 def _diarization_subprocess_enabled() -> bool:
+    """! @brief Diarization subprocess enabled.
+    @return True when the requested condition is satisfied; otherwise False.
+    """
     return os.getenv("AUTOMOM_DIARIZATION_SUBPROCESS", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
@@ -345,6 +404,20 @@ def _diarize_with_pyannote_subprocess(
     job_id: str | None,
     progress_callback: Callable[[dict[str, object]], None] | None,
 ) -> tuple[DiarizationResult | None, str | None]:
+    """! @brief Diarize with pyannote subprocess.
+    @param audio_path Path to the audio file.
+    @param speech_regions Detected speech regions used as input.
+    @param min_speakers Optional minimum speaker count constraint.
+    @param max_speakers Optional maximum speaker count constraint.
+    @param model_path Value for model path.
+    @param compute_device Requested compute device preference.
+    @param cuda_device_id CUDA device index to prefer when GPU execution is enabled.
+    @param pipeline_path Value for pipeline path.
+    @param embedding_model Value for embedding model.
+    @param job_id Identifier of the job being processed.
+    @param progress_callback Optional callback invoked with progress updates.
+    @return Tuple produced by the operation.
+    """
     request_payload = {
         "audio_path": str(audio_path),
         "speech_regions": [asdict(region) for region in speech_regions],
@@ -431,6 +504,10 @@ def _diarize_with_pyannote_subprocess(
 
 
 def _result_from_worker_payload(payload: dict[str, object]) -> DiarizationResult:
+    """! @brief Result from worker payload.
+    @param payload Payload consumed or produced by the operation.
+    @return Result produced by the operation.
+    """
     raw_segments = payload.get("segments") or []
     segments = [
         DiarizationSegment(
@@ -466,6 +543,20 @@ def _diarize_with_pyannote_in_chunks(
     token: str | None,
     progress_callback: Callable[[dict[str, object]], None] | None,
 ) -> tuple[DiarizationResult | None, str | None]:
+    """! @brief Diarize with pyannote in chunks.
+    @param audio_path Path to the audio file.
+    @param speech_regions Detected speech regions used as input.
+    @param total_duration_s Value for total duration s.
+    @param min_speakers Optional minimum speaker count constraint.
+    @param max_speakers Optional maximum speaker count constraint.
+    @param pipeline_ref Value for pipeline ref.
+    @param embedding_model Value for embedding model.
+    @param compute_device Requested compute device preference.
+    @param cuda_device_id CUDA device index to prefer when GPU execution is enabled.
+    @param token Value for token.
+    @param progress_callback Optional callback invoked with progress updates.
+    @return Tuple produced by the operation.
+    """
     try:
         import torch
     except Exception as exc:
@@ -475,6 +566,8 @@ def _diarize_with_pyannote_in_chunks(
         speech_regions=speech_regions,
         total_duration_s=total_duration_s,
     )
+    # Each chunk owns only its central window but reads with overlap on both sides so pyannote gets
+    # enough context without duplicating final segments across adjacent chunks.
     if progress_callback is not None:
         progress_callback(
             {
@@ -563,6 +656,8 @@ def _diarize_with_pyannote_in_chunks(
             chunk_audio_start_s=float(chunk["audio_start_s"]),
             chunk_audio_end_s=float(chunk["audio_end_s"]),
         )
+        # Pyannote speaker labels are local to the chunk, so stitch them into global ids with an
+        # embedding bank before merging the chunk back into the full-recording timeline.
         local_to_global, match_debug = _assign_chunk_speakers_to_global(
             representative,
             global_bank,
@@ -617,6 +712,12 @@ def _diarize_with_pyannote_in_chunks(
 
 
 def _read_audio_payload(audio_path: Path, start_s: float | None = None, end_s: float | None = None) -> dict[str, object]:
+    """! @brief Read audio payload.
+    @param audio_path Path to the audio file.
+    @param start_s Value for start s.
+    @param end_s Value for end s.
+    @return Dictionary produced by the operation.
+    """
     with sf.SoundFile(str(audio_path)) as handle:
         sample_rate = int(handle.samplerate)
         total_frames = len(handle)
@@ -640,6 +741,11 @@ def _plan_chunked_diarization(
     speech_regions: list[SpeechRegion],
     total_duration_s: float,
 ) -> list[dict[str, object]]:
+    """! @brief Plan chunked diarization.
+    @param speech_regions Detected speech regions used as input.
+    @param total_duration_s Value for total duration s.
+    @return List produced by the operation.
+    """
     chunk_count = max(1, int(math.ceil(total_duration_s / TARGET_LOCAL_DIARIZATION_CHUNK_S)))
     own_chunk_s = total_duration_s / chunk_count
     silence_points = _silence_boundary_points(speech_regions, total_duration_s)
@@ -667,6 +773,11 @@ def _plan_chunked_diarization(
 
 
 def _silence_boundary_points(speech_regions: list[SpeechRegion], total_duration_s: float) -> list[float]:
+    """! @brief Silence boundary points.
+    @param speech_regions Detected speech regions used as input.
+    @param total_duration_s Value for total duration s.
+    @return List produced by the operation.
+    """
     if not speech_regions:
         return []
     points: list[float] = []
@@ -681,6 +792,12 @@ def _silence_boundary_points(speech_regions: list[SpeechRegion], total_duration_
 
 
 def _snap_boundary(target_s: float, silence_points: list[float], total_duration_s: float) -> float:
+    """! @brief Snap boundary.
+    @param target_s Value for target s.
+    @param silence_points Value for silence points.
+    @param total_duration_s Value for total duration s.
+    @return float result produced by the operation.
+    """
     candidates = [point for point in silence_points if abs(point - target_s) <= CHUNK_SNAP_WINDOW_S]
     if not candidates:
         return min(total_duration_s, max(0.0, target_s))
@@ -688,6 +805,11 @@ def _snap_boundary(target_s: float, silence_points: list[float], total_duration_
 
 
 def _monotonic_boundaries(boundaries: list[float], total_duration_s: float) -> list[float]:
+    """! @brief Monotonic boundaries.
+    @param boundaries Value for boundaries.
+    @param total_duration_s Value for total duration s.
+    @return List produced by the operation.
+    """
     normalized = [0.0]
     for value in boundaries[1:-1]:
         normalized.append(min(total_duration_s, max(normalized[-1] + 1.0, value)))
@@ -701,6 +823,12 @@ def _filter_segments_to_owned_window(
     own_start_s: float,
     own_end_s: float,
 ) -> list[DiarizationSegment]:
+    """! @brief Filter segments to owned window.
+    @param segments Segment collection processed by the operation.
+    @param own_start_s Value for own start s.
+    @param own_end_s Value for own end s.
+    @return List produced by the operation.
+    """
     kept: list[DiarizationSegment] = []
     for segment in segments:
         midpoint = (float(segment.start_s) + float(segment.end_s)) / 2.0
@@ -730,6 +858,15 @@ def _build_chunk_speaker_embeddings(
     chunk_audio_start_s: float,
     chunk_audio_end_s: float,
 ) -> dict[str, np.ndarray]:
+    """! @brief Build chunk speaker embeddings.
+    @param segments Segment collection processed by the operation.
+    @param audio_path Path to the audio file.
+    @param inference Value for inference.
+    @param sample_rate Value for sample rate.
+    @param chunk_audio_start_s Value for chunk audio start s.
+    @param chunk_audio_end_s Value for chunk audio end s.
+    @return Dictionary produced by the operation.
+    """
     if not segments:
         return {}
 
@@ -764,6 +901,12 @@ def _build_chunk_speaker_embeddings(
 
 
 def _compute_embedding_from_clip(audio: np.ndarray, sample_rate: int, inference) -> np.ndarray:
+    """! @brief Compute embedding from clip.
+    @param audio Value for audio.
+    @param sample_rate Value for sample rate.
+    @param inference Value for inference.
+    @return Result produced by the operation.
+    """
     import torch
 
     waveform = np.ascontiguousarray(np.atleast_2d(audio))
@@ -776,6 +919,12 @@ def _assign_chunk_speakers_to_global(
     global_bank: dict[str, list[np.ndarray]],
     speaker_order: list[str],
 ) -> tuple[dict[str, str], list[dict[str, object]]]:
+    """! @brief Assign chunk speakers to global.
+    @param representative Value for representative.
+    @param global_bank Value for global bank.
+    @param speaker_order Value for speaker order.
+    @return Tuple produced by the operation.
+    """
     mapping: dict[str, str] = {}
     debug_rows: list[dict[str, object]] = []
     used_globals: set[str] = set()
@@ -807,6 +956,8 @@ def _assign_chunk_speakers_to_global(
             chosen = best_global
             matched_existing = True
         if chosen is None:
+            # Prefer a fresh global speaker id over an unsafe merge when the best match is weak or
+            # ambiguous; this keeps chunk stitching conservative instead of collapsing speakers.
             chosen = f"GLOBAL_{len(speaker_order)}"
             speaker_order.append(chosen)
             global_bank.setdefault(chosen, [])
@@ -830,6 +981,11 @@ def _assign_chunk_speakers_to_global(
 
 @lru_cache(maxsize=2)
 def _load_pyannote_pipeline(pipeline_ref: str, token: str | None):
+    """! @brief Load pyannote pipeline.
+    @param pipeline_ref Value for pipeline ref.
+    @param token Value for token.
+    @return Result produced by the operation.
+    """
     with warnings.catch_warnings():
         warnings.filterwarnings(
             "ignore",
@@ -852,6 +1008,14 @@ def _run_pyannote_pipeline(
     *,
     target_device: str,
 ) -> tuple[object, str]:
+    """! @brief Run pyannote pipeline.
+    @param pipeline Value for pipeline.
+    @param input_payload Value for input payload.
+    @param pipeline_kwargs Value for pipeline kwargs.
+    @param torch_module Value for torch module.
+    @param target_device Value for target device.
+    @return Tuple produced by the operation.
+    """
     active_device = _move_pyannote_pipeline(pipeline, torch_module, target_device)
     try:
         return _invoke_pyannote_pipeline(pipeline, input_payload, pipeline_kwargs), active_device
@@ -868,6 +1032,12 @@ def _run_pyannote_pipeline(
 
 
 def _move_pyannote_pipeline(pipeline, torch_module, target_device: str) -> str:
+    """! @brief Move pyannote pipeline.
+    @param pipeline Value for pipeline.
+    @param torch_module Value for torch module.
+    @param target_device Value for target device.
+    @return str result produced by the operation.
+    """
     active_device = target_device
     try:
         pipeline.to(torch_module.device(target_device))
@@ -882,6 +1052,12 @@ def _move_pyannote_pipeline(pipeline, torch_module, target_device: str) -> str:
 
 
 def _invoke_pyannote_pipeline(pipeline, input_payload: dict[str, object], pipeline_kwargs: dict[str, int]):
+    """! @brief Invoke pyannote pipeline.
+    @param pipeline Value for pipeline.
+    @param input_payload Value for input payload.
+    @param pipeline_kwargs Value for pipeline kwargs.
+    @return Result produced by the operation.
+    """
     try:
         return pipeline(input_payload, **pipeline_kwargs)
     except TypeError:
@@ -889,6 +1065,10 @@ def _invoke_pyannote_pipeline(pipeline, input_payload: dict[str, object], pipeli
 
 
 def _is_cuda_oom(exc: Exception) -> bool:
+    """! @brief Is cuda oom.
+    @param exc Value for exc.
+    @return True when the requested condition is satisfied; otherwise False.
+    """
     name = exc.__class__.__name__.lower()
     message = str(exc).lower()
     return "outofmemory" in name or "out of memory" in message or "cuda out of memory" in message
@@ -904,6 +1084,17 @@ def _diarize_with_embeddings(
     compute_device: str,
     cuda_device_id: int,
 ) -> tuple[DiarizationResult | None, str | None]:
+    """! @brief Diarize with embeddings.
+    @param audio_path Path to the audio file.
+    @param speech_regions Detected speech regions used as input.
+    @param min_speakers Optional minimum speaker count constraint.
+    @param max_speakers Optional maximum speaker count constraint.
+    @param max_chunk_s Maximum chunk duration in seconds.
+    @param model_ref Value for model ref.
+    @param compute_device Requested compute device preference.
+    @param cuda_device_id CUDA device index to prefer when GPU execution is enabled.
+    @return Tuple produced by the operation.
+    """
     try:
         import torch
     except Exception as exc:
@@ -1002,6 +1193,12 @@ def resolve_profile_embedding_model_ref(
     pipeline_path: str | None = None,
     embedding_model: str | None = None,
 ) -> str:
+    """! @brief Resolve profile embedding model ref.
+    @param model_path Value for model path.
+    @param pipeline_path Value for pipeline path.
+    @param embedding_model Value for embedding model.
+    @return str result produced by the operation.
+    """
     pipeline_ref = _resolve_pyannote_pipeline_ref(model_path, pipeline_path)
     if pipeline_ref:
         pipeline_dir = Path(pipeline_ref).expanduser().resolve().parent
@@ -1015,6 +1212,9 @@ def resolve_profile_embedding_model_ref(
 
 
 def pyannote_audio_version() -> str:
+    """! @brief Pyannote audio version.
+    @return str result produced by the operation.
+    """
     try:
         return importlib_metadata.version("pyannote.audio")
     except Exception:
@@ -1029,6 +1229,14 @@ def compute_profile_embedding(
     cuda_device_id: int = 0,
     segments: list[tuple[float, float]] | None = None,
 ) -> np.ndarray:
+    """! @brief Compute profile embedding.
+    @param audio_path Path to the audio file.
+    @param model_ref Value for model ref.
+    @param compute_device Requested compute device preference.
+    @param cuda_device_id CUDA device index to prefer when GPU execution is enabled.
+    @param segments Segment collection processed by the operation.
+    @return Result produced by the operation.
+    """
     import torch
 
     token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN") or None
@@ -1062,6 +1270,10 @@ def compute_profile_embedding(
 
 
 def _normalize_embedding(vector: np.ndarray) -> np.ndarray:
+    """! @brief Normalize embedding.
+    @param vector Value for vector.
+    @return Result produced by the operation.
+    """
     norm = np.linalg.norm(vector)
     if norm == 0:
         return vector.astype(np.float32)
@@ -1075,6 +1287,13 @@ def _load_embedding_inference(
     target_device: str,
     cuda_device_id: int,
 ):
+    """! @brief Load embedding inference.
+    @param model_ref Value for model ref.
+    @param token Value for token.
+    @param target_device Value for target device.
+    @param cuda_device_id CUDA device index to prefer when GPU execution is enabled.
+    @return Result produced by the operation.
+    """
     with warnings.catch_warnings():
         warnings.filterwarnings(
             "ignore",
@@ -1135,6 +1354,11 @@ def _load_embedding_inference(
 
 
 def _resolve_pyannote_pipeline_ref(model_path: Path | None, pipeline_path: str | None = None) -> str | None:
+    """! @brief Resolve pyannote pipeline ref.
+    @param model_path Value for model path.
+    @param pipeline_path Value for pipeline path.
+    @return Result produced by the operation.
+    """
     explicit = (pipeline_path or "").strip()
     if explicit:
         return explicit
@@ -1169,6 +1393,15 @@ def _diarize_heuristic(
     max_chunk_s: float,
     details: str | None = None,
 ) -> DiarizationResult:
+    """! @brief Diarize heuristic.
+    @param audio_path Path to the audio file.
+    @param speech_regions Detected speech regions used as input.
+    @param min_speakers Optional minimum speaker count constraint.
+    @param max_speakers Optional maximum speaker count constraint.
+    @param max_chunk_s Maximum chunk duration in seconds.
+    @param details Value for details.
+    @return Result produced by the operation.
+    """
     audio, sample_rate = sf.read(str(audio_path), always_2d=False)
     if isinstance(audio, np.ndarray) and audio.ndim > 1:
         audio = audio.mean(axis=1)
@@ -1217,6 +1450,10 @@ def _diarize_heuristic(
 
 
 def _remap_speakers(segments: list[DiarizationSegment]) -> list[DiarizationSegment]:
+    """! @brief Remap speakers.
+    @param segments Segment collection processed by the operation.
+    @return List produced by the operation.
+    """
     unique_speakers = sorted({segment.speaker_id for segment in segments})
     mapping = {speaker: f"SPEAKER_{idx}" for idx, speaker in enumerate(unique_speakers)}
     for segment in segments:
@@ -1230,6 +1467,12 @@ def _build_chunks(
     max_chunk_s: float,
     total_duration_s: float,
 ) -> list[tuple[float, float]]:
+    """! @brief Build chunks.
+    @param speech_regions Detected speech regions used as input.
+    @param max_chunk_s Maximum chunk duration in seconds.
+    @param total_duration_s Value for total duration s.
+    @return List produced by the operation.
+    """
     if not speech_regions:
         return [(0.0, total_duration_s)]
 
@@ -1244,6 +1487,13 @@ def _build_chunks(
 
 
 def _segment_features(audio: np.ndarray, sample_rate: int, start_s: float, end_s: float) -> np.ndarray:
+    """! @brief Segment features.
+    @param audio Value for audio.
+    @param sample_rate Value for sample rate.
+    @param start_s Value for start s.
+    @param end_s Value for end s.
+    @return Result produced by the operation.
+    """
     start_idx = int(start_s * sample_rate)
     end_idx = int(end_s * sample_rate)
     segment = audio[max(0, start_idx) : max(1, end_idx)]
@@ -1266,6 +1516,11 @@ def _segment_features(audio: np.ndarray, sample_rate: int, start_s: float, end_s
 
 
 def _estimate_speaker_count(features: np.ndarray, max_speakers: int) -> int:
+    """! @brief Estimate speaker count.
+    @param features Value for features.
+    @param max_speakers Optional maximum speaker count constraint.
+    @return int result produced by the operation.
+    """
     if len(features) <= 1:
         return 1
 
@@ -1292,6 +1547,12 @@ def _estimate_speaker_count(features: np.ndarray, max_speakers: int) -> int:
 
 
 def _cluster(features: np.ndarray, k: int, iterations: int = 25) -> np.ndarray:
+    """! @brief Cluster operation.
+    @param features Value for features.
+    @param k Value for k.
+    @param iterations Value for iterations.
+    @return Result produced by the operation.
+    """
     if len(features) < k:
         return np.arange(len(features))
 
@@ -1320,6 +1581,11 @@ def _cluster(features: np.ndarray, k: int, iterations: int = 25) -> np.ndarray:
 
 
 def _silhouette(labels: np.ndarray, distances: np.ndarray) -> float:
+    """! @brief Silhouette operation.
+    @param labels Value for labels.
+    @param distances Value for distances.
+    @return float result produced by the operation.
+    """
     unique_labels = np.unique(labels)
     if len(unique_labels) <= 1:
         return -1.0
@@ -1342,6 +1608,11 @@ def _silhouette(labels: np.ndarray, distances: np.ndarray) -> float:
 
 
 def _merge_segments(segments: list[DiarizationSegment], max_gap_s: float = 0.6) -> list[DiarizationSegment]:
+    """! @brief Merge segments.
+    @param segments Segment collection processed by the operation.
+    @param max_gap_s Value for max gap s.
+    @return List produced by the operation.
+    """
     if not segments:
         return []
 
@@ -1365,6 +1636,11 @@ def merge_transcript_segments(
     segments: list[dict[str, object]],
     max_gap_s: float | None = None,
 ) -> list[dict[str, object]]:
+    """! @brief Merge transcript segments.
+    @param segments Segment collection processed by the operation.
+    @param max_gap_s Value for max gap s.
+    @return List produced by the operation.
+    """
     if not segments:
         return []
     merged: list[dict[str, object]] = [segments[0].copy()]

@@ -10,16 +10,32 @@ const state = {
   diarizationModels: [],
 };
 
+/**
+ * @brief Query the first matching DOM element.
+ * @param {*} selector CSS selector used to query the DOM.
+ */
 const qs = (selector) => document.querySelector(selector);
+/**
+ * @brief Query all matching DOM elements as an array.
+ * @param {*} selector CSS selector used to query the DOM.
+ */
 const qsa = (selector) => Array.from(document.querySelectorAll(selector));
 
+/**
+ * @brief Switch Tab.
+ * @param {*} tabId Identifier of the tab to activate.
+ */
 function switchTab(tabId) {
+  document.body.dataset.activeTab = tabId;
   qsa(".tab").forEach((button) => {
     button.classList.toggle("active", button.dataset.tab === tabId);
   });
   qsa(".panel").forEach((panel) => panel.classList.toggle("active", panel.id === tabId));
 }
 
+/**
+ * @brief Reset Job Ui.
+ */
 function resetJobUi() {
   if (state.eventSource) {
     state.eventSource.close();
@@ -45,6 +61,11 @@ function resetJobUi() {
   switchTab("new-job");
 }
 
+/**
+ * @brief Fetch JSON.
+ * @param {*} url Request URL.
+ * @param {*} options Fetch options for the request.
+ */
 async function fetchJSON(url, options = {}) {
   const response = await fetch(url, options);
   if (!response.ok) {
@@ -54,6 +75,9 @@ async function fetchJSON(url, options = {}) {
   return response.json();
 }
 
+/**
+ * @brief Load Startup Data.
+ */
 async function loadStartupData() {
   const [templates, models, profiles, downloads, formatterModel, diarizationModelPayload] = await Promise.all([
     fetchJSON("/api/templates"),
@@ -75,6 +99,10 @@ async function loadStartupData() {
   startModelDownloadPolling();
 }
 
+/**
+ * @brief Render Diarization Models.
+ * @param {*} payload Payload consumed by the renderer.
+ */
 function renderDiarizationModels(payload) {
   const select = qs("#local-diarization-model");
   if (!select) return;
@@ -88,6 +116,10 @@ function renderDiarizationModels(payload) {
   select.value = payload.selected_model_id || (payload.models || [])[0]?.model_id || "";
 }
 
+/**
+ * @brief Render Template Select.
+ * @param {*} templates Template records returned by the API.
+ */
 function renderTemplateSelect(templates) {
   const select = qs("#template-select");
   select.innerHTML = "";
@@ -99,6 +131,9 @@ function renderTemplateSelect(templates) {
   });
 }
 
+/**
+ * @brief Render Execution Model Labels.
+ */
 function renderExecutionModelLabels() {
   const formatterLocalSelect = qs("#local-formatter-model");
   if (!formatterLocalSelect) return;
@@ -111,6 +146,9 @@ function renderExecutionModelLabels() {
   formatterLocalSelect.appendChild(option);
 }
 
+/**
+ * @brief Reset Template Creator.
+ */
 function resetTemplateCreator() {
   qs("#new-template-id").value = "";
   qs("#new-template-name").value = "";
@@ -119,6 +157,10 @@ function resetTemplateCreator() {
   qs("#new-template-prompt-block").value = "";
 }
 
+/**
+ * @brief Toggle Template Creator.
+ * @param {*} show Whether the template creator should be visible.
+ */
 function toggleTemplateCreator(show) {
   const panel = qs("#template-creator");
   panel.classList.toggle("hidden", !show);
@@ -127,6 +169,11 @@ function toggleTemplateCreator(show) {
   }
 }
 
+/**
+ * @brief Set Execution Mode.
+ * @param {*} stage Pipeline stage identifier.
+ * @param {*} mode Execution mode for the stage.
+ */
 function setExecutionMode(stage, mode) {
   const hiddenInput = qs(`#${stage}-execution`);
   const card = qsa(".engine-card").find((item) => item.dataset.stage === stage);
@@ -142,6 +189,8 @@ function setExecutionMode(stage, mode) {
     field.classList.toggle("hidden", !isActive);
     const select = field.querySelector("select");
     if (select) {
+      // Disable the inactive selector as well as hiding it so only the chosen execution path
+      // contributes values when the form is submitted.
       select.disabled = !isActive;
     }
   });
@@ -149,6 +198,9 @@ function setExecutionMode(stage, mode) {
   card.dataset.mode = mode;
 }
 
+/**
+ * @brief Synchronize Cloud Execution Controls.
+ */
 function syncCloudExecutionControls() {
   ["diarization", "transcription", "formatter"].forEach((stage) => {
     const input = qs(`#${stage}-execution`);
@@ -162,17 +214,54 @@ function syncCloudExecutionControls() {
   qs("#api-key-panel").classList.toggle("hidden", !apiSelected);
 }
 
+/**
+ * @brief Render Templates.
+ * @param {*} templates Template records returned by the API.
+ */
 function renderTemplates(templates) {
   const container = qs("#templates");
   container.innerHTML = "";
+
+  if (!templates.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No templates available.";
+    container.appendChild(empty);
+    return;
+  }
+
   templates.forEach((template) => {
-    const card = document.createElement("div");
+    const card = document.createElement("article");
     card.className = "template-card";
-    card.textContent = `${template.template_id}: ${template.name} (${template.version})`;
+
+    const eyebrow = document.createElement("p");
+    eyebrow.className = "card-eyebrow";
+    eyebrow.textContent = "Template";
+
+    const title = document.createElement("div");
+    title.className = "card-title";
+
+    const name = document.createElement("strong");
+    name.textContent = template.name;
+
+    const id = document.createElement("small");
+    id.textContent = template.template_id;
+
+    title.append(name, id);
+
+    const meta = document.createElement("div");
+    meta.className = "card-meta";
+    meta.textContent = `Version ${template.version}${template.description ? ` | ${template.description}` : ""}`;
+
+    card.append(eyebrow, title, meta);
     container.appendChild(card);
   });
 }
 
+/**
+ * @brief Render Models.
+ * @param {*} models Model records returned by the API.
+ */
 function renderModels(models) {
   const container = qs("#models");
   container.innerHTML = "";
@@ -186,14 +275,26 @@ function renderModels(models) {
       error: null,
     };
 
-    const card = document.createElement("div");
+    const card = document.createElement("article");
     card.className = "model-card";
     card.dataset.modelId = model.model_id;
+    card.dataset.installed = String(Boolean(model.installed));
+    card.dataset.downloadStatus = downloadState.status || "idle";
+
+    const eyebrow = document.createElement("p");
+    eyebrow.className = "card-eyebrow";
+    eyebrow.textContent = model.model_id === "formatter" ? "Formatter Runtime" : "Model Asset";
 
     const title = document.createElement("div");
-    title.innerHTML = `<strong>${model.name}</strong> <small>[${model.model_id}]</small>`;
+    title.className = "card-title";
+    const strong = document.createElement("strong");
+    strong.textContent = model.name;
+    const small = document.createElement("small");
+    small.textContent = `[${model.model_id}]`;
+    title.append(strong, small);
 
     const info = document.createElement("div");
+    info.className = "card-meta";
     info.textContent = `Installed: ${model.installed ? "yes" : "no"} | Size: ${model.size_mb} MB | Source: ${model.source}`;
 
     const formatterModelWrap = document.createElement("div");
@@ -272,31 +373,60 @@ function renderModels(models) {
     progressBar.style.width = `${Math.max(0, Math.min(100, Number(downloadState.percent || 0))).toFixed(1)}%`;
     progressWrap.appendChild(progressBar);
 
-    card.append(title, info, formatterModelWrap, actionRow, downloadStatus, progressWrap);
+    card.append(eyebrow, title, info, formatterModelWrap, actionRow, downloadStatus, progressWrap);
     container.appendChild(card);
   });
 }
 
+/**
+ * @brief Render Profiles.
+ * @param {*} profiles Voice profile records returned by the API.
+ */
 function renderProfiles(profiles) {
   const container = qs("#profiles");
   container.innerHTML = "";
   if (!profiles.length) {
-    container.textContent = "No voice profiles saved.";
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No voice profiles saved.";
+    container.appendChild(empty);
     return;
   }
   profiles.forEach((profile) => {
-    const card = document.createElement("div");
+    const card = document.createElement("article");
     card.className = "profile-card";
     const modelSummary = Array.from(
       new Set(
         (profile.samples || []).flatMap((sample) => (sample.embeddings || []).map((item) => item.diarization_model_id)),
       ),
     );
-    card.textContent = `${profile.name} (${profile.sample_count} samples${modelSummary.length ? ` | ${modelSummary.join(", ")}` : ""})`;
+    const eyebrow = document.createElement("p");
+    eyebrow.className = "card-eyebrow";
+    eyebrow.textContent = "Voice Profile";
+
+    const title = document.createElement("div");
+    title.className = "card-title";
+
+    const name = document.createElement("strong");
+    name.textContent = profile.name;
+
+    const count = document.createElement("small");
+    count.textContent = `${profile.sample_count} sample${profile.sample_count === 1 ? "" : "s"}`;
+
+    title.append(name, count);
+
+    const meta = document.createElement("div");
+    meta.className = "card-meta";
+    meta.textContent = modelSummary.length ? `Embeddings: ${modelSummary.join(", ")}` : "No embeddings stored yet.";
+
+    card.append(eyebrow, title, meta);
     container.appendChild(card);
   });
 }
 
+/**
+ * @brief Refresh Profiles For Selected Model.
+ */
 async function refreshProfilesForSelectedModel() {
   const status = qs("#refresh-profiles-status");
   const payload = {
@@ -317,6 +447,10 @@ async function refreshProfilesForSelectedModel() {
   }
 }
 
+/**
+ * @brief Poll Profile Refresh Task.
+ * @param {*} taskId Identifier of the background task.
+ */
 async function pollProfileRefreshTask(taskId) {
   clearInterval(state.profileRefreshPoller);
   const status = qs("#refresh-profiles-status");
@@ -340,6 +474,9 @@ async function pollProfileRefreshTask(taskId) {
   state.profileRefreshPoller = setInterval(tick, 1500);
 }
 
+/**
+ * @brief Refresh Settings.
+ */
 async function refreshSettings() {
   const [templates, models, profiles, downloads, formatterModel, diarizationModelPayload] = await Promise.all([
     fetchJSON("/api/templates"),
@@ -360,6 +497,10 @@ async function refreshSettings() {
   renderProfiles(profiles);
 }
 
+/**
+ * @brief Format Bytes.
+ * @param {*} value Numeric value to format.
+ */
 function formatBytes(value) {
   if (value === null || value === undefined) return "? B";
   const num = Number(value);
@@ -374,6 +515,10 @@ function formatBytes(value) {
   return `${size.toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
 }
 
+/**
+ * @brief Build Download Status Text.
+ * @param {*} downloadState Download state snapshot for a model.
+ */
 function buildDownloadStatusText(downloadState) {
   const status = downloadState.status || "idle";
   if (status === "running") {
@@ -391,11 +536,17 @@ function buildDownloadStatusText(downloadState) {
   return "Not downloaded";
 }
 
+/**
+ * @brief Refresh Model Downloads.
+ */
 async function refreshModelDownloads() {
   const downloads = await fetchJSON("/api/models/downloads");
   state.modelDownloads = Object.fromEntries(downloads.map((item) => [item.model_id, item]));
 }
 
+/**
+ * @brief Start Model Download Polling.
+ */
 function startModelDownloadPolling() {
   if (state.modelDownloadPoller) {
     clearInterval(state.modelDownloadPoller);
@@ -421,11 +572,20 @@ function startModelDownloadPolling() {
   }, 1000);
 }
 
+/**
+ * @brief Set Progress Bars.
+ * @param {*} overall Overall completion percentage.
+ * @param {*} stagePercent Current stage completion percentage.
+ */
 function setProgressBars(overall, stagePercent) {
   qs("#overall-bar").style.width = `${overall}%`;
   qs("#stage-bar").style.width = `${stagePercent}%`;
 }
 
+/**
+ * @brief Update Progress View.
+ * @param {*} jobState Job state payload from the API.
+ */
 function updateProgressView(jobState) {
   qs("#overall-value").textContent = `${jobState.overall_percent.toFixed(1)}%`;
   qs("#stage-value").textContent = jobState.current_stage || "-";
@@ -436,6 +596,10 @@ function updateProgressView(jobState) {
   qs("#speaker-naming-section").classList.toggle("hidden", jobState.status !== "waiting_speaker_input");
 }
 
+/**
+ * @brief Build Form Fingerprint.
+ * @param {*} jobState Job state payload from the API.
+ */
 function speakerFormFingerprint(jobState) {
   const speakerInfo = jobState.speaker_info;
   if (!speakerInfo) {
@@ -454,6 +618,10 @@ function speakerFormFingerprint(jobState) {
   });
 }
 
+/**
+ * @brief Render Speaker Form.
+ * @param {*} jobState Job state payload from the API.
+ */
 function renderSpeakerForm(jobState) {
   const speakerInfo = jobState.speaker_info;
   if (!speakerInfo) {
@@ -506,8 +674,7 @@ function renderSpeakerForm(jobState) {
     input.className = "speaker-name";
 
     const toggleWrap = document.createElement("label");
-    toggleWrap.style.display = "inline-flex";
-    toggleWrap.style.gap = "0.4rem";
+    toggleWrap.className = "speaker-toggle";
     const toggle = document.createElement("input");
     toggle.type = "checkbox";
     toggle.dataset.speakerId = speaker.speaker_id;
@@ -542,6 +709,9 @@ function renderSpeakerForm(jobState) {
   });
 }
 
+/**
+ * @brief Submit Speaker Mapping.
+ */
 async function submitSpeakerMapping() {
   if (!state.currentJobId) return;
   const mappings = qsa(".speaker-name").map((input) => {
@@ -581,6 +751,10 @@ async function submitSpeakerMapping() {
   switchTab("progress");
 }
 
+/**
+ * @brief Load Result.
+ * @param {*} jobId Identifier of the active job.
+ */
 async function loadResult(jobId) {
   qs("#download-link").href = `/api/jobs/${jobId}/download/mom`;
   try {
@@ -596,6 +770,10 @@ async function loadResult(jobId) {
   }
 }
 
+/**
+ * @brief Open Job Event Stream.
+ * @param {*} jobId Identifier of the active job.
+ */
 function openJobEventStream(jobId) {
   if (state.eventSource) {
     state.eventSource.close();
@@ -642,6 +820,10 @@ function openJobEventStream(jobId) {
   };
 }
 
+/**
+ * @brief Start Job.
+ * @param {*} event Browser event object.
+ */
 async function startJob(event) {
   event.preventDefault();
   qs("#start-error").textContent = "";
@@ -689,12 +871,18 @@ async function startJob(event) {
   }
 }
 
+/**
+ * @brief Cancel Job.
+ */
 async function cancelJob() {
   if (!state.currentJobId) return;
   await fetchJSON(`/api/jobs/${state.currentJobId}/cancel`, { method: "POST" });
   resetJobUi();
 }
 
+/**
+ * @brief Save Template Inline.
+ */
 async function saveTemplateInline() {
   const templateId = qs("#new-template-id").value.trim();
   const name = qs("#new-template-name").value.trim();
@@ -727,6 +915,9 @@ async function saveTemplateInline() {
   }
 }
 
+/**
+ * @brief Bind Events.
+ */
 function bindEvents() {
   qsa(".tab").forEach((button) => {
     button.addEventListener("click", () => switchTab(button.dataset.tab));
@@ -746,6 +937,9 @@ function bindEvents() {
   });
 }
 
+/**
+ * @brief Initialize operation.
+ */
 async function init() {
   bindEvents();
   syncCloudExecutionControls();

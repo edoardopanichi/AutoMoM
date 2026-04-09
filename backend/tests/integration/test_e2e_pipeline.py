@@ -17,6 +17,11 @@ from backend.pipeline.template_manager import TemplateManager
 
 
 def _write_tone(path: Path, frequency: float = 220.0, duration_s: float = 12.0) -> None:
+    """! @brief Write tone.
+    @param path Filesystem path used by the operation.
+    @param frequency Value for frequency.
+    @param duration_s Value for duration s.
+    """
     sample_rate = 16000
     t = np.linspace(0, duration_s, int(sample_rate * duration_s), endpoint=False)
     audio = 0.2 * np.sin(2 * np.pi * frequency * t).astype(np.float32)
@@ -24,6 +29,11 @@ def _write_tone(path: Path, frequency: float = 220.0, duration_s: float = 12.0) 
 
 
 def test_end_to_end_job_with_golden_outputs(isolated_settings, monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test end to end job with golden outputs.
+    @param isolated_settings Value for isolated settings.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Value for tmp path.
+    """
     TemplateManager()
 
     source_audio = tmp_path / "meeting.wav"
@@ -40,11 +50,27 @@ def test_end_to_end_job_with_golden_outputs(isolated_settings, monkeypatch, tmp_
     job_id = runtime.state.job_id
 
     def fake_normalize(input_path: Path, output_path: Path, ffmpeg_bin: str, job_id=None):
+        """! @brief Fake normalize.
+        @param input_path Path to the input file.
+        @param output_path Path to the output file.
+        @param ffmpeg_bin Value for ffmpeg bin.
+        @param job_id Identifier of the job being processed.
+        @return Result produced by the operation.
+        """
         data, sr = sf.read(str(input_path), always_2d=False)
         sf.write(output_path, data, sr)
         return {"path": str(output_path), "duration_s": len(data) / sr, "sample_rate": sr, "channels": 1}
 
     def fake_extract_segment(input_path: Path, output_path: Path, start_s: float, end_s: float, ffmpeg_bin: str, job_id=None):
+        """! @brief Fake extract segment.
+        @param input_path Path to the input file.
+        @param output_path Path to the output file.
+        @param start_s Value for start s.
+        @param end_s Value for end s.
+        @param ffmpeg_bin Value for ffmpeg bin.
+        @param job_id Identifier of the job being processed.
+        @return Result produced by the operation.
+        """
         sample_rate = 16000
         duration = max(0.2, end_s - start_s)
         t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
@@ -52,6 +78,12 @@ def test_end_to_end_job_with_golden_outputs(isolated_settings, monkeypatch, tmp_
         sf.write(output_path, audio, sample_rate)
 
     def fake_diarize(audio_path: Path, speech_regions: Any, **kwargs):
+        """! @brief Fake diarize.
+        @param audio_path Path to the audio file.
+        @param speech_regions Detected speech regions used as input.
+        @param kwargs Value for kwargs.
+        @return Result produced by the operation.
+        """
         return DiarizationResult(
             segments=[
                 DiarizationSegment("SPEAKER_0", 0.0, 5.0),
@@ -61,6 +93,12 @@ def test_end_to_end_job_with_golden_outputs(isolated_settings, monkeypatch, tmp_
         )
 
     def fake_transcribe(transcriber, segment_jobs, progress_callback=None):
+        """! @brief Fake transcribe.
+        @param transcriber Value for transcriber.
+        @param segment_jobs Value for segment jobs.
+        @param progress_callback Optional callback invoked with progress updates.
+        @return Result produced by the operation.
+        """
         if progress_callback:
             progress_callback(1, 2)
             progress_callback(2, 2)
@@ -174,6 +212,11 @@ def test_end_to_end_job_with_golden_outputs(isolated_settings, monkeypatch, tmp_
 
 
 def test_end_to_end_passthrough_uses_raw_formatter_output(isolated_settings, monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test end to end passthrough uses raw formatter output.
+    @param isolated_settings Value for isolated settings.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Value for tmp path.
+    """
     TemplateManager()
 
     source_audio = tmp_path / "meeting.wav"
@@ -190,11 +233,27 @@ def test_end_to_end_passthrough_uses_raw_formatter_output(isolated_settings, mon
     job_id = runtime.state.job_id
 
     def fake_normalize(input_path: Path, output_path: Path, ffmpeg_bin: str, job_id=None):
+        """! @brief Fake normalize.
+        @param input_path Path to the input file.
+        @param output_path Path to the output file.
+        @param ffmpeg_bin Value for ffmpeg bin.
+        @param job_id Identifier of the job being processed.
+        @return Result produced by the operation.
+        """
         data, sr = sf.read(str(input_path), always_2d=False)
         sf.write(output_path, data, sr)
         return {"path": str(output_path), "duration_s": len(data) / sr, "sample_rate": sr, "channels": 1}
 
     def fake_extract_segment(input_path: Path, output_path: Path, start_s: float, end_s: float, ffmpeg_bin: str, job_id=None):
+        """! @brief Fake extract segment.
+        @param input_path Path to the input file.
+        @param output_path Path to the output file.
+        @param start_s Value for start s.
+        @param end_s Value for end s.
+        @param ffmpeg_bin Value for ffmpeg bin.
+        @param job_id Identifier of the job being processed.
+        @return Result produced by the operation.
+        """
         sample_rate = 16000
         duration = max(0.2, end_s - start_s)
         t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
@@ -202,6 +261,12 @@ def test_end_to_end_passthrough_uses_raw_formatter_output(isolated_settings, mon
         sf.write(output_path, audio, sample_rate)
 
     def fake_diarize(audio_path: Path, speech_regions: Any, **kwargs):
+        """! @brief Fake diarize.
+        @param audio_path Path to the audio file.
+        @param speech_regions Detected speech regions used as input.
+        @param kwargs Value for kwargs.
+        @return Result produced by the operation.
+        """
         return DiarizationResult(
             segments=[
                 DiarizationSegment("SPEAKER_0", 0.0, 3.5),
@@ -211,6 +276,12 @@ def test_end_to_end_passthrough_uses_raw_formatter_output(isolated_settings, mon
         )
 
     def fake_transcribe(transcriber, segment_jobs, progress_callback=None):
+        """! @brief Fake transcribe.
+        @param transcriber Value for transcriber.
+        @param segment_jobs Value for segment jobs.
+        @param progress_callback Optional callback invoked with progress updates.
+        @return Result produced by the operation.
+        """
         if progress_callback:
             progress_callback(1, 2)
             progress_callback(2, 2)
@@ -301,6 +372,11 @@ def test_end_to_end_passthrough_uses_raw_formatter_output(isolated_settings, mon
 
 
 def test_end_to_end_stderr_prefixed_output_passthrough(isolated_settings, monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test end to end stderr prefixed output passthrough.
+    @param isolated_settings Value for isolated settings.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Value for tmp path.
+    """
     TemplateManager()
 
     source_audio = tmp_path / "meeting.wav"
@@ -317,11 +393,27 @@ def test_end_to_end_stderr_prefixed_output_passthrough(isolated_settings, monkey
     job_id = runtime.state.job_id
 
     def fake_normalize(input_path: Path, output_path: Path, ffmpeg_bin: str, job_id=None):
+        """! @brief Fake normalize.
+        @param input_path Path to the input file.
+        @param output_path Path to the output file.
+        @param ffmpeg_bin Value for ffmpeg bin.
+        @param job_id Identifier of the job being processed.
+        @return Result produced by the operation.
+        """
         data, sr = sf.read(str(input_path), always_2d=False)
         sf.write(output_path, data, sr)
         return {"path": str(output_path), "duration_s": len(data) / sr, "sample_rate": sr, "channels": 1}
 
     def fake_extract_segment(input_path: Path, output_path: Path, start_s: float, end_s: float, ffmpeg_bin: str, job_id=None):
+        """! @brief Fake extract segment.
+        @param input_path Path to the input file.
+        @param output_path Path to the output file.
+        @param start_s Value for start s.
+        @param end_s Value for end s.
+        @param ffmpeg_bin Value for ffmpeg bin.
+        @param job_id Identifier of the job being processed.
+        @return Result produced by the operation.
+        """
         sample_rate = 16000
         duration = max(0.2, end_s - start_s)
         t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
@@ -329,6 +421,12 @@ def test_end_to_end_stderr_prefixed_output_passthrough(isolated_settings, monkey
         sf.write(output_path, audio, sample_rate)
 
     def fake_diarize(audio_path: Path, speech_regions: Any, **kwargs):
+        """! @brief Fake diarize.
+        @param audio_path Path to the audio file.
+        @param speech_regions Detected speech regions used as input.
+        @param kwargs Value for kwargs.
+        @return Result produced by the operation.
+        """
         return DiarizationResult(
             segments=[
                 DiarizationSegment("SPEAKER_0", 0.0, 3.5),
@@ -338,6 +436,12 @@ def test_end_to_end_stderr_prefixed_output_passthrough(isolated_settings, monkey
         )
 
     def fake_transcribe(transcriber, segment_jobs, progress_callback=None):
+        """! @brief Fake transcribe.
+        @param transcriber Value for transcriber.
+        @param segment_jobs Value for segment jobs.
+        @param progress_callback Optional callback invoked with progress updates.
+        @return Result produced by the operation.
+        """
         if progress_callback:
             progress_callback(1, 2)
             progress_callback(2, 2)
@@ -431,6 +535,11 @@ def test_end_to_end_stderr_prefixed_output_passthrough(isolated_settings, monkey
 def test_end_to_end_nonzero_formatter_exit_with_stdout_still_passthrough(
     isolated_settings, monkeypatch, tmp_path: Path
 ) -> None:
+    """! @brief Test end to end nonzero formatter exit with stdout still passthrough.
+    @param isolated_settings Value for isolated settings.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Value for tmp path.
+    """
     TemplateManager()
 
     source_audio = tmp_path / "meeting.wav"
@@ -447,11 +556,27 @@ def test_end_to_end_nonzero_formatter_exit_with_stdout_still_passthrough(
     job_id = runtime.state.job_id
 
     def fake_normalize(input_path: Path, output_path: Path, ffmpeg_bin: str, job_id=None):
+        """! @brief Fake normalize.
+        @param input_path Path to the input file.
+        @param output_path Path to the output file.
+        @param ffmpeg_bin Value for ffmpeg bin.
+        @param job_id Identifier of the job being processed.
+        @return Result produced by the operation.
+        """
         data, sr = sf.read(str(input_path), always_2d=False)
         sf.write(output_path, data, sr)
         return {"path": str(output_path), "duration_s": len(data) / sr, "sample_rate": sr, "channels": 1}
 
     def fake_extract_segment(input_path: Path, output_path: Path, start_s: float, end_s: float, ffmpeg_bin: str, job_id=None):
+        """! @brief Fake extract segment.
+        @param input_path Path to the input file.
+        @param output_path Path to the output file.
+        @param start_s Value for start s.
+        @param end_s Value for end s.
+        @param ffmpeg_bin Value for ffmpeg bin.
+        @param job_id Identifier of the job being processed.
+        @return Result produced by the operation.
+        """
         sample_rate = 16000
         duration = max(0.2, end_s - start_s)
         t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
@@ -459,6 +584,12 @@ def test_end_to_end_nonzero_formatter_exit_with_stdout_still_passthrough(
         sf.write(output_path, audio, sample_rate)
 
     def fake_diarize(audio_path: Path, speech_regions: Any, **kwargs):
+        """! @brief Fake diarize.
+        @param audio_path Path to the audio file.
+        @param speech_regions Detected speech regions used as input.
+        @param kwargs Value for kwargs.
+        @return Result produced by the operation.
+        """
         return DiarizationResult(
             segments=[
                 DiarizationSegment("SPEAKER_0", 0.0, 3.5),
@@ -468,6 +599,12 @@ def test_end_to_end_nonzero_formatter_exit_with_stdout_still_passthrough(
         )
 
     def fake_transcribe(transcriber, segment_jobs, progress_callback=None):
+        """! @brief Fake transcribe.
+        @param transcriber Value for transcriber.
+        @param segment_jobs Value for segment jobs.
+        @param progress_callback Optional callback invoked with progress updates.
+        @return Result produced by the operation.
+        """
         if progress_callback:
             progress_callback(1, 2)
             progress_callback(2, 2)

@@ -10,6 +10,10 @@ from backend.app.job_store import JOB_STORE
 
 @pytest.fixture
 def isolated_settings(tmp_path: Path):
+    """! @brief Isolated settings.
+    @param tmp_path Value for tmp path.
+    @return Result produced by the operation.
+    """
     original_values = {
         "data_dir": SETTINGS.data_dir,
         "jobs_dir": SETTINGS.jobs_dir,

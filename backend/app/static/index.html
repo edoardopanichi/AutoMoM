@@ -3,71 +3,120 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
     <title>AutoMoM</title>
     <link rel="stylesheet" href="/static/css/styles.css" />
   </head>
   <body>
-    <div class="bg-shape bg-shape-a"></div>
-    <div class="bg-shape bg-shape-b"></div>
+    <div class="page-grain"></div>
+    <div class="bg-orb bg-orb-a"></div>
+    <div class="bg-orb bg-orb-b"></div>
+    <div class="bg-orb bg-orb-c"></div>
 
     <main class="layout">
       <header class="hero">
-        <h1>AutoMoM</h1>
-        <p>Local Automatic Minutes of Meeting</p>
+        <div class="hero-copy">
+          <p class="eyebrow">Offline Meeting Publishing Desk</p>
+          <h1>AutoMoM</h1>
+          <p class="hero-lead">
+            Turn raw meeting audio into structured minutes, keep the pipeline local by default, and only switch
+            individual stages to OpenAI when that tradeoff makes sense.
+          </p>
+        </div>
+        <div class="hero-aside">
+          <article class="hero-stat">
+            <span>Pipeline</span>
+            <strong>9 stages</strong>
+          </article>
+          <article class="hero-stat">
+            <span>Output</span>
+            <strong>Markdown minutes</strong>
+          </article>
+          <article class="hero-stat">
+            <span>Mode</span>
+            <strong>Local-first</strong>
+          </article>
+        </div>
       </header>
 
-      <nav class="tabs">
-        <button class="tab active" data-tab="new-job">New Job</button>
-        <button class="tab" data-tab="progress">Progress</button>
-        <button class="tab" data-tab="result">Result</button>
-        <button class="tab" data-tab="settings">Settings</button>
-      </nav>
+      <div class="nav-shell">
+        <nav class="tabs" aria-label="Primary">
+          <button class="tab active" data-tab="new-job">New Job</button>
+          <button class="tab" data-tab="progress">Progress</button>
+          <button class="tab" data-tab="result">Result</button>
+          <button class="tab" data-tab="settings">Settings</button>
+        </nav>
+        <p class="nav-note">Capture, inspect, and export from one browser tab without leaving the local app.</p>
+      </div>
 
       <section id="new-job" class="panel active">
-        <h2>New Job</h2>
-        <form id="job-form" class="stack">
-          <label>
-            Meeting audio (WAV/MP3/M4A/AAC)
-            <input type="file" id="audio-file" accept=".wav,.mp3,.m4a,.aac" required />
-          </label>
-          <label>
-            Template
-            <div class="template-inline-row">
-              <select id="template-select"></select>
-              <button type="button" id="open-template-creator" class="small-btn">New Template</button>
-            </div>
-          </label>
-          <div id="template-creator" class="template-creator hidden">
-            <label>
-              Template ID
-              <input type="text" id="new-template-id" placeholder="e.g. project_sync" />
-            </label>
-            <label>
-              Name
-              <input type="text" id="new-template-name" placeholder="Template name" />
-            </label>
-            <label>
-              Version
-              <input type="text" id="new-template-version" value="1.0.0" />
-            </label>
-            <label>
-              Description
-              <input type="text" id="new-template-description" placeholder="Optional short description" />
-            </label>
-            <label>
-              Prompt Block
-              <textarea id="new-template-prompt-block" rows="4" placeholder="Instructions sent to the formatter model"></textarea>
-            </label>
-            <div class="template-creator-actions">
-              <button type="button" id="save-template-inline" class="small-btn">Save Template</button>
-              <button type="button" id="cancel-template-inline" class="small-btn danger-btn">Cancel</button>
-            </div>
+        <div class="panel-kicker">Intake Desk</div>
+        <div class="panel-heading">
+          <div>
+            <h2>Queue a meeting run</h2>
+            <p>Select the source audio, pick the minutes template, and decide which stages should stay local.</p>
           </div>
+          <div class="panel-badge">Default path: local compute</div>
+        </div>
+
+        <form id="job-form" class="stack job-form-grid">
+          <div class="field-cluster">
+            <label>
+              Meeting audio (WAV/MP3/M4A/AAC)
+              <input type="file" id="audio-file" accept=".wav,.mp3,.m4a,.aac" required />
+            </label>
+            <label>
+              Template
+              <div class="template-inline-row">
+                <select id="template-select"></select>
+                <button type="button" id="open-template-creator" class="small-btn">New Template</button>
+              </div>
+            </label>
+            <div id="template-creator" class="template-creator hidden">
+              <label>
+                Template ID
+                <input type="text" id="new-template-id" placeholder="e.g. project_sync" />
+              </label>
+              <label>
+                Name
+                <input type="text" id="new-template-name" placeholder="Template name" />
+              </label>
+              <label>
+                Version
+                <input type="text" id="new-template-version" value="1.0.0" />
+              </label>
+              <label>
+                Description
+                <input type="text" id="new-template-description" placeholder="Optional short description" />
+              </label>
+              <label>
+                Prompt Block
+                <textarea
+                  id="new-template-prompt-block"
+                  rows="4"
+                  placeholder="Instructions sent to the formatter model"
+                ></textarea>
+              </label>
+              <div class="template-creator-actions">
+                <button type="button" id="save-template-inline" class="small-btn">Save Template</button>
+                <button type="button" id="cancel-template-inline" class="small-btn danger-btn">Cancel</button>
+              </div>
+            </div>
+            <label>
+              Meeting title
+              <input type="text" id="meeting-title" placeholder="Optional" />
+            </label>
+          </div>
+
           <section class="cloud-panel">
             <div class="cloud-panel-header">
-              <h3>Processing Engine</h3>
+              <div>
+                <p class="section-label">Engine Routing</p>
+                <h3>Stage-by-stage execution</h3>
+              </div>
               <p>Each stage runs locally by default. Switch a stage to OpenAI only when you want the cloud path.</p>
             </div>
+
             <div class="engine-grid">
               <article class="engine-card" data-stage="diarization">
                 <div class="engine-card-head">
@@ -95,7 +144,9 @@
                 </label>
                 <div class="engine-maintenance">
                   <button type="button" id="refresh-profiles-btn" class="small-btn">Refresh Saved Profiles</button>
-                  <p id="refresh-profiles-status" class="cloud-note">Creates missing profile representations for the currently selected diarization engine/model.</p>
+                  <p id="refresh-profiles-status" class="cloud-note">
+                    Creates missing profile representations for the currently selected diarization engine/model.
+                  </p>
                 </div>
               </article>
 
@@ -154,6 +205,7 @@
                 </label>
               </article>
             </div>
+
             <div id="api-key-panel" class="api-key-panel hidden">
               <label>
                 OpenAI API key
@@ -167,39 +219,61 @@
               </label>
               <p class="cloud-note">Required only when at least one stage is set to OpenAI.</p>
             </div>
+
             <p class="cloud-note">
-              Local is the default path. The model selectors are separated by stage so you can add more local options later without changing this layout.
+              Local is the default path. The model selectors are separated by stage so you can add more local options
+              later without changing this layout.
             </p>
           </section>
-          <label>
-            Meeting title
-            <input type="text" id="meeting-title" placeholder="Optional" />
-          </label>
-          <button type="submit">Start Job</button>
+
+          <div class="form-submit-row">
+            <button type="submit">Start Job</button>
+            <p class="submit-note">A new job starts streaming status updates into the Progress panel immediately.</p>
+          </div>
         </form>
+
         <div id="start-error" class="alert"></div>
       </section>
 
       <section id="progress" class="panel">
-        <div class="panel-header">
-          <h2>Progress</h2>
+        <div class="panel-kicker">Operations</div>
+        <div class="panel-header panel-header-rich">
+          <div>
+            <h2>Live pipeline status</h2>
+            <p>Track progress, inspect logs, and resolve speaker naming before the formatter finalizes the minutes.</p>
+          </div>
           <button id="cancel-job" class="danger-btn">Cancel Job</button>
         </div>
+
         <div class="kpi-grid">
           <div class="kpi"><span>Overall</span><strong id="overall-value">0%</strong></div>
           <div class="kpi"><span>Stage</span><strong id="stage-value">-</strong></div>
           <div class="kpi"><span>Stage %</span><strong id="stage-percent">0%</strong></div>
           <div class="kpi"><span>Segments</span><strong id="segment-progress">-</strong></div>
         </div>
-        <div class="progress-wrap">
-          <div id="overall-bar" class="progress-bar"></div>
+
+        <div class="meter-block">
+          <div class="meter-label">
+            <span>Overall completion</span>
+          </div>
+          <div class="progress-wrap">
+            <div id="overall-bar" class="progress-bar"></div>
+          </div>
         </div>
-        <div class="progress-wrap">
-          <div id="stage-bar" class="progress-bar stage"></div>
+
+        <div class="meter-block">
+          <div class="meter-label">
+            <span>Current stage</span>
+          </div>
+          <div class="progress-wrap">
+            <div id="stage-bar" class="progress-bar stage"></div>
+          </div>
         </div>
+
         <section id="speaker-naming-section" class="speaker-naming-section hidden">
           <div class="speaker-naming-head">
             <div>
+              <p class="section-label">Blocking Review</p>
               <h3>Speaker Naming</h3>
               <p>Review the proposed clips, confirm names, and optionally save representative voice profiles.</p>
             </div>
@@ -208,23 +282,56 @@
           <form id="speaker-form" class="stack"></form>
           <button id="submit-speakers">Submit Speaker Mapping</button>
         </section>
+
         <pre id="logs" class="logs"></pre>
       </section>
 
       <section id="result" class="panel">
-        <h2>Result</h2>
-        <a id="download-link" href="#">Download Markdown</a>
+        <div class="panel-kicker">Export</div>
+        <div class="panel-heading">
+          <div>
+            <h2>Minutes output</h2>
+            <p>Preview the generated markdown and download the final meeting notes when the run completes.</p>
+          </div>
+          <a id="download-link" class="download-link" href="#">Download Markdown</a>
+        </div>
         <pre id="mom-preview" class="preview"></pre>
       </section>
 
       <section id="settings" class="panel">
-        <h2>Settings</h2>
-        <h3>Model Manager</h3>
-        <div id="models"></div>
-        <h3>Templates</h3>
-        <div id="templates"></div>
-        <h3>Voice Profiles</h3>
-        <div id="profiles"></div>
+        <div class="panel-kicker">Library</div>
+        <div class="panel-heading">
+          <div>
+            <h2>Runtime inventory</h2>
+            <p>Manage local models, inspect templates, and keep shared voice profiles clean.</p>
+          </div>
+        </div>
+
+        <div class="settings-stack">
+          <section class="settings-group">
+            <div class="settings-group-head">
+              <p class="section-label">Models</p>
+              <h3>Model Manager</h3>
+            </div>
+            <div id="models" class="settings-collection"></div>
+          </section>
+
+          <section class="settings-group">
+            <div class="settings-group-head">
+              <p class="section-label">Templates</p>
+              <h3>Minutes templates</h3>
+            </div>
+            <div id="templates" class="settings-collection"></div>
+          </section>
+
+          <section class="settings-group">
+            <div class="settings-group-head">
+              <p class="section-label">Profiles</p>
+              <h3>Voice profiles</h3>
+            </div>
+            <div id="profiles" class="settings-collection"></div>
+          </section>
+        </div>
       </section>
     </main>
 

@@ -17,10 +17,16 @@ from backend.app.schemas import ModelStatus
 
 
 def _consent_path() -> Path:
+    """! @brief Consent path.
+    @return Path result produced by the operation.
+    """
     return SETTINGS.models_dir / "consent.json"
 
 
 def _formatter_model_path() -> Path:
+    """! @brief Formatter model path.
+    @return Path result produced by the operation.
+    """
     return SETTINGS.models_dir / "formatter" / "selected_model.txt"
 
 
@@ -44,11 +50,16 @@ class DownloadProgress:
     updated_at: str | None = None
 
     def to_dict(self) -> dict[str, object]:
+        """! @brief Serialize the current object to a dictionary.
+        @return Dictionary produced by the operation.
+        """
         return asdict(self)
 
 
 class ModelManager:
     def __init__(self) -> None:
+        """! @brief Initialize the ModelManager instance.
+        """
         self._specs = {spec.model_id: spec for spec in required_models()}
         self._consent = self._load_consent()
         self._download_progress: dict[str, DownloadProgress] = {}
@@ -56,6 +67,9 @@ class ModelManager:
         self._download_lock = RLock()
 
     def _load_consent(self) -> dict[str, bool]:
+        """! @brief Load consent.
+        @return Dictionary produced by the operation.
+        """
         consent_path = _consent_path()
         if consent_path.exists():
             try:
@@ -65,11 +79,16 @@ class ModelManager:
         return {}
 
     def _persist_consent(self) -> None:
+        """! @brief Persist consent.
+        """
         consent_path = _consent_path()
         consent_path.parent.mkdir(parents=True, exist_ok=True)
         consent_path.write_text(json.dumps(self._consent, indent=2), encoding="utf-8")
 
     def get_formatter_model(self) -> str:
+        """! @brief Get formatter model.
+        @return str result produced by the operation.
+        """
         formatter_model_path = _formatter_model_path()
         if formatter_model_path.exists():
             value = formatter_model_path.read_text(encoding="utf-8").strip()
@@ -78,6 +97,10 @@ class ModelManager:
         return SETTINGS.formatter_ollama_model
 
     def set_formatter_model(self, model_tag: str) -> str:
+        """! @brief Set formatter model.
+        @param model_tag Value for model tag.
+        @return str result produced by the operation.
+        """
         normalized = model_tag.strip()
         if not normalized:
             raise ValueError("Formatter model tag cannot be empty")
@@ -88,11 +111,18 @@ class ModelManager:
         return normalized
 
     def set_consent(self, model_id: str, approved: bool) -> None:
+        """! @brief Set consent.
+        @param model_id Identifier of the target model.
+        @param approved Value for approved.
+        """
         self._spec(model_id)
         self._consent[model_id] = approved
         self._persist_consent()
 
     def statuses(self) -> list[ModelStatus]:
+        """! @brief Statuses operation.
+        @return List produced by the operation.
+        """
         statuses: list[ModelStatus] = []
         for spec in self._specs.values():
             installed = self._is_model_installed(spec)
@@ -116,6 +146,10 @@ class ModelManager:
         return statuses
 
     def missing_model_ids(self, required_model_ids: set[str] | None = None) -> list[str]:
+        """! @brief Missing model ids.
+        @param required_model_ids Value for required model ids.
+        @return List produced by the operation.
+        """
         required = set(self._specs.keys()) if required_model_ids is None else set(required_model_ids)
         return [
             spec.model_id
@@ -124,6 +158,10 @@ class ModelManager:
         ]
 
     def validate_for_job_start(self, required_model_ids: set[str] | None = None) -> tuple[bool, str | None]:
+        """! @brief Validate for job start.
+        @param required_model_ids Value for required model ids.
+        @return Tuple produced by the operation.
+        """
         required = set(self._specs.keys()) if required_model_ids is None else set(required_model_ids)
         for spec in self._specs.values():
             if spec.model_id not in required:
@@ -176,6 +214,12 @@ class ModelManager:
         retries: int = 2,
         progress_callback: Callable[[int, int | None], None] | None = None,
     ) -> DownloadResult:
+        """! @brief Download operation.
+        @param model_id Identifier of the target model.
+        @param retries Value for retries.
+        @param progress_callback Optional callback invoked with progress updates.
+        @return Result produced by the operation.
+        """
         spec = self._spec(model_id)
         if model_id == "formatter":
             downloaded_bytes = self._pull_formatter_model(progress_callback=progress_callback)
@@ -220,6 +264,13 @@ class ModelManager:
         timeout: int = 30,
         progress_callback: Callable[[int, int | None], None] | None = None,
     ) -> tuple[int, int | None]:
+        """! @brief Download with resume.
+        @param url Value for url.
+        @param target_path Value for target path.
+        @param timeout Optional timeout in seconds.
+        @param progress_callback Optional callback invoked with progress updates.
+        @return Tuple produced by the operation.
+        """
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme == "file":
             src = Path(parsed.path)
@@ -278,6 +329,9 @@ class ModelManager:
         return target_path.stat().st_size, total_bytes
 
     def _verify_checksum_if_needed(self, spec: ModelSpec) -> None:
+        """! @brief Verify checksum if needed.
+        @param spec Value for spec.
+        """
         if not spec.checksum_sha256:
             return
         digest = hashlib.sha256(spec.file_path.read_bytes()).hexdigest()
@@ -286,11 +340,20 @@ class ModelManager:
             raise ValueError(f"Checksum mismatch for {spec.model_id}")
 
     def _spec(self, model_id: str) -> ModelSpec:
+        """! @brief Spec operation.
+        @param model_id Identifier of the target model.
+        @return Result produced by the operation.
+        """
         if model_id not in self._specs:
             raise KeyError(model_id)
         return self._specs[model_id]
 
     def start_download(self, model_id: str, retries: int = 2) -> dict[str, object]:
+        """! @brief Start download.
+        @param model_id Identifier of the target model.
+        @param retries Value for retries.
+        @return Dictionary produced by the operation.
+        """
         spec = self._spec(model_id)
         if self._is_model_installed(spec):
             try:
@@ -346,6 +409,10 @@ class ModelManager:
         return self.download_status(model_id)
 
     def _download_worker(self, model_id: str, retries: int) -> None:
+        """! @brief Download worker.
+        @param model_id Identifier of the target model.
+        @param retries Value for retries.
+        """
         try:
             result = self.download(model_id, retries=retries, progress_callback=lambda d, t: self._progress_callback(model_id, d, t))
             self._set_download_state(
@@ -365,6 +432,11 @@ class ModelManager:
             )
 
     def _progress_callback(self, model_id: str, downloaded_bytes: int, total_bytes: int | None) -> None:
+        """! @brief Progress callback.
+        @param model_id Identifier of the target model.
+        @param downloaded_bytes Value for downloaded bytes.
+        @param total_bytes Value for total bytes.
+        """
         percent = 0.0
         if total_bytes and total_bytes > 0:
             percent = min(100.0, (downloaded_bytes / total_bytes) * 100.0)
@@ -380,6 +452,10 @@ class ModelManager:
         )
 
     def download_status(self, model_id: str) -> dict[str, object]:
+        """! @brief Download status.
+        @param model_id Identifier of the target model.
+        @return Dictionary produced by the operation.
+        """
         spec = self._spec(model_id)
         with self._download_lock:
             state = self._download_progress.get(model_id)
@@ -410,11 +486,19 @@ class ModelManager:
             return state.to_dict()
 
     def _is_model_installed(self, spec: ModelSpec) -> bool:
+        """! @brief Is model installed.
+        @param spec Value for spec.
+        @return True when the requested condition is satisfied; otherwise False.
+        """
         if spec.model_id != "formatter":
             return spec.file_path.exists()
         return self._ollama_has_model(self.get_formatter_model())
 
     def _ollama_has_model(self, model_tag: str) -> bool:
+        """! @brief Ollama has model.
+        @param model_tag Value for model tag.
+        @return True when the requested condition is satisfied; otherwise False.
+        """
         request = urllib.request.Request(
             url=f"{SETTINGS.ollama_host.rstrip('/')}/api/tags",
             method="GET",
@@ -440,6 +524,10 @@ class ModelManager:
         self,
         progress_callback: Callable[[int, int | None], None] | None = None,
     ) -> int:
+        """! @brief Pull formatter model.
+        @param progress_callback Optional callback invoked with progress updates.
+        @return int result produced by the operation.
+        """
         model_tag = self.get_formatter_model()
         payload = {"name": model_tag}
         request = urllib.request.Request(
@@ -500,9 +588,16 @@ class ModelManager:
         return downloaded_bytes
 
     def all_download_statuses(self) -> list[dict[str, object]]:
+        """! @brief All download statuses.
+        @return List produced by the operation.
+        """
         return [self.download_status(model_id) for model_id in sorted(self._specs.keys())]
 
     def _set_download_state(self, model_id: str, **updates: object) -> None:
+        """! @brief Set download state.
+        @param model_id Identifier of the target model.
+        @param updates Value for updates.
+        """
         with self._download_lock:
             state = self._download_progress.get(model_id)
             if state is None:
@@ -518,6 +613,9 @@ class ModelManager:
 
     @staticmethod
     def _now_iso() -> str:
+        """! @brief Now iso.
+        @return str result produced by the operation.
+        """
         return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 

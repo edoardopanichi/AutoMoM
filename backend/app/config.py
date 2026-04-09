@@ -10,6 +10,10 @@ DATA_DIR = ROOT_DIR / "data"
 
 
 def _resolve_model_path(raw_path: str) -> Path:
+    """! @brief Resolve model path.
+    @param raw_path Value for raw path.
+    @return Path result produced by the operation.
+    """
     path = Path(raw_path).expanduser()
     if path.is_absolute():
         return path
@@ -90,6 +94,8 @@ SETTINGS = Settings()
 
 
 def ensure_directories() -> None:
+    """! @brief Ensure directories.
+    """
     for path in [
         SETTINGS.data_dir,
         SETTINGS.jobs_dir,
@@ -102,6 +108,9 @@ def ensure_directories() -> None:
 
 
 def required_models() -> list[ModelSpec]:
+    """! @brief Required models.
+    @return List produced by the operation.
+    """
     return [
         ModelSpec(
             model_id="diarization",

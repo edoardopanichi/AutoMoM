@@ -29,6 +29,15 @@ def pick_snippet_ranges(
     audio_path: Path | None = None,
     min_gap_s: float = 4.0,
 ) -> dict[str, list[tuple[float, float]]]:
+    """! @brief Pick snippet ranges.
+    @param segments Segment collection processed by the operation.
+    @param per_speaker Value for per speaker.
+    @param min_len_s Value for min len s.
+    @param max_len_s Value for max len s.
+    @param audio_path Path to the audio file.
+    @param min_gap_s Value for min gap s.
+    @return Dictionary produced by the operation.
+    """
     by_speaker: dict[str, list[DiarizationSegment]] = defaultdict(list)
     for segment in segments:
         by_speaker[segment.speaker_id].append(segment)
@@ -75,6 +84,14 @@ def _score_candidate(
     audio_data: np.ndarray | None,
     sample_rate: int | None,
 ) -> dict[str, float]:
+    """! @brief Score candidate.
+    @param segment Value for segment.
+    @param min_len_s Value for min len s.
+    @param max_len_s Value for max len s.
+    @param audio_data Value for audio data.
+    @param sample_rate Value for sample rate.
+    @return Dictionary produced by the operation.
+    """
     duration = max(0.0, float(segment.end_s) - float(segment.start_s))
     target_len = min(max_len_s, max(min_len_s, 5.0))
     if duration > max_len_s:
@@ -115,6 +132,14 @@ def extract_snippets(
     *,
     job_id: str | None = None,
 ) -> list[Snippet]:
+    """! @brief Extract snippets.
+    @param source_audio_path Path to the source audio file.
+    @param output_dir Value for output dir.
+    @param snippet_ranges Value for snippet ranges.
+    @param ffmpeg_bin Value for ffmpeg bin.
+    @param job_id Identifier of the job being processed.
+    @return List produced by the operation.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     snippets: list[Snippet] = []
     for speaker_id, ranges in snippet_ranges.items():

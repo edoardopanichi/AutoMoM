@@ -67,6 +67,17 @@ class Formatter:
         timeout_s: int | None = None,
         **_: object,
     ) -> None:
+        """! @brief Initialize the Formatter instance.
+        @param command_template Value for command template.
+        @param model_path Value for model path.
+        @param ollama_host Value for ollama host.
+        @param ollama_model Value for ollama model.
+        @param openai_api_key Value for openai api key.
+        @param openai_model Value for openai model.
+        @param job_id Identifier of the job being processed.
+        @param timeout_s Timeout in seconds.
+        @param _ Value for _.
+        """
         self.command_template = command_template or ""
         self.model_path = model_path or ""
         self.ollama_host = (ollama_host or SETTINGS.ollama_host).rstrip("/")
@@ -81,6 +92,11 @@ class Formatter:
         self.last_mode: str = "heuristic"
 
     def run_model(self, prompt: str, *, system_prompt: str = "") -> dict[str, object] | None:
+        """! @brief Run model.
+        @param prompt Value for prompt.
+        @param system_prompt Value for system prompt.
+        @return Dictionary produced by the operation.
+        """
         system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
         if self.openai_api_key:
             return self._run_openai_response(prompt, system_prompt=system_prompt)
@@ -152,6 +168,11 @@ class Formatter:
         return self._finalize_model_output(output)
 
     def _run_openai_response(self, prompt: str, *, system_prompt: str = "") -> dict[str, object] | None:
+        """! @brief Run openai response.
+        @param prompt Value for prompt.
+        @param system_prompt Value for system prompt.
+        @return Dictionary produced by the operation.
+        """
         try:
             client = OpenAIClient(self.openai_api_key)
             output = client.generate_text(
@@ -172,6 +193,11 @@ class Formatter:
         return self._finalize_model_output(output)
 
     def _run_legacy_command(self, prompt: str, *, system_prompt: str = "") -> dict[str, object] | None:
+        """! @brief Run legacy command.
+        @param prompt Value for prompt.
+        @param system_prompt Value for system prompt.
+        @return Dictionary produced by the operation.
+        """
         if not self.model_path or not Path(self.model_path).exists():
             self.last_raw_output = ""
             self.last_stdout = ""
@@ -203,6 +229,10 @@ class Formatter:
         return self._finalize_model_output(output)
 
     def _finalize_model_output(self, output: str) -> dict[str, object] | None:
+        """! @brief Finalize model output.
+        @param output Value for output.
+        @return Dictionary produced by the operation.
+        """
         if not output:
             self.last_raw_output = ""
             self.last_mode = "heuristic_empty_output"
@@ -227,9 +257,19 @@ class Formatter:
         template_id: str,
         output_path: Path,
     ) -> FormatterRunResult:
+        """! @brief Write model output to MoM.
+        @param transcript Transcript segments used by the operation.
+        @param speakers Speaker names available for the meeting.
+        @param title Meeting title associated with the request.
+        @param template_id Identifier of the template.
+        @param output_path Path to the output file.
+        @return Result produced by the operation.
+        """
         bundle = TEMPLATE_MANAGER.build_formatter_request(template_id, transcript, speakers, title)
         estimated_tokens = _estimate_tokens(f"{bundle.system_prompt}\n\n{bundle.user_prompt}")
         reduced_notes = _reduce_transcript_notes(transcript, token_target=FORMATTER_CHUNK_TOKEN_TARGET)
+        # Strict section validation gets brittle on very large transcripts, so reduce the transcript
+        # into structured notes before prompting once the estimated payload crosses the long-input cap.
         reduction_used = bool(bundle.strict_sections and estimated_tokens > FORMATTER_LONG_INPUT_TOKEN_LIMIT)
         active_bundle = (
             TEMPLATE_MANAGER.build_formatter_request(
@@ -250,6 +290,8 @@ class Formatter:
         for attempt in range(1, FORMATTER_MAX_ATTEMPTS + 1):
             attempt_user_prompt = active_bundle.user_prompt
             if corrective_feedback:
+                # Feed validator errors back into the next attempt so the model can repair heading
+                # order and missing sections without changing the transcript content itself.
                 attempt_user_prompt = f"{attempt_user_prompt}\n\nCorrection request:\n{corrective_feedback}\n"
             result = self.run_model(attempt_user_prompt, system_prompt=active_bundle.system_prompt)
             if result is None:
@@ -304,6 +346,10 @@ class Formatter:
 
     @staticmethod
     def _parse_json_output(output: str) -> dict[str, object] | None:
+        """! @brief Parse json output.
+        @param output Value for output.
+        @return Dictionary produced by the operation.
+        """
         try:
             parsed = json.loads(output)
             if isinstance(parsed, dict):
@@ -328,6 +374,12 @@ class Formatter:
         speakers: list[str],
         title: str,
     ) -> dict[str, object]:
+        """! @brief Heuristic structuring.
+        @param transcript Transcript segments used by the operation.
+        @param speakers Speaker names available for the meeting.
+        @param title Meeting title associated with the request.
+        @return Dictionary produced by the operation.
+        """
         statements = [str(seg["text"]).strip() for seg in transcript if str(seg["text"]).strip()]
         statements = [item for item in statements if not item.startswith("[Offline fallback transcript")]
 
@@ -352,6 +404,11 @@ class Formatter:
 
 
 def validate_markdown_output(markdown: str, sections: list[TemplateSection]) -> dict[str, object]:
+    """! @brief Validate markdown output.
+    @param markdown Value for markdown.
+    @param sections Value for sections.
+    @return Dictionary produced by the operation.
+    """
     if not sections:
         return {"valid": True, "errors": [], "headings": []}
     headings = HEADING_RE.findall(markdown)
@@ -390,6 +447,10 @@ def validate_markdown_output(markdown: str, sections: list[TemplateSection]) -> 
 
 
 def _markdown_heading_blocks(markdown: str) -> list[tuple[str, str]]:
+    """! @brief Markdown heading blocks.
+    @param markdown Value for markdown.
+    @return List produced by the operation.
+    """
     matches = list(re.finditer(r"(?m)^(#{2,4}\s+.+)$", markdown))
     blocks: list[tuple[str, str]] = []
     for index, match in enumerate(matches):
@@ -400,6 +461,10 @@ def _markdown_heading_blocks(markdown: str) -> list[tuple[str, str]]:
 
 
 def _render_reduced_notes_as_transcript(notes: list[dict[str, object]]) -> list[dict[str, object]]:
+    """! @brief Render reduced notes as transcript.
+    @param notes Value for notes.
+    @return List produced by the operation.
+    """
     rendered: list[dict[str, object]] = []
     for idx, note in enumerate(notes, start=1):
         lines = [
@@ -422,10 +487,19 @@ def _render_reduced_notes_as_transcript(notes: list[dict[str, object]]) -> list[
 
 
 def _estimate_tokens(text: str) -> int:
+    """! @brief Estimate tokens.
+    @param text Value for text.
+    @return int result produced by the operation.
+    """
     return max(1, len(text) // 4)
 
 
 def _chunk_transcript(transcript: list[dict[str, object]], token_target: int) -> list[list[dict[str, object]]]:
+    """! @brief Chunk transcript.
+    @param transcript Transcript segments used by the operation.
+    @param token_target Value for token target.
+    @return List produced by the operation.
+    """
     chunks: list[list[dict[str, object]]] = []
     current: list[dict[str, object]] = []
     current_tokens = 0
@@ -443,6 +517,11 @@ def _chunk_transcript(transcript: list[dict[str, object]], token_target: int) ->
 
 
 def _reduce_transcript_notes(transcript: list[dict[str, object]], token_target: int) -> list[dict[str, object]]:
+    """! @brief Reduce transcript notes.
+    @param transcript Transcript segments used by the operation.
+    @param token_target Value for token target.
+    @return List produced by the operation.
+    """
     notes: list[dict[str, object]] = []
     for chunk in _chunk_transcript(transcript, token_target):
         statements = [str(seg["text"]).strip() for seg in chunk if str(seg.get("text") or "").strip()]
@@ -460,6 +539,11 @@ def _reduce_transcript_notes(transcript: list[dict[str, object]], token_target: 
 
 
 def _discussion_bullets(transcript: list[dict[str, object]], top_n: int = 8) -> list[str]:
+    """! @brief Discussion bullets.
+    @param transcript Transcript segments used by the operation.
+    @param top_n Value for top n.
+    @return List produced by the operation.
+    """
     counter = Counter(str(item["speaker_name"]) for item in transcript)
     bullets: list[str] = []
     for seg in transcript[: top_n * 2]:
@@ -481,6 +565,11 @@ def _discussion_bullets(transcript: list[dict[str, object]], top_n: int = 8) -> 
 
 
 def _keyword_extract(statements: list[str], keywords: list[str]) -> list[str]:
+    """! @brief Keyword extract.
+    @param statements Value for statements.
+    @param keywords Value for keywords.
+    @return List produced by the operation.
+    """
     found: list[str] = []
     for text in statements:
         lower = text.lower()
@@ -490,6 +579,10 @@ def _keyword_extract(statements: list[str], keywords: list[str]) -> list[str]:
 
 
 def _extract_actions(statements: list[str]) -> list[dict[str, str]]:
+    """! @brief Extract actions.
+    @param statements Value for statements.
+    @return List produced by the operation.
+    """
     actions: list[dict[str, str]] = []
     for text in statements:
         match = ACTION_OWNER_PATTERN.search(text)
@@ -504,6 +597,10 @@ def _extract_actions(statements: list[str]) -> list[dict[str, str]]:
 
 
 def _looks_like_markdown_document(text: str) -> bool:
+    """! @brief Looks like markdown document.
+    @param text Value for text.
+    @return True when the requested condition is satisfied; otherwise False.
+    """
     if not text:
         return False
     heading_count = len(re.findall(r"(?m)^##?\s+\S+", text))
@@ -511,12 +608,22 @@ def _looks_like_markdown_document(text: str) -> bool:
 
 
 def _extract_model_text(stdout: str, stderr: str, *, prompt: str = "") -> str:
+    """! @brief Extract model text.
+    @param stdout Value for stdout.
+    @param stderr Value for stderr.
+    @param prompt Value for prompt.
+    @return str result produced by the operation.
+    """
     _ = prompt
     raw = stdout if stdout.strip() else stderr
     return _strip_runtime_logs(raw)
 
 
 def _strip_runtime_logs(text: str) -> str:
+    """! @brief Strip runtime logs.
+    @param text Value for text.
+    @return str result produced by the operation.
+    """
     if not text:
         return ""
     lines: list[str] = []
@@ -536,6 +643,12 @@ def _strip_runtime_logs(text: str) -> str:
 
 
 def _formatter_failure_message(last_mode: str, model_name: str, ollama_host: str) -> str:
+    """! @brief Formatter failure message.
+    @param last_mode Value for last mode.
+    @param model_name Value for model name.
+    @param ollama_host Value for ollama host.
+    @return str result produced by the operation.
+    """
     if last_mode == "heuristic_no_model":
         return "Formatter model is not configured. Fix: set AUTOMOM_FORMATTER_OLLAMA_MODEL."
     if last_mode == "heuristic_ollama_http_error":

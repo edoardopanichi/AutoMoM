@@ -37,6 +37,9 @@ class ASRBinaryCapabilities:
     gpu_backend_available: bool
 
     def to_dict(self) -> dict[str, object]:
+        """! @brief Serialize the current object to a dictionary.
+        @return Dictionary produced by the operation.
+        """
         return asdict(self)
 
 
@@ -58,6 +61,9 @@ class ASRRuntimeReport:
     last_error: str = ""
 
     def to_dict(self) -> dict[str, object]:
+        """! @brief Serialize the current object to a dictionary.
+        @return Dictionary produced by the operation.
+        """
         return asdict(self)
 
 
@@ -74,6 +80,16 @@ class VoxtralTranscriber:
         threads: int = 4,
         processors: int = 1,
     ) -> None:
+        """! @brief Initialize the VoxtralTranscriber instance.
+        @param binary_path Value for binary path.
+        @param model_path Value for model path.
+        @param job_id Identifier of the job being processed.
+        @param compute_device Requested compute device preference.
+        @param cuda_device_id CUDA device index to prefer when GPU execution is enabled.
+        @param gpu_layers Value for gpu layers.
+        @param threads Value for threads.
+        @param processors Value for processors.
+        """
         self.binary_path = binary_path or ""
         self.model_path = model_path or ""
         self._job_id = job_id
@@ -105,9 +121,16 @@ class VoxtralTranscriber:
         )
 
     def available(self) -> bool:
+        """! @brief Available operation.
+        @return True when the requested condition is satisfied; otherwise False.
+        """
         return self._runtime_available
 
     def transcribe(self, segment_path: Path) -> str:
+        """! @brief Transcribe operation.
+        @param segment_path Path to the segment audio file.
+        @return str result produced by the operation.
+        """
         if not self._runtime_available or not self._resolved_binary_path:
             raise TranscriptionError(self._missing_runtime_message())
 
@@ -143,6 +166,9 @@ class VoxtralTranscriber:
         return text
 
     def compute_mode(self) -> str:
+        """! @brief Compute mode.
+        @return str result produced by the operation.
+        """
         if not self._runtime_available:
             return "fallback"
         if self._runtime_report.gpu_verified_active:
@@ -154,11 +180,17 @@ class VoxtralTranscriber:
         return "cpu"
 
     def runtime_report(self) -> dict[str, object]:
+        """! @brief Runtime report.
+        @return Dictionary produced by the operation.
+        """
         self._runtime_report.available_mode = self._available_mode()
         self._runtime_report.gpu_retry_disabled = self._gpu_retry_disabled
         return self._runtime_report.to_dict()
 
     def runtime_summary(self) -> str:
+        """! @brief Runtime summary.
+        @return str result produced by the operation.
+        """
         report = self.runtime_report()
         active_mode = str(report["active_mode"])
         if bool(report["gpu_verified_active"]):
@@ -172,6 +204,11 @@ class VoxtralTranscriber:
         return f"compute={active_mode} (GPU requested but not verified active)"
 
     def _build_command(self, segment_path: Path, *, use_gpu: bool) -> list[str]:
+        """! @brief Build command.
+        @param segment_path Path to the segment audio file.
+        @param use_gpu Value for use gpu.
+        @return List produced by the operation.
+        """
         command = [self._resolved_binary_path, "-m", self.model_path, "-f", str(segment_path)]
         if self._capabilities.is_whisper_cli:
             if _binary_supports_any_flag(self._resolved_binary_path, ("-t", "--threads")):
@@ -183,6 +220,8 @@ class VoxtralTranscriber:
         if not self._capabilities.is_whisper_cli or not self._capabilities.gpu_backend_available:
             return command
 
+        # Probe the binary first so we only pass GPU flags that this specific whisper.cpp build
+        # actually exposes; CUDA-enabled binaries are not consistent about option names.
         tokens = set(command)
         supports_gpu_layers = _binary_supports_any_flag(
             self._resolved_binary_path,
@@ -207,6 +246,10 @@ class VoxtralTranscriber:
 
     @staticmethod
     def _resolve_binary_path(binary_path: str) -> str | None:
+        """! @brief Resolve binary path.
+        @param binary_path Value for binary path.
+        @return Result produced by the operation.
+        """
         if not binary_path:
             return None
         as_path = Path(binary_path)
@@ -219,6 +262,10 @@ class VoxtralTranscriber:
 
     @classmethod
     def _resolve_preferred_binary_path(cls, binary_path: str) -> str | None:
+        """! @brief Resolve preferred binary path.
+        @param binary_path Value for binary path.
+        @return Result produced by the operation.
+        """
         configured = cls._resolve_binary_path(binary_path)
         repo_cuda = cls._resolve_binary_path(str(REPO_ROOT / "tools" / "whisper.cpp" / "build-cuda" / "bin" / "whisper-cli"))
         repo_cpu = cls._resolve_binary_path(str(REPO_ROOT / "tools" / "whisper.cpp" / "build" / "bin" / "whisper-cli"))
@@ -239,6 +286,9 @@ class VoxtralTranscriber:
         return None
 
     def _missing_runtime_message(self) -> str:
+        """! @brief Missing runtime message.
+        @return str result produced by the operation.
+        """
         missing_parts: list[str] = []
         if not self._resolved_binary_path:
             missing_parts.append(
@@ -255,6 +305,9 @@ class VoxtralTranscriber:
         return " ".join(missing_parts)
 
     def _available_mode(self) -> str:
+        """! @brief Available mode.
+        @return str result produced by the operation.
+        """
         if not self._runtime_available:
             return "fallback"
         if self._gpu_requested and self._capabilities.gpu_backend_available:
@@ -262,6 +315,10 @@ class VoxtralTranscriber:
         return "cpu"
 
     def _record_runtime_result(self, process: subprocess.CompletedProcess[str], *, requested_gpu: bool) -> None:
+        """! @brief Record runtime result.
+        @param process Value for process.
+        @param requested_gpu Value for requested gpu.
+        """
         combined_output = "\n".join(part for part in (process.stdout, process.stderr) if part).strip()
         verified_gpu = _gpu_verified_active(combined_output)
         active_mode = "cuda" if verified_gpu else "cpu"
@@ -278,10 +335,18 @@ class VoxtralTranscriber:
 
 class OpenAITranscriber:
     def __init__(self, api_key: str, model: str) -> None:
+        """! @brief Initialize the OpenAITranscriber instance.
+        @param api_key Value for api key.
+        @param model Model identifier used by the operation.
+        """
         self._client = OpenAIClient(api_key)
         self._model = model.strip() or "gpt-4o-transcribe"
 
     def transcribe(self, segment_path: Path) -> str:
+        """! @brief Transcribe operation.
+        @param segment_path Path to the segment audio file.
+        @return str result produced by the operation.
+        """
         try:
             return self._client.transcribe_audio(segment_path, model=self._model)
         except OpenAIAPIError as exc:
@@ -293,6 +358,12 @@ def transcribe_segments(
     segment_jobs: list[dict[str, object]],
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> list[dict[str, object]]:
+    """! @brief Transcribe segments.
+    @param transcriber Value for transcriber.
+    @param segment_jobs Value for segment jobs.
+    @param progress_callback Optional callback invoked with progress updates.
+    @return List produced by the operation.
+    """
     transcripts: list[dict[str, object]] = []
     total = len(segment_jobs)
 
@@ -316,6 +387,10 @@ def transcribe_segments(
 
 
 def clean_transcript_text(raw_text: str) -> str:
+    """! @brief Clean transcript text.
+    @param raw_text Value for raw text.
+    @return str result produced by the operation.
+    """
     lines: list[str] = []
     for raw_line in raw_text.splitlines():
         line = raw_line.strip()
@@ -339,6 +414,10 @@ def clean_transcript_text(raw_text: str) -> str:
 
 
 def _invocation_failed(process: subprocess.CompletedProcess[str]) -> bool:
+    """! @brief Invocation failed.
+    @param process Value for process.
+    @return True when the requested condition is satisfied; otherwise False.
+    """
     if process.returncode != 0:
         return True
 
@@ -350,6 +429,10 @@ def _invocation_failed(process: subprocess.CompletedProcess[str]) -> bool:
 
 
 def _runtime_gpu_failure_reason(output: str) -> str:
+    """! @brief Runtime gpu failure reason.
+    @param output Value for output.
+    @return str result produced by the operation.
+    """
     lowered = output.lower()
     if "no gpu found" in lowered:
         return "no_gpu_found"
@@ -359,6 +442,10 @@ def _runtime_gpu_failure_reason(output: str) -> str:
 
 
 def _gpu_verified_active(output: str) -> bool:
+    """! @brief Gpu verified active.
+    @param output Value for output.
+    @return True when the requested condition is satisfied; otherwise False.
+    """
     lowered = output.lower()
     if "no gpu found" in lowered:
         return False
@@ -367,6 +454,10 @@ def _gpu_verified_active(output: str) -> bool:
 
 @lru_cache(maxsize=8)
 def _probe_asr_binary(binary_path: str) -> ASRBinaryCapabilities:
+    """! @brief Probe asr binary.
+    @param binary_path Value for binary path.
+    @return Result produced by the operation.
+    """
     if not binary_path:
         return ASRBinaryCapabilities("", False, tuple(), tuple(), False)
 
@@ -390,6 +481,10 @@ def _probe_asr_binary(binary_path: str) -> ASRBinaryCapabilities:
 
 
 def _detect_linked_backends(binary_path: str) -> tuple[str, ...]:
+    """! @brief Detect linked backends.
+    @param binary_path Value for binary path.
+    @return Tuple produced by the operation.
+    """
     try:
         process = subprocess.run(
             ["ldd", binary_path],
@@ -422,6 +517,10 @@ def _detect_linked_backends(binary_path: str) -> tuple[str, ...]:
 
 @lru_cache(maxsize=8)
 def _binary_help_text(binary_path: str) -> str:
+    """! @brief Binary help text.
+    @param binary_path Value for binary path.
+    @return str result produced by the operation.
+    """
     try:
         process = subprocess.run(
             [binary_path, "--help"],
@@ -436,6 +535,11 @@ def _binary_help_text(binary_path: str) -> str:
 
 @lru_cache(maxsize=8)
 def _binary_supports_any_flag(binary_path: str, flags: tuple[str, ...]) -> bool:
+    """! @brief Binary supports any flag.
+    @param binary_path Value for binary path.
+    @param flags Value for flags.
+    @return True when the requested condition is satisfied; otherwise False.
+    """
     help_text = _binary_help_text(binary_path)
     if not help_text:
         return False

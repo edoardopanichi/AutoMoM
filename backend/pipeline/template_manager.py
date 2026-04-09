@@ -37,10 +37,16 @@ class FormatterPromptBundle:
 
 class TemplateManager:
     def __init__(self) -> None:
+        """! @brief Initialize the TemplateManager instance.
+        """
         self._ensure_default_template()
 
     @staticmethod
     def _validate_template_id(template_id: str) -> str:
+        """! @brief Validate template id.
+        @param template_id Identifier of the template.
+        @return str result produced by the operation.
+        """
         normalized = (template_id or "").strip()
         if not TEMPLATE_ID_PATTERN.fullmatch(normalized):
             raise ValueError("Invalid template_id. Use 1-64 chars: letters, numbers, '.', '_' or '-'")
@@ -48,10 +54,16 @@ class TemplateManager:
 
     @staticmethod
     def _template_meta_path(template_id: str) -> Path:
+        """! @brief Template meta path.
+        @param template_id Identifier of the template.
+        @return Path result produced by the operation.
+        """
         safe_id = TemplateManager._validate_template_id(template_id)
         return SETTINGS.templates_dir / f"{safe_id}.json"
 
     def _ensure_default_template(self) -> None:
+        """! @brief Ensure default template.
+        """
         if self._template_meta_path(DEFAULT_TEMPLATE_ID).exists():
             return
         self.save(
@@ -66,6 +78,9 @@ class TemplateManager:
         )
 
     def list_templates(self) -> list[TemplateSummary]:
+        """! @brief List templates.
+        @return List produced by the operation.
+        """
         result: list[TemplateSummary] = []
         for path in sorted(SETTINGS.templates_dir.glob("*.json")):
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -80,6 +95,10 @@ class TemplateManager:
         return result
 
     def load(self, template_id: str) -> TemplateDefinition:
+        """! @brief Load operation.
+        @param template_id Identifier of the template.
+        @return Result produced by the operation.
+        """
         meta_path = self._template_meta_path(template_id)
         if not meta_path.exists():
             raise FileNotFoundError(template_id)
@@ -87,11 +106,17 @@ class TemplateManager:
         return TemplateDefinition(**json.loads(meta_path.read_text(encoding="utf-8")))
 
     def save(self, definition: TemplateDefinition) -> None:
+        """! @brief Save operation.
+        @param definition Value for definition.
+        """
         meta_path = self._template_meta_path(definition.template_id)
         SETTINGS.templates_dir.mkdir(parents=True, exist_ok=True)
         meta_path.write_text(json.dumps(definition.model_dump(), indent=2), encoding="utf-8")
 
     def delete(self, template_id: str) -> None:
+        """! @brief Delete operation.
+        @param template_id Identifier of the template.
+        """
         if template_id == DEFAULT_TEMPLATE_ID:
             raise ValueError("Default template cannot be deleted")
         meta_path = self._template_meta_path(template_id)
@@ -106,6 +131,13 @@ class TemplateManager:
         speakers: list[str],
         title: str,
     ) -> str:
+        """! @brief Build formatter prompt.
+        @param template_id Identifier of the template.
+        @param transcript Transcript segments used by the operation.
+        @param speakers Speaker names available for the meeting.
+        @param title Meeting title associated with the request.
+        @return str result produced by the operation.
+        """
         bundle = self.build_formatter_request(template_id, transcript, speakers, title)
         return f"{bundle.system_prompt}\n\n{bundle.user_prompt}"
 
@@ -118,6 +150,14 @@ class TemplateManager:
         *,
         transcript_label: str = "Transcript",
     ) -> FormatterPromptBundle:
+        """! @brief Build formatter request.
+        @param template_id Identifier of the template.
+        @param transcript Transcript segments used by the operation.
+        @param speakers Speaker names available for the meeting.
+        @param title Meeting title associated with the request.
+        @param transcript_label Value for transcript label.
+        @return Result produced by the operation.
+        """
         template = self.load(template_id)
         transcript_text = "\n".join(f"{seg['speaker_name']}: {seg['text']}" for seg in transcript)
         sections = template.sections or []

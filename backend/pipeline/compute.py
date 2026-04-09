@@ -10,6 +10,10 @@ VALID_COMPUTE_PREFERENCES = {"auto", "cpu", "cuda"}
 
 
 def normalize_compute_preference(preference: str | None) -> str:
+    """! @brief Normalize compute preference.
+    @param preference Value for preference.
+    @return str result produced by the operation.
+    """
     normalized = (preference or "auto").strip().lower()
     if normalized in VALID_COMPUTE_PREFERENCES:
         return normalized
@@ -17,12 +21,19 @@ def normalize_compute_preference(preference: str | None) -> str:
 
 
 def _cuda_disabled_by_env() -> bool:
+    """! @brief Cuda disabled by env.
+    @return True when the requested condition is satisfied; otherwise False.
+    """
     value = os.getenv("AUTOMOM_DISABLE_CUDA", "").strip().lower()
     return value in {"1", "true", "yes", "on"}
 
 
 @lru_cache(maxsize=8)
 def torch_cuda_available(device_id: int = 0) -> bool:
+    """! @brief Torch cuda available.
+    @param device_id Value for device id.
+    @return True when the requested condition is satisfied; otherwise False.
+    """
     if _cuda_disabled_by_env():
         return False
 
@@ -44,6 +55,10 @@ def torch_cuda_available(device_id: int = 0) -> bool:
 
 @lru_cache(maxsize=8)
 def native_cuda_available(device_id: int = 0) -> bool:
+    """! @brief Native cuda available.
+    @param device_id Value for device id.
+    @return True when the requested condition is satisfied; otherwise False.
+    """
     if _cuda_disabled_by_env():
         return False
 
@@ -73,6 +88,11 @@ def native_cuda_available(device_id: int = 0) -> bool:
 
 
 def resolve_torch_device(preference: str | None, device_id: int = 0) -> str:
+    """! @brief Resolve torch device.
+    @param preference Value for preference.
+    @param device_id Value for device id.
+    @return str result produced by the operation.
+    """
     normalized = normalize_compute_preference(preference)
     if normalized == "cpu":
         return "cpu"
@@ -82,6 +102,11 @@ def resolve_torch_device(preference: str | None, device_id: int = 0) -> str:
 
 
 def should_enable_native_gpu(preference: str | None, device_id: int = 0) -> bool:
+    """! @brief Should enable native gpu.
+    @param preference Value for preference.
+    @param device_id Value for device id.
+    @return True when the requested condition is satisfied; otherwise False.
+    """
     normalized = normalize_compute_preference(preference)
     if normalized == "cpu":
         return False

@@ -37,6 +37,10 @@ class OpenAIDiarizationResult:
 
 class OpenAIClient:
     def __init__(self, api_key: str, base_url: str = OPENAI_API_BASE_URL) -> None:
+        """! @brief Initialize the OpenAIClient instance.
+        @param api_key Value for api key.
+        @param base_url Value for base url.
+        """
         normalized_key = api_key.strip()
         if not normalized_key:
             raise ValueError("OpenAI API key cannot be empty")
@@ -44,6 +48,11 @@ class OpenAIClient:
         self.base_url = base_url.rstrip("/")
 
     def diarize_audio(self, audio_path: Path, model: str) -> OpenAIDiarizationResult:
+        """! @brief Diarize audio.
+        @param audio_path Path to the audio file.
+        @param model Model identifier used by the operation.
+        @return Result produced by the operation.
+        """
         payload = self._post_multipart(
             "/audio/transcriptions",
             fields={
@@ -80,6 +89,11 @@ class OpenAIClient:
         )
 
     def transcribe_audio(self, audio_path: Path, model: str) -> str:
+        """! @brief Transcribe audio.
+        @param audio_path Path to the audio file.
+        @param model Model identifier used by the operation.
+        @return str result produced by the operation.
+        """
         payload = self._post_multipart(
             "/audio/transcriptions",
             fields={
@@ -95,6 +109,13 @@ class OpenAIClient:
         return text
 
     def generate_text(self, prompt: str, model: str, timeout_s: int, *, instructions: str = "") -> str:
+        """! @brief Generate text.
+        @param prompt Value for prompt.
+        @param model Model identifier used by the operation.
+        @param timeout_s Timeout in seconds.
+        @param instructions Value for instructions.
+        @return str result produced by the operation.
+        """
         payload = self._post_json(
             "/responses",
             body={
@@ -110,6 +131,12 @@ class OpenAIClient:
         return text
 
     def _post_json(self, path: str, body: dict[str, object], timeout_s: int) -> dict[str, object]:
+        """! @brief Post json.
+        @param path Filesystem path used by the operation.
+        @param body Value for body.
+        @param timeout_s Timeout in seconds.
+        @return Dictionary produced by the operation.
+        """
         request = urllib.request.Request(
             url=f"{self.base_url}{path}",
             data=json.dumps(body).encode("utf-8"),
@@ -130,6 +157,14 @@ class OpenAIClient:
         file_path: Path,
         timeout_s: int = 300,
     ) -> dict[str, object]:
+        """! @brief Post multipart.
+        @param path Filesystem path used by the operation.
+        @param fields Form fields included in the request.
+        @param file_field Name of the multipart file field.
+        @param file_path Path to the target file.
+        @param timeout_s Timeout in seconds.
+        @return Dictionary produced by the operation.
+        """
         file_bytes = file_path.read_bytes()
         if len(file_bytes) > OPENAI_MAX_FILE_BYTES:
             raise OpenAIAPIError(
@@ -157,6 +192,11 @@ class OpenAIClient:
         return self._read_json_response(request, timeout_s=timeout_s)
 
     def _read_json_response(self, request: urllib.request.Request, timeout_s: int) -> dict[str, object]:
+        """! @brief Read json response.
+        @param request Request payload for the operation.
+        @param timeout_s Timeout in seconds.
+        @return Dictionary produced by the operation.
+        """
         try:
             with urllib.request.urlopen(request, timeout=timeout_s) as response:
                 raw = response.read().decode("utf-8", errors="replace")
@@ -197,6 +237,14 @@ def _build_multipart_body(
     file_path: Path,
     file_bytes: bytes,
 ) -> bytes:
+    """! @brief Build multipart body.
+    @param boundary Multipart boundary marker.
+    @param fields Form fields included in the request.
+    @param file_field Name of the multipart file field.
+    @param file_path Path to the target file.
+    @param file_bytes Binary file payload for the multipart request.
+    @return Result produced by the operation.
+    """
     chunks: list[bytes] = []
     for name, value in fields.items():
         chunks.extend(
@@ -209,6 +257,8 @@ def _build_multipart_body(
         )
 
     content_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+    # Build the multipart body manually so uploads stay dependency-free and behave the same way in
+    # the FastAPI app, local scripts, and unit tests.
     chunks.extend(
         [
             f"--{boundary}\r\n".encode("utf-8"),
@@ -226,6 +276,10 @@ def _build_multipart_body(
 
 
 def _extract_response_output_text(payload: dict[str, object]) -> str:
+    """! @brief Extract response output text.
+    @param payload Payload consumed or produced by the operation.
+    @return str result produced by the operation.
+    """
     direct = payload.get("output_text")
     if isinstance(direct, str) and direct.strip():
         return direct.strip()

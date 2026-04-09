@@ -51,6 +51,8 @@ ENV_TO_SETTINGS = {
 
 
 def _apply_local_env() -> None:
+    """! @brief Apply local env.
+    """
     env_path = ROOT_DIR / ".env"
     if not env_path.exists():
         return
@@ -71,6 +73,10 @@ def _apply_local_env() -> None:
 
 
 def _parse_stage6_seconds(logs: list[str]) -> float | None:
+    """! @brief Parse stage6 seconds.
+    @param logs Value for logs.
+    @return Result produced by the operation.
+    """
     stage6_ts = None
     stage7_ts = None
     for entry in logs:
@@ -90,6 +96,11 @@ def _parse_stage6_seconds(logs: list[str]) -> float | None:
 
 
 def _collect_metrics(job_id: str, wall_clock_s: float) -> dict[str, Any]:
+    """! @brief Collect metrics.
+    @param job_id Identifier of the job being processed.
+    @param wall_clock_s Value for wall clock s.
+    @return Dictionary produced by the operation.
+    """
     state = JOB_STORE.get_state(job_id)
     runtime_path = state.artifact_paths.get("transcription_runtime")
     diarization_path = state.artifact_paths.get("diarization")
@@ -136,6 +147,12 @@ def _collect_metrics(job_id: str, wall_clock_s: float) -> dict[str, Any]:
 
 
 def _run_benchmark(audio_path: Path, template_id: str, title_prefix: str) -> dict[str, Any]:
+    """! @brief Run benchmark.
+    @param audio_path Path to the audio file.
+    @param template_id Identifier of the template.
+    @param title_prefix Value for title prefix.
+    @return Dictionary produced by the operation.
+    """
     runtime = JOB_STORE.create_job(
         audio_path=audio_path,
         original_filename=audio_path.name,
@@ -166,6 +183,10 @@ def _run_benchmark(audio_path: Path, template_id: str, title_prefix: str) -> dic
 
 
 def _run_stage6_benchmark(job_dir: Path) -> dict[str, Any]:
+    """! @brief Run stage6 benchmark.
+    @param job_dir Value for job dir.
+    @return Dictionary produced by the operation.
+    """
     normalized_audio_path = job_dir / "audio_normalized.wav"
     diarization_path = job_dir / "diarization.json"
     if not normalized_audio_path.exists() or not diarization_path.exists():
@@ -258,6 +279,9 @@ def _run_stage6_benchmark(job_dir: Path) -> dict[str, Any]:
 
 
 def main() -> int:
+    """! @brief Run the module entry point.
+    @return int result produced by the operation.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("audio_paths", nargs="*", type=Path)
     parser.add_argument("--job-dir", action="append", type=Path, default=[])

@@ -61,17 +61,28 @@ class PipelineOrchestrator:
     ]
 
     def __init__(self) -> None:
+        """! @brief Initialize the PipelineOrchestrator instance.
+        """
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=SETTINGS.max_workers)
         self._futures: dict[str, concurrent.futures.Future[None]] = {}
 
     def submit(self, job_id: str) -> None:
+        """! @brief Submit operation.
+        @param job_id Identifier of the job being processed.
+        """
         future = self._executor.submit(self._run_job, job_id)
         self._futures[job_id] = future
 
     def cancel(self, job_id: str) -> None:
+        """! @brief Cancel operation.
+        @param job_id Identifier of the job being processed.
+        """
         JOB_STORE.cancel(job_id)
 
     def _run_job(self, job_id: str) -> None:
+        """! @brief Run job.
+        @param job_id Identifier of the job being processed.
+        """
         run_started_at = datetime.now(timezone.utc)
         run_started_monotonic = time.monotonic()
         active_stage_key: str | None = None
@@ -179,6 +190,9 @@ class PipelineOrchestrator:
                     diarization_progress_stop, diarization_progress_thread = self._start_stage_heartbeat(job_id, 2)
 
                 def _diarization_progress(event: dict[str, object]) -> None:
+                    """! @brief Diarization progress.
+                    @param event Value for event.
+                    """
                     total_s = max(1.0, float(event.get("total_s", 0.0) or 0.0))
                     processed_s = max(0.0, float(event.get("processed_s", 0.0) or 0.0))
                     phase = str(event.get("phase") or "")
@@ -387,6 +401,10 @@ class PipelineOrchestrator:
                 )
 
             def _segment_progress(done: int, total: int) -> None:
+                """! @brief Segment progress.
+                @param done Value for done.
+                @param total Value for total.
+                """
                 stage_percent = (done / max(1, total)) * 100
                 JOB_STORE.set_transcription_progress(
                     job_id,
@@ -398,6 +416,8 @@ class PipelineOrchestrator:
 
             if api_config is not None and api_config.transcription_execution == "api":
                 if api_diarization_result is not None:
+                    # Reuse the diarized transcript that OpenAI already returned instead of uploading
+                    # per-speaker chunks again for a second cloud transcription step.
                     transcript_segments = self._transcript_segments_from_openai_diarization(
                         api_diarization_result,
                         speaker_map,
@@ -679,6 +699,10 @@ class PipelineOrchestrator:
                 )
 
     def _begin_stage_timing(self, stage_index: int) -> tuple[str, str, datetime, float]:
+        """! @brief Begin stage timing.
+        @param stage_index Value for stage index.
+        @return Tuple produced by the operation.
+        """
         return (
             self.STAGE_KEYS[stage_index],
             STAGES[stage_index],
@@ -694,6 +718,13 @@ class PipelineOrchestrator:
         started_at: datetime | None,
         started_monotonic: float | None,
     ) -> None:
+        """! @brief Finish stage timing.
+        @param stage_timings Value for stage timings.
+        @param stage_key Value for stage key.
+        @param stage_name Value for stage name.
+        @param started_at Value for started at.
+        @param started_monotonic Value for started monotonic.
+        """
         if stage_key is None or stage_name is None or started_at is None or started_monotonic is None:
             return
         finished_at = datetime.now(timezone.utc)
@@ -720,6 +751,20 @@ class PipelineOrchestrator:
         transcription_runtime_payload: dict[str, object] | None,
         formatter: Formatter | None,
     ) -> None:
+        """! @brief Write job summary.
+        @param job_id Identifier of the job being processed.
+        @param runtime Value for runtime.
+        @param job_dir Value for job dir.
+        @param run_started_at Value for run started at.
+        @param run_started_monotonic Value for run started monotonic.
+        @param stage_timings Value for stage timings.
+        @param diarization_result Value for diarization result.
+        @param mapping_items Value for mapping items.
+        @param transcript_segments Value for transcript segments.
+        @param audio_metadata_payload Value for audio metadata payload.
+        @param transcription_runtime_payload Value for transcription runtime payload.
+        @param formatter Value for formatter.
+        """
         state = JOB_STORE.get_state(job_id)
         template_name = None
         try:
@@ -791,6 +836,12 @@ class PipelineOrchestrator:
 
     @staticmethod
     def _build_execution_summary(runtime, transcription_runtime_payload: dict[str, object] | None, formatter: Formatter | None) -> dict[str, dict[str, object]]:
+        """! @brief Build execution summary.
+        @param runtime Value for runtime.
+        @param transcription_runtime_payload Value for transcription runtime payload.
+        @param formatter Value for formatter.
+        @return Dictionary produced by the operation.
+        """
         api_config = runtime.api_config
         diarization_model = resolve_local_diarization_model(runtime.local_diarization_model_id)
         diarization_api = api_config is not None and api_config.diarization_execution == "api"
@@ -865,6 +916,11 @@ class PipelineOrchestrator:
         runtime,
         normalized_audio_path: Path,
     ) -> OpenAIDiarizationResult:
+        """! @brief Diarize with openai.
+        @param runtime Value for runtime.
+        @param normalized_audio_path Value for normalized audio path.
+        @return Result produced by the operation.
+        """
         api_config = runtime.api_config
         if api_config is None:
             raise RuntimeError("OpenAI diarization requested without API configuration.")
@@ -877,6 +933,11 @@ class PipelineOrchestrator:
 
     @staticmethod
     def _pick_openai_audio_source(original_audio_path: Path, normalized_audio_path: Path) -> Path:
+        """! @brief Pick openai audio source.
+        @param original_audio_path Value for original audio path.
+        @param normalized_audio_path Value for normalized audio path.
+        @return Path result produced by the operation.
+        """
         supported_suffixes = {".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm"}
         original_suffix = original_audio_path.suffix.lower()
         if (
@@ -894,6 +955,10 @@ class PipelineOrchestrator:
 
     @staticmethod
     def _diarization_result_from_openai(result: OpenAIDiarizationResult) -> DiarizationResult:
+        """! @brief Diarization result from openai.
+        @param result Value for result.
+        @return Result produced by the operation.
+        """
         segments = [
             DiarizationSegment(
                 speaker_id=item.speaker_id,
@@ -915,6 +980,11 @@ class PipelineOrchestrator:
         result: OpenAIDiarizationResult,
         speaker_map: dict[str, str],
     ) -> list[dict[str, object]]:
+        """! @brief Transcript segments from openai diarization.
+        @param result Value for result.
+        @param speaker_map Mapping from speaker ids to final speaker names.
+        @return List produced by the operation.
+        """
         transcript_segments = [
             {
                 "speaker_id": item.speaker_id,
@@ -936,6 +1006,14 @@ class PipelineOrchestrator:
         segments_by_speaker: dict[str, list[tuple[float, float]]],
         snippets,
     ) -> JobSpeakerInfo:
+        """! @brief Build speaker info.
+        @param runtime Value for runtime.
+        @param job_id Identifier of the job being processed.
+        @param normalized_audio_path Value for normalized audio path.
+        @param segments_by_speaker Value for segments by speaker.
+        @param snippets Value for snippets.
+        @return Result produced by the operation.
+        """
         snippet_by_speaker: dict[str, list[SpeakerSnippet]] = {}
         for snippet in snippets:
             snippet_by_speaker.setdefault(snippet.speaker_id, []).append(
@@ -1037,6 +1115,10 @@ class PipelineOrchestrator:
 
     @staticmethod
     def _group_segments_by_speaker(segments: list[DiarizationSegment]) -> dict[str, list[tuple[float, float]]]:
+        """! @brief Group segments by speaker.
+        @param segments Segment collection processed by the operation.
+        @return Dictionary produced by the operation.
+        """
         grouped: dict[str, list[tuple[float, float]]] = {}
         for segment in segments:
             grouped.setdefault(segment.speaker_id, []).append((segment.start_s, segment.end_s))
@@ -1049,6 +1131,12 @@ class PipelineOrchestrator:
         max_segments: int = 8,
         min_duration_s: float = 1.5,
     ) -> list[tuple[float, float]]:
+        """! @brief Select profile segments.
+        @param segments Segment collection processed by the operation.
+        @param max_segments Value for max segments.
+        @param min_duration_s Value for min duration s.
+        @return List produced by the operation.
+        """
         if not segments:
             return []
         eligible = [item for item in segments if (item[1] - item[0]) >= min_duration_s]
@@ -1062,6 +1150,12 @@ class PipelineOrchestrator:
         speaker_map: dict[str, str],
         max_gap_s: float = 0.6,
     ) -> list[dict[str, object]]:
+        """! @brief Collapse labeled segments.
+        @param segments Segment collection processed by the operation.
+        @param speaker_map Mapping from speaker ids to final speaker names.
+        @param max_gap_s Value for max gap s.
+        @return List produced by the operation.
+        """
         if not segments:
             return []
 
@@ -1099,6 +1193,12 @@ class PipelineOrchestrator:
         max_gap_s: float,
         max_chunk_s: float,
     ) -> list[dict[str, object]]:
+        """! @brief Plan transcription chunks.
+        @param segments Segment collection processed by the operation.
+        @param max_gap_s Value for max gap s.
+        @param max_chunk_s Maximum chunk duration in seconds.
+        @return List produced by the operation.
+        """
         if not segments:
             return []
 
@@ -1116,6 +1216,10 @@ class PipelineOrchestrator:
         return chunks
 
     def _set_stage(self, job_id: str, stage_index: int) -> None:
+        """! @brief Set stage.
+        @param job_id Identifier of the job being processed.
+        @param stage_index Value for stage index.
+        """
         JOB_STORE.set_stage(job_id, STAGES[stage_index], overall_percent=self._overall(stage_index, 0.0))
 
     def _start_stage_heartbeat(
@@ -1128,9 +1232,20 @@ class PipelineOrchestrator:
         interval_s: float = 0.8,
         assumed_duration_s: float = 90.0,
     ) -> tuple[threading.Event, threading.Thread]:
+        """! @brief Start stage heartbeat.
+        @param job_id Identifier of the job being processed.
+        @param stage_index Value for stage index.
+        @param start_percent Value for start percent.
+        @param cap_percent Value for cap percent.
+        @param interval_s Value for interval s.
+        @param assumed_duration_s Value for assumed duration s.
+        @return Tuple produced by the operation.
+        """
         stop_event = threading.Event()
 
         def run() -> None:
+            """! @brief Run operation.
+            """
             started = time.monotonic()
             while not stop_event.wait(interval_s):
                 elapsed = time.monotonic() - started
@@ -1142,11 +1257,19 @@ class PipelineOrchestrator:
         return stop_event, thread
 
     def _overall(self, stage_index: int, stage_percent: float) -> float:
+        """! @brief Overall operation.
+        @param stage_index Value for stage index.
+        @param stage_percent Value for stage percent.
+        @return float result produced by the operation.
+        """
         base = 100 / len(STAGES)
         return min(100.0, (stage_index * base) + (stage_percent / 100.0) * base)
 
     @staticmethod
     def _ensure_not_cancelled(job_id: str) -> None:
+        """! @brief Ensure not cancelled.
+        @param job_id Identifier of the job being processed.
+        """
         if JOB_STORE.is_cancelled(job_id):
             raise CancelledError("Job cancelled")
 

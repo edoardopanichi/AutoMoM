@@ -31,11 +31,17 @@ AMBIGUITY_MARGIN = 0.03
 
 class VoiceProfileManager:
     def __init__(self) -> None:
+        """! @brief Initialize the VoiceProfileManager instance.
+        """
         SETTINGS.profiles_dir.mkdir(parents=True, exist_ok=True)
         self._refresh_tasks: dict[str, ProfileRefreshTask] = {}
         self._refresh_lock = RLock()
 
     def load_mono_audio(self, audio_path: Path) -> tuple[np.ndarray, int]:
+        """! @brief Load mono audio.
+        @param audio_path Path to the audio file.
+        @return Tuple produced by the operation.
+        """
         audio, sample_rate = sf.read(str(audio_path), always_2d=False)
         mono = np.asarray(audio, dtype=np.float32)
         if mono.ndim > 1:
@@ -43,6 +49,8 @@ class VoiceProfileManager:
         return mono, int(sample_rate)
 
     def purge_all(self) -> None:
+        """! @brief Purge all.
+        """
         for path in SETTINGS.profiles_dir.iterdir():
             if path.is_dir():
                 shutil.rmtree(path, ignore_errors=True)
@@ -50,6 +58,9 @@ class VoiceProfileManager:
                 path.unlink(missing_ok=True)
 
     def list_profiles(self) -> list[VoiceProfile]:
+        """! @brief List profiles.
+        @return List produced by the operation.
+        """
         profiles: list[VoiceProfile] = []
         for path in sorted(SETTINGS.profiles_dir.iterdir()):
             if not path.is_dir():
@@ -61,12 +72,19 @@ class VoiceProfileManager:
         return profiles
 
     def get_profile(self, profile_id: str) -> VoiceProfile:
+        """! @brief Get profile.
+        @param profile_id Identifier of the voice profile.
+        @return Result produced by the operation.
+        """
         path = self._profile_manifest(profile_id)
         if not path.exists():
             raise FileNotFoundError(profile_id)
         return VoiceProfile(**json.loads(path.read_text(encoding="utf-8")))
 
     def delete(self, profile_id: str) -> None:
+        """! @brief Delete operation.
+        @param profile_id Identifier of the voice profile.
+        """
         shutil.rmtree(self._profile_dir(profile_id), ignore_errors=True)
 
     def save_profile_sample(
@@ -85,6 +103,20 @@ class VoiceProfileManager:
         compute_device: str = "auto",
         cuda_device_id: int = 0,
     ) -> VoiceProfile:
+        """! @brief Save profile sample.
+        @param name Value for name.
+        @param source_audio_path Path to the source audio file.
+        @param clip_ranges Value for clip ranges.
+        @param diarization_model_id Value for diarization model id.
+        @param embedding_model_ref Value for embedding model ref.
+        @param source_job_id Value for source job id.
+        @param source_speaker_id Value for source speaker id.
+        @param threshold Value for threshold.
+        @param audio_data Value for audio data.
+        @param sample_rate Value for sample rate.
+        @param compute_device Requested compute device preference.
+        @param cuda_device_id CUDA device index to prefer when GPU execution is enabled.
+        """
         if not clip_ranges:
             raise ValueError("At least one clip range is required to save a voice profile.")
 
@@ -144,6 +176,15 @@ class VoiceProfileManager:
         cuda_device_id: int = 0,
         segments: list[tuple[float, float]] | None = None,
     ) -> np.ndarray:
+        """! @brief Compute embedding.
+        @param audio_path Path to the audio file.
+        @param diarization_model_id Value for diarization model id.
+        @param embedding_model_ref Value for embedding model ref.
+        @param compute_device Requested compute device preference.
+        @param cuda_device_id CUDA device index to prefer when GPU execution is enabled.
+        @param segments Segment collection processed by the operation.
+        @return Result produced by the operation.
+        """
         return compute_profile_embedding(
             audio_path,
             model_ref=embedding_model_ref,
@@ -161,6 +202,14 @@ class VoiceProfileManager:
         threshold: float = DEFAULT_THRESHOLD,
         profiles: Sequence[VoiceProfile] | None = None,
     ) -> MatchResponse:
+        """! @brief Match operation.
+        @param embedding Value for embedding.
+        @param diarization_model_id Value for diarization model id.
+        @param embedding_model_ref Value for embedding model ref.
+        @param threshold Value for threshold.
+        @param profiles Value for profiles.
+        @return Result produced by the operation.
+        """
         target_key = self._model_key(diarization_model_id, embedding_model_ref)
         normalized = self._normalize(embedding)
         per_profile: dict[str, MatchResult] = {}
@@ -207,6 +256,15 @@ class VoiceProfileManager:
         compute_device: str = "auto",
         cuda_device_id: int = 0,
     ) -> ProfileRefreshTask:
+        """! @brief Start refresh task.
+        @param diarization_execution Value for diarization execution.
+        @param local_diarization_model_id Value for local diarization model id.
+        @param openai_diarization_model Value for openai diarization model.
+        @param embedding_model_ref Value for embedding model ref.
+        @param compute_device Requested compute device preference.
+        @param cuda_device_id CUDA device index to prefer when GPU execution is enabled.
+        @return Result produced by the operation.
+        """
         now = datetime.now(timezone.utc)
         task = ProfileRefreshTask(
             task_id=str(uuid4()),
@@ -234,6 +292,10 @@ class VoiceProfileManager:
         return task
 
     def get_refresh_task(self, task_id: str) -> ProfileRefreshTask:
+        """! @brief Get refresh task.
+        @param task_id Identifier of the background task.
+        @return Result produced by the operation.
+        """
         with self._refresh_lock:
             task = self._refresh_tasks.get(task_id)
         if task is None:
@@ -248,6 +310,12 @@ class VoiceProfileManager:
         compute_device: str,
         cuda_device_id: int,
     ) -> None:
+        """! @brief Run refresh task.
+        @param task_id Identifier of the background task.
+        @param embedding_model_ref Value for embedding model ref.
+        @param compute_device Requested compute device preference.
+        @param cuda_device_id CUDA device index to prefer when GPU execution is enabled.
+        """
         task = self.get_refresh_task(task_id)
         self._update_refresh_task(task_id, status="running", message="Refreshing saved profiles.")
 
@@ -322,6 +390,10 @@ class VoiceProfileManager:
             self._update_refresh_task(task_id, status="failed", message=str(exc))
 
     def _update_refresh_task(self, task_id: str, **changes: object) -> None:
+        """! @brief Update refresh task.
+        @param task_id Identifier of the background task.
+        @param changes Value for changes.
+        """
         with self._refresh_lock:
             task = self._refresh_tasks[task_id]
             payload = task.model_dump()
@@ -337,6 +409,13 @@ class VoiceProfileManager:
         vector: np.ndarray,
         threshold: float = DEFAULT_THRESHOLD,
     ) -> VoiceProfileEmbedding:
+        """! @brief Build embedding entry.
+        @param diarization_model_id Value for diarization model id.
+        @param embedding_model_ref Value for embedding model ref.
+        @param vector Value for vector.
+        @param threshold Value for threshold.
+        @return Result produced by the operation.
+        """
         now = datetime.now(timezone.utc)
         return VoiceProfileEmbedding(
             embedding_id=str(uuid4()),
@@ -351,6 +430,9 @@ class VoiceProfileManager:
         )
 
     def _persist_profile(self, profile: VoiceProfile) -> None:
+        """! @brief Persist profile.
+        @param profile Value for profile.
+        """
         profile_dir = self._profile_dir(profile.profile_id, profile.name)
         profile_dir.mkdir(parents=True, exist_ok=True)
         manifest = profile_dir / "profile.json"
@@ -358,6 +440,10 @@ class VoiceProfileManager:
         self._delete_stale_paths(profile.profile_id, keep=profile_dir)
 
     def _new_profile(self, name: str) -> VoiceProfile:
+        """! @brief New profile.
+        @param name Value for name.
+        @return Result produced by the operation.
+        """
         now = datetime.now(timezone.utc)
         return VoiceProfile(
             profile_id=str(uuid4()),
@@ -369,6 +455,10 @@ class VoiceProfileManager:
         )
 
     def _find_by_name(self, name: str) -> VoiceProfile | None:
+        """! @brief Find by name.
+        @param name Value for name.
+        @return Result produced by the operation.
+        """
         needle = name.strip().lower()
         for profile in self.list_profiles():
             if profile.name.strip().lower() == needle:
@@ -382,6 +472,12 @@ class VoiceProfileManager:
         sample_rate: int,
         clip_ranges: Sequence[tuple[float, float]],
     ) -> None:
+        """! @brief Write reference audio.
+        @param output_path Path to the output file.
+        @param audio_data Value for audio data.
+        @param sample_rate Value for sample rate.
+        @param clip_ranges Value for clip ranges.
+        """
         clips: list[np.ndarray] = []
         for start_s, end_s in clip_ranges:
             start_idx = max(0, int(start_s * sample_rate))
@@ -400,6 +496,10 @@ class VoiceProfileManager:
 
     @staticmethod
     def _normalize(vector: np.ndarray) -> np.ndarray:
+        """! @brief Normalize operation.
+        @param vector Value for vector.
+        @return Result produced by the operation.
+        """
         norm = np.linalg.norm(vector)
         if norm == 0:
             return vector.astype(np.float32)
@@ -407,11 +507,20 @@ class VoiceProfileManager:
 
     @staticmethod
     def _slugify_name(name: str) -> str:
+        """! @brief Slugify name.
+        @param name Value for name.
+        @return str result produced by the operation.
+        """
         normalized = re.sub(r"[^a-zA-Z0-9]+", "_", name.strip().lower()).strip("_")
         return normalized[:60] or "speaker"
 
     @classmethod
     def _profile_dir(cls, profile_id: str, name: str | None = None) -> Path:
+        """! @brief Profile dir.
+        @param profile_id Identifier of the voice profile.
+        @param name Value for name.
+        @return Path result produced by the operation.
+        """
         if name:
             return SETTINGS.profiles_dir / f"{cls._slugify_name(name)}--{profile_id}"
         named = sorted(SETTINGS.profiles_dir.glob(f"*--{profile_id}"))
@@ -421,10 +530,18 @@ class VoiceProfileManager:
 
     @classmethod
     def _profile_manifest(cls, profile_id: str) -> Path:
+        """! @brief Profile manifest.
+        @param profile_id Identifier of the voice profile.
+        @return Path result produced by the operation.
+        """
         return cls._profile_dir(profile_id) / "profile.json"
 
     @classmethod
     def _delete_stale_paths(cls, profile_id: str, keep: Path) -> None:
+        """! @brief Delete stale paths.
+        @param profile_id Identifier of the voice profile.
+        @param keep Value for keep.
+        """
         candidates = {SETTINGS.profiles_dir / profile_id, *SETTINGS.profiles_dir.glob(f"*--{profile_id}")}
         for candidate in candidates:
             if candidate == keep:
@@ -436,6 +553,11 @@ class VoiceProfileManager:
 
     @staticmethod
     def _model_key(diarization_model_id: str, embedding_model_ref: str) -> str:
+        """! @brief Model key.
+        @param diarization_model_id Value for diarization model id.
+        @param embedding_model_ref Value for embedding model ref.
+        @return str result produced by the operation.
+        """
         return f"local_pyannote::{diarization_model_id}::{embedding_model_ref}"
 
 

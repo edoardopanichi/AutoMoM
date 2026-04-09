@@ -6,6 +6,10 @@ from backend.app.job_store import JOB_STORE
 
 
 def test_job_id_uses_timestamp_and_title(isolated_settings, tmp_path: Path) -> None:
+    """! @brief Test job id uses timestamp and title.
+    @param isolated_settings Value for isolated settings.
+    @param tmp_path Value for tmp path.
+    """
     audio = tmp_path / "a.wav"
     audio.write_bytes(b"x")
 
@@ -23,6 +27,10 @@ def test_job_id_uses_timestamp_and_title(isolated_settings, tmp_path: Path) -> N
 
 
 def test_job_id_falls_back_to_meeting_when_title_missing(isolated_settings, tmp_path: Path) -> None:
+    """! @brief Test job id falls back to meeting when title missing.
+    @param isolated_settings Value for isolated settings.
+    @param tmp_path Value for tmp path.
+    """
     audio = tmp_path / "a.wav"
     audio.write_bytes(b"x")
 
@@ -39,6 +47,10 @@ def test_job_id_falls_back_to_meeting_when_title_missing(isolated_settings, tmp_
 
 
 def test_submit_speaker_mapping_requires_waiting_state(isolated_settings, tmp_path: Path) -> None:
+    """! @brief Test submit speaker mapping reqUIres waiting state.
+    @param isolated_settings Value for isolated settings.
+    @param tmp_path Value for tmp path.
+    """
     audio = tmp_path / "a.wav"
     audio.write_bytes(b"x")
 

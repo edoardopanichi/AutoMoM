@@ -19,6 +19,8 @@ from backend.pipeline.template_manager import TemplateManager
 
 
 def prepare_mock_models() -> None:
+    """! @brief Prepare mock models.
+    """
     targets = [
         (
             Path(SETTINGS.diarization_model_path),
@@ -34,6 +36,9 @@ def prepare_mock_models() -> None:
 
 
 def main() -> int:
+    """! @brief Run the module entry point.
+    @return int result produced by the operation.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("audio_path", type=Path)
     parser.add_argument("--template-id", default="default")

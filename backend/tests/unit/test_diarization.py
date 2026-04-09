@@ -13,6 +13,9 @@ from backend.pipeline.vad import SpeechRegion
 
 
 def test_diarize_returns_segments(tmp_path: Path) -> None:
+    """! @brief Test diarize returns segments.
+    @param tmp_path Value for tmp path.
+    """
     sample_rate = 16000
     t = np.linspace(0, 1.5, int(sample_rate * 1.5), endpoint=False)
     speaker_a = 0.25 * np.sin(2 * np.pi * 220 * t)
@@ -31,6 +34,10 @@ def test_diarize_returns_segments(tmp_path: Path) -> None:
 
 
 def test_diarize_forced_pyannote_raises_when_not_configured(monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test diarize forced pyannote raises when not configured.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Value for tmp path.
+    """
     monkeypatch.delenv("AUTOMOM_DIARIZATION_PIPELINE", raising=False)
     sample_rate = 16000
     t = np.linspace(0, 1.0, sample_rate, endpoint=False)
@@ -53,10 +60,20 @@ def test_diarize_forced_pyannote_raises_when_not_configured(monkeypatch, tmp_pat
 
 
 def test_pyannote_import_skipped_when_pipeline_missing(monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test pyannote import skipped when pipeline missing.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Value for tmp path.
+    """
     monkeypatch.delenv("AUTOMOM_DIARIZATION_PIPELINE", raising=False)
     original_import = builtins.__import__
 
     def guarded_import(name, *args, **kwargs):
+        """! @brief Guarded import.
+        @param name Value for name.
+        @param args Value for args.
+        @param kwargs Value for kwargs.
+        @return Result produced by the operation.
+        """
         if name.startswith("pyannote"):
             raise AssertionError("pyannote import should not happen without pipeline configuration")
         return original_import(name, *args, **kwargs)
@@ -77,6 +94,8 @@ def test_pyannote_import_skipped_when_pipeline_missing(monkeypatch, tmp_path: Pa
 
 
 def test_plan_chunked_diarization_uses_ceil_20_min_windows() -> None:
+    """! @brief Test plan chunked diarization uses ceil 20 min windows.
+    """
     chunks = diarization_module._plan_chunked_diarization(
         speech_regions=[],
         total_duration_s=57 * 60.0,
@@ -89,6 +108,8 @@ def test_plan_chunked_diarization_uses_ceil_20_min_windows() -> None:
 
 
 def test_filter_segments_to_owned_window_clips_and_deduplicates_overlap() -> None:
+    """! @brief Test filter segments to owned window clips and deduplicates overlap.
+    """
     segments = [
         diarization_module.DiarizationSegment("A", 590.0, 605.0),
         diarization_module.DiarizationSegment("A", 605.0, 615.0),
@@ -108,6 +129,8 @@ def test_filter_segments_to_owned_window_clips_and_deduplicates_overlap() -> Non
 
 
 def test_assign_chunk_speakers_to_global_reuses_matching_speaker() -> None:
+    """! @brief Test assign chunk speakers to global reuses matching speaker.
+    """
     representative = {
         "chunk_speaker_0": np.array([1.0, 0.0], dtype=np.float32),
         "chunk_speaker_1": np.array([0.0, 1.0], dtype=np.float32),
@@ -129,6 +152,10 @@ def test_assign_chunk_speakers_to_global_reuses_matching_speaker() -> None:
 
 
 def test_diarize_auto_raises_when_pyannote_unavailable(monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test diarize auto raises when pyannote unavailable.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Value for tmp path.
+    """
     sample_rate = 16000
     t = np.linspace(0, 1.0, sample_rate, endpoint=False)
     audio = (0.2 * np.sin(2 * np.pi * 250 * t)).astype(np.float32)
@@ -145,6 +172,10 @@ def test_diarize_auto_raises_when_pyannote_unavailable(monkeypatch, tmp_path: Pa
 
 
 def test_diarize_pyannote_delegates_to_subprocess_helper(monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test diarize pyannote delegates to subprocess helper.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Value for tmp path.
+    """
     sample_rate = 16000
     path = tmp_path / "diar_subprocess.wav"
     sf.write(path, np.zeros(sample_rate, dtype=np.float32), sample_rate)
@@ -176,6 +207,10 @@ def test_diarize_pyannote_delegates_to_subprocess_helper(monkeypatch, tmp_path: 
 
 
 def test_diarize_forced_embedding_raises_when_unavailable(monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test diarize forced embedding raises when unavailable.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Value for tmp path.
+    """
     sample_rate = 16000
     t = np.linspace(0, 1.0, sample_rate, endpoint=False)
     audio = (0.2 * np.sin(2 * np.pi * 250 * t)).astype(np.float32)
@@ -192,6 +227,8 @@ def test_diarize_forced_embedding_raises_when_unavailable(monkeypatch, tmp_path:
 
 
 def test_merge_transcript_segments_merges_adjacent() -> None:
+    """! @brief Test merge transcript segments merges adjacent.
+    """
     segments = [
         {"speaker_name": "Alice", "start_s": 0.0, "end_s": 1.0, "text": "Hello"},
         {"speaker_name": "Alice", "start_s": 1.2, "end_s": 2.0, "text": "there"},
@@ -205,6 +242,8 @@ def test_merge_transcript_segments_merges_adjacent() -> None:
 
 
 def test_merge_transcript_segments_default_merges_same_speaker_with_large_gap() -> None:
+    """! @brief Test merge transcript segments default merges same speaker with large gap.
+    """
     segments = [
         {"speaker_name": "Alice", "start_s": 0.0, "end_s": 1.0, "text": "Hello"},
         {"speaker_name": "Alice", "start_s": 6.5, "end_s": 7.2, "text": "again"},
@@ -219,6 +258,9 @@ def test_merge_transcript_segments_default_merges_same_speaker_with_large_gap() 
 
 
 def test_estimate_speaker_count_penalizes_singleton_heavy_clusterings(monkeypatch) -> None:
+    """! @brief Test estimate speaker count penalizes singleton heavy clusterings.
+    @param monkeypatch Value for monkeypatch.
+    """
     features = np.zeros((10, 4), dtype=np.float32)
     labels_by_k = {
         2: np.array([0, 0, 0, 0, 0, 1, 1, 1, 1, 1]),
@@ -241,6 +283,9 @@ def test_estimate_speaker_count_penalizes_singleton_heavy_clusterings(monkeypatc
 
 
 def test_estimate_speaker_count_can_pick_higher_k_when_clusters_are_stable(monkeypatch) -> None:
+    """! @brief Test estimate speaker count can pick higher k when clusters are stable.
+    @param monkeypatch Value for monkeypatch.
+    """
     features = np.zeros((12, 4), dtype=np.float32)
     labels_by_k = {
         2: np.array([0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1]),
@@ -262,26 +307,47 @@ def test_estimate_speaker_count_can_pick_higher_k_when_clusters_are_stable(monke
 
 
 def test_run_pyannote_pipeline_retries_on_cpu_after_cuda_oom() -> None:
+    """! @brief Test run pyannote pipeline retries on cpu after cuda oom.
+    """
     class FakeTorch:
         class cuda:
             @staticmethod
             def empty_cache():
+                """! @brief Empty cache.
+                @return Result produced by the operation.
+                """
                 return None
 
         @staticmethod
         def device(name):
+            """! @brief Device operation.
+            @param name Value for name.
+            @return Result produced by the operation.
+            """
             return name
 
     class FakePipeline:
         def __init__(self):
+            """! @brief Initialize the FakePipeline instance.
+            @return Result produced by the operation.
+            """
             self.current_device = "cpu"
             self.moves = []
 
         def to(self, device):
+            """! @brief To operation.
+            @param device Value for device.
+            @return Result produced by the operation.
+            """
             self.current_device = str(device)
             self.moves.append(self.current_device)
 
         def __call__(self, input_payload, **kwargs):
+            """! @brief Call operation.
+            @param input_payload Value for input payload.
+            @param kwargs Value for kwargs.
+            @return Result produced by the operation.
+            """
             if self.current_device == "cuda":
                 raise RuntimeError("CUDA out of memory")
             return "ok"

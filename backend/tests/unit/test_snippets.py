@@ -10,6 +10,8 @@ from backend.pipeline.snippets import extract_snippets, pick_snippet_ranges
 
 
 def test_pick_snippet_ranges_groups_by_speaker() -> None:
+    """! @brief Test pick snippet ranges groups by speaker.
+    """
     segments = [
         DiarizationSegment("SPEAKER_0", 0.0, 6.0),
         DiarizationSegment("SPEAKER_0", 7.0, 11.0),
@@ -24,9 +26,22 @@ def test_pick_snippet_ranges_groups_by_speaker() -> None:
 
 
 def test_extract_snippets_invokes_segment_extraction(monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test extract snippets invokes segment extraction.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Value for tmp path.
+    """
     calls = []
 
     def fake_extract_segment(input_path, output_path, start_s, end_s, ffmpeg_bin, job_id=None):
+        """! @brief Fake extract segment.
+        @param input_path Path to the input file.
+        @param output_path Path to the output file.
+        @param start_s Value for start s.
+        @param end_s Value for end s.
+        @param ffmpeg_bin Value for ffmpeg bin.
+        @param job_id Identifier of the job being processed.
+        @return Result produced by the operation.
+        """
         calls.append((input_path, output_path, start_s, end_s, ffmpeg_bin))
         output_path.write_bytes(b"wav")
 
@@ -41,6 +56,9 @@ def test_extract_snippets_invokes_segment_extraction(monkeypatch, tmp_path: Path
 
 
 def test_pick_snippet_ranges_prefers_clearer_audio_regions(tmp_path: Path) -> None:
+    """! @brief Test pick snippet ranges prefers clearer audio regions.
+    @param tmp_path Value for tmp path.
+    """
     sample_rate = 16000
     quiet = np.full(sample_rate * 6, 0.005, dtype=np.float32)
     clear = np.full(sample_rate * 6, 0.2, dtype=np.float32)

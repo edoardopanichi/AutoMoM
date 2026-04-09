@@ -9,6 +9,9 @@ from backend.pipeline.vad import detect_speech_regions
 
 
 def test_detect_speech_regions_finds_active_interval(tmp_path: Path) -> None:
+    """! @brief Test detect speech regions finds active interval.
+    @param tmp_path Value for tmp path.
+    """
     sample_rate = 16000
     silence = np.zeros(sample_rate, dtype=np.float32)
     t = np.linspace(0, 1, sample_rate, endpoint=False)
