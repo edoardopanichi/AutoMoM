@@ -6,8 +6,64 @@ const state = {
   modelDownloadPoller: null,
   profileRefreshPoller: null,
   speakerFormFingerprint: null,
-  formatterModelTag: "",
+  localModelCatalog: { defaults: {}, models: [] },
   diarizationModels: [],
+  transcriptionModels: [],
+  formatterModels: [],
+};
+
+const LOCAL_RUNTIME_OPTIONS = {
+  diarization: ["pyannote"],
+  transcription: ["whisper.cpp", "faster-whisper"],
+  formatter: ["ollama", "command"],
+};
+
+const LOCAL_MODEL_FIELD_CONFIG = {
+  "pyannote": {
+    primaryKey: "pipeline_path",
+    primaryLabel: "Pipeline path",
+    primaryPlaceholder: "/abs/path/to/config.yaml",
+    secondaryKey: "embedding_model_ref",
+    secondaryLabel: "Embedding model ref",
+    secondaryPlaceholder: "pyannote/wespeaker-voxceleb-resnet34-LM",
+    help: "Register an existing local pyannote pipeline config and its embedding reference.",
+  },
+  "whisper.cpp": {
+    primaryKey: "binary_path",
+    primaryLabel: "Binary path",
+    primaryPlaceholder: "/abs/path/to/whisper-cli",
+    secondaryKey: "model_path",
+    secondaryLabel: "Model path",
+    secondaryPlaceholder: "/abs/path/to/model.gguf",
+    help: "Register an existing whisper.cpp binary and GGUF model file.",
+  },
+  "faster-whisper": {
+    primaryKey: "model_path",
+    primaryLabel: "Model directory",
+    primaryPlaceholder: "/abs/path/to/ctranslate2-model",
+    secondaryKey: "compute_type",
+    secondaryLabel: "Compute type",
+    secondaryPlaceholder: "auto | float16 | int8",
+    help: "Register an existing faster-whisper model directory. The package must already be installed.",
+  },
+  "ollama": {
+    primaryKey: "tag",
+    primaryLabel: "Ollama tag",
+    primaryPlaceholder: "phi4-mini",
+    secondaryKey: "",
+    secondaryLabel: "Secondary setting",
+    secondaryPlaceholder: "",
+    help: "Register an already-pulled Ollama model tag.",
+  },
+  "command": {
+    primaryKey: "command_template",
+    primaryLabel: "Command template",
+    primaryPlaceholder: "bash -lc \"... {model} ...\"",
+    secondaryKey: "model_path",
+    secondaryLabel: "Model path",
+    secondaryPlaceholder: "/abs/path/to/model.gguf",
+    help: "Register a command-based formatter with an existing local model file.",
+  },
 };
 
 /**
@@ -79,18 +135,22 @@ async function fetchJSON(url, options = {}) {
  * @brief Load Startup Data.
  */
 async function loadStartupData() {
-  const [templates, models, profiles, downloads, formatterModel, diarizationModelPayload] = await Promise.all([
+  const [templates, models, profiles, downloads, localModelCatalog] = await Promise.all([
     fetchJSON("/api/templates"),
     fetchJSON("/api/models"),
     fetchJSON("/api/profiles"),
     fetchJSON("/api/models/downloads"),
-    fetchJSON("/api/models/formatter"),
-    fetchJSON("/api/models/diarization"),
+    fetchJSON("/api/models/local"),
   ]);
-  state.formatterModelTag = formatterModel.model_tag || "";
-  state.diarizationModels = diarizationModelPayload.models || [];
+  state.localModelCatalog = localModelCatalog;
+  state.diarizationModels = (localModelCatalog.models || []).filter((item) => item.stage === "diarization");
+  state.transcriptionModels = (localModelCatalog.models || []).filter((item) => item.stage === "transcription");
+  state.formatterModels = (localModelCatalog.models || []).filter((item) => item.stage === "formatter");
   state.modelDownloads = Object.fromEntries(downloads.map((item) => [item.model_id, item]));
-  renderDiarizationModels(diarizationModelPayload);
+  renderDiarizationModels();
+  renderTranscriptionModels();
+  renderFormatterModels();
+  syncLocalModelForm();
   renderTemplateSelect(templates);
   renderExecutionModelLabels();
   renderTemplates(templates);
@@ -103,17 +163,52 @@ async function loadStartupData() {
  * @brief Render Diarization Models.
  * @param {*} payload Payload consumed by the renderer.
  */
-function renderDiarizationModels(payload) {
+function renderDiarizationModels() {
   const select = qs("#local-diarization-model");
   if (!select) return;
   select.innerHTML = "";
-  (payload.models || []).forEach((model) => {
+  state.diarizationModels.forEach((model) => {
     const option = document.createElement("option");
     option.value = model.model_id;
     option.textContent = model.name;
+    option.disabled = !model.installed;
     select.appendChild(option);
   });
-  select.value = payload.selected_model_id || (payload.models || [])[0]?.model_id || "";
+  select.value = state.localModelCatalog.defaults.diarization || state.diarizationModels[0]?.model_id || "";
+}
+
+/**
+ * @brief Render Transcription Models.
+ */
+function renderTranscriptionModels() {
+  const select = qs("#local-transcription-model");
+  if (!select) return;
+  select.innerHTML = "";
+  state.transcriptionModels.forEach((model) => {
+    const option = document.createElement("option");
+    option.value = model.model_id;
+    option.textContent = model.installed ? `${model.name} (${model.runtime})` : `${model.name} (${model.runtime}, unavailable)`;
+    option.disabled = !model.installed;
+    select.appendChild(option);
+  });
+  select.value = state.localModelCatalog.defaults.transcription || state.transcriptionModels[0]?.model_id || "";
+}
+
+/**
+ * @brief Render Formatter Models.
+ */
+function renderFormatterModels() {
+  const select = qs("#local-formatter-model");
+  if (!select) return;
+  select.innerHTML = "";
+  state.formatterModels.forEach((model) => {
+    const option = document.createElement("option");
+    option.value = model.model_id;
+    option.textContent = model.installed ? `${model.name} (${model.runtime})` : `${model.name} (${model.runtime}, unavailable)`;
+    option.disabled = !model.installed;
+    select.appendChild(option);
+  });
+  select.value = state.localModelCatalog.defaults.formatter || state.formatterModels[0]?.model_id || "";
 }
 
 /**
@@ -135,15 +230,9 @@ function renderTemplateSelect(templates) {
  * @brief Render Execution Model Labels.
  */
 function renderExecutionModelLabels() {
-  const formatterLocalSelect = qs("#local-formatter-model");
-  if (!formatterLocalSelect) return;
-  formatterLocalSelect.innerHTML = "";
-  const option = document.createElement("option");
-  option.value = state.formatterModelTag || "ollama-current";
-  option.textContent = state.formatterModelTag
-    ? `Ollama: ${state.formatterModelTag}`
-    : "Current Ollama formatter model";
-  formatterLocalSelect.appendChild(option);
+  renderDiarizationModels();
+  renderTranscriptionModels();
+  renderFormatterModels();
 }
 
 /**
@@ -266,6 +355,81 @@ function renderModels(models) {
   const container = qs("#models");
   container.innerHTML = "";
 
+  const localModels = state.localModelCatalog.models || [];
+  if (localModels.length) {
+    localModels.forEach((model) => {
+      const card = document.createElement("article");
+      card.className = "model-card";
+      card.dataset.modelId = model.model_id;
+      card.dataset.installed = String(Boolean(model.installed));
+      card.dataset.downloadStatus = model.installed ? "completed" : "idle";
+
+      const eyebrow = document.createElement("p");
+      eyebrow.className = "card-eyebrow";
+      eyebrow.textContent = `Local ${model.stage}`;
+
+      const title = document.createElement("div");
+      title.className = "card-title";
+      const strong = document.createElement("strong");
+      strong.textContent = model.name;
+      const small = document.createElement("small");
+      small.textContent = `[${model.runtime}]`;
+      title.append(strong, small);
+
+      const info = document.createElement("div");
+      info.className = "card-meta";
+      const defaultForStage = state.localModelCatalog.defaults[model.stage] === model.model_id ? " | Default" : "";
+      info.textContent = `Installed: ${model.installed ? "yes" : "no"} | Stage: ${model.stage}${defaultForStage}`;
+
+      const details = document.createElement("div");
+      details.className = "card-meta";
+      const configSummary = Object.entries(model.config || {})
+        .map(([key, value]) => `${key}=${value}`)
+        .join(" | ");
+      details.textContent = model.validation_error
+        ? `Validation: ${model.validation_error}`
+        : configSummary || "Ready";
+
+      const actionRow = document.createElement("div");
+      actionRow.className = "model-action-row";
+
+      const defaultBtn = document.createElement("button");
+      defaultBtn.className = "download-btn";
+      defaultBtn.textContent = "Set default";
+      defaultBtn.disabled = !model.installed || state.localModelCatalog.defaults[model.stage] === model.model_id;
+      defaultBtn.addEventListener("click", async () => {
+        try {
+          await fetchJSON("/api/models/local/defaults", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ stage: model.stage, model_id: model.model_id }),
+          });
+          await refreshSettings();
+        } catch (error) {
+          alert(`Unable to set default: ${error.message}`);
+        }
+      });
+      actionRow.append(defaultBtn);
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.className = "download-btn";
+      deleteBtn.textContent = "Delete";
+      deleteBtn.disabled = state.localModelCatalog.defaults[model.stage] === model.model_id;
+      deleteBtn.addEventListener("click", async () => {
+        try {
+          await fetchJSON(`/api/models/local/${encodeURIComponent(model.model_id)}`, { method: "DELETE" });
+          await refreshSettings();
+        } catch (error) {
+          alert(`Unable to delete model: ${error.message}`);
+        }
+      });
+      actionRow.append(deleteBtn);
+
+      card.append(eyebrow, title, info, details, actionRow);
+      container.appendChild(card);
+    });
+  }
+
   models.forEach((model) => {
     const downloadState = state.modelDownloads[model.model_id] || {
       status: model.installed ? "completed" : "idle",
@@ -297,38 +461,8 @@ function renderModels(models) {
     info.className = "card-meta";
     info.textContent = `Installed: ${model.installed ? "yes" : "no"} | Size: ${model.size_mb} MB | Source: ${model.source}`;
 
-    const formatterModelWrap = document.createElement("div");
     const actionRow = document.createElement("div");
     actionRow.className = "model-action-row";
-    let formatterModelInput = null;
-    if (model.model_id === "formatter") {
-      const input = document.createElement("input");
-      input.type = "text";
-      input.value = state.formatterModelTag || "";
-      input.placeholder = "ollama model tag (e.g. qwen2.5:3b-instruct-q5_K_M)";
-      input.style.width = "100%";
-      formatterModelInput = input;
-
-      const saveBtn = document.createElement("button");
-      saveBtn.className = "download-btn formatter-set-btn";
-      saveBtn.textContent = "Set formatter model";
-      saveBtn.addEventListener("click", async () => {
-        try {
-          const payload = await fetchJSON("/api/models/formatter", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ model_tag: input.value.trim() }),
-          });
-          state.formatterModelTag = payload.model_tag;
-          await refreshSettings();
-        } catch (error) {
-          alert(`Unable to set formatter model: ${error.message}`);
-        }
-      });
-
-      formatterModelWrap.append(input);
-      actionRow.append(saveBtn);
-    }
 
     const download = document.createElement("button");
     download.className = "download-btn";
@@ -336,18 +470,6 @@ function renderModels(models) {
     download.disabled = model.installed || downloadState.status === "running";
     download.addEventListener("click", async () => {
       try {
-        if (model.model_id === "formatter" && formatterModelInput) {
-          const selectedTag = formatterModelInput.value.trim();
-          if (!selectedTag) {
-            throw new Error("Formatter model tag is required");
-          }
-          const payload = await fetchJSON("/api/models/formatter", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ model_tag: selectedTag }),
-          });
-          state.formatterModelTag = payload.model_tag;
-        }
         await fetchJSON("/api/models/download", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -373,7 +495,7 @@ function renderModels(models) {
     progressBar.style.width = `${Math.max(0, Math.min(100, Number(downloadState.percent || 0))).toFixed(1)}%`;
     progressWrap.appendChild(progressBar);
 
-    card.append(eyebrow, title, info, formatterModelWrap, actionRow, downloadStatus, progressWrap);
+    card.append(eyebrow, title, info, actionRow, downloadStatus, progressWrap);
     container.appendChild(card);
   });
 }
@@ -478,23 +600,116 @@ async function pollProfileRefreshTask(taskId) {
  * @brief Refresh Settings.
  */
 async function refreshSettings() {
-  const [templates, models, profiles, downloads, formatterModel, diarizationModelPayload] = await Promise.all([
+  const [templates, models, profiles, downloads, localModelCatalog] = await Promise.all([
     fetchJSON("/api/templates"),
     fetchJSON("/api/models"),
     fetchJSON("/api/profiles"),
     fetchJSON("/api/models/downloads"),
-    fetchJSON("/api/models/formatter"),
-    fetchJSON("/api/models/diarization"),
+    fetchJSON("/api/models/local"),
   ]);
-  state.formatterModelTag = formatterModel.model_tag || "";
-  state.diarizationModels = diarizationModelPayload.models || [];
+  state.localModelCatalog = localModelCatalog;
+  state.diarizationModels = (localModelCatalog.models || []).filter((item) => item.stage === "diarization");
+  state.transcriptionModels = (localModelCatalog.models || []).filter((item) => item.stage === "transcription");
+  state.formatterModels = (localModelCatalog.models || []).filter((item) => item.stage === "formatter");
   state.modelDownloads = Object.fromEntries(downloads.map((item) => [item.model_id, item]));
-  renderDiarizationModels(diarizationModelPayload);
+  renderDiarizationModels();
+  renderTranscriptionModels();
+  renderFormatterModels();
+  syncLocalModelForm();
   renderTemplateSelect(templates);
   renderExecutionModelLabels();
   renderTemplates(templates);
   renderModels(models);
   renderProfiles(profiles);
+}
+
+/**
+ * @brief Synchronize Local Model Form.
+ */
+function syncLocalModelForm() {
+  const stageSelect = qs("#local-model-stage");
+  const runtimeSelect = qs("#local-model-runtime");
+  const primaryLabel = qs("#local-model-primary-label");
+  const secondaryLabel = qs("#local-model-secondary-label");
+  const primaryInput = qs("#local-model-primary");
+  const secondaryInput = qs("#local-model-secondary");
+  const help = qs("#local-model-help");
+  if (!stageSelect || !runtimeSelect) return;
+
+  const stage = stageSelect.value || "transcription";
+  const runtimes = LOCAL_RUNTIME_OPTIONS[stage] || [];
+  const currentRuntime = runtimeSelect.value;
+  runtimeSelect.innerHTML = "";
+  runtimes.forEach((runtime) => {
+    const option = document.createElement("option");
+    option.value = runtime;
+    option.textContent = runtime;
+    runtimeSelect.appendChild(option);
+  });
+  runtimeSelect.value = runtimes.includes(currentRuntime) ? currentRuntime : runtimes[0];
+
+  const fieldConfig = LOCAL_MODEL_FIELD_CONFIG[runtimeSelect.value];
+  primaryLabel.textContent = fieldConfig.primaryLabel;
+  secondaryLabel.textContent = fieldConfig.secondaryLabel || "Secondary setting";
+  primaryInput.placeholder = fieldConfig.primaryPlaceholder || "";
+  secondaryInput.placeholder = fieldConfig.secondaryPlaceholder || "";
+  secondaryInput.disabled = !fieldConfig.secondaryKey;
+  help.textContent = fieldConfig.help;
+}
+
+/**
+ * @brief Register Local Model.
+ */
+async function registerLocalModel() {
+  const stage = qs("#local-model-stage").value;
+  const runtime = qs("#local-model-runtime").value;
+  const name = qs("#local-model-name").value.trim();
+  const primary = qs("#local-model-primary").value.trim();
+  const secondary = qs("#local-model-secondary").value.trim();
+  const languages = qs("#local-model-languages").value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const notes = qs("#local-model-notes").value.trim();
+  const status = qs("#local-model-status");
+  const fieldConfig = LOCAL_MODEL_FIELD_CONFIG[runtime];
+  if (!name || !primary) {
+    status.textContent = "Name and the primary setting are required.";
+    return;
+  }
+
+  const payload = {
+    stage,
+    runtime,
+    name,
+    languages,
+    notes,
+    set_as_default: qs("#local-model-default").checked,
+    config: {
+      [fieldConfig.primaryKey]: primary,
+    },
+  };
+  if (fieldConfig.secondaryKey && secondary) {
+    payload.config[fieldConfig.secondaryKey] = secondary;
+  }
+
+  status.textContent = "Registering...";
+  try {
+    await fetchJSON("/api/models/local", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    qs("#local-model-name").value = "";
+    qs("#local-model-primary").value = "";
+    qs("#local-model-secondary").value = "";
+    qs("#local-model-languages").value = "";
+    qs("#local-model-notes").value = "";
+    status.textContent = "Model registered.";
+    await refreshSettings();
+  } catch (error) {
+    status.textContent = error.message;
+  }
 }
 
 /**
@@ -842,6 +1057,8 @@ async function startJob(event) {
   formData.append("transcription_execution", qs("#transcription-execution").value);
   formData.append("formatter_execution", qs("#formatter-execution").value);
   formData.append("local_diarization_model_id", qs("#local-diarization-model").value);
+  formData.append("local_transcription_model_id", qs("#local-transcription-model").value);
+  formData.append("local_formatter_model_id", qs("#local-formatter-model").value);
   if (
     ["#diarization-execution", "#transcription-execution", "#formatter-execution"].some(
       (selector) => qs(selector).value === "api",
@@ -929,6 +1146,9 @@ function bindEvents() {
   qs("#open-template-creator").addEventListener("click", () => toggleTemplateCreator(true));
   qs("#cancel-template-inline").addEventListener("click", () => toggleTemplateCreator(false));
   qs("#save-template-inline").addEventListener("click", saveTemplateInline);
+  qs("#local-model-stage").addEventListener("change", syncLocalModelForm);
+  qs("#local-model-runtime").addEventListener("change", syncLocalModelForm);
+  qs("#register-local-model").addEventListener("click", registerLocalModel);
   qsa(".engine-option").forEach((button) => {
     button.addEventListener("click", () => {
       setExecutionMode(button.dataset.stage, button.dataset.mode);

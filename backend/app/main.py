@@ -21,6 +21,11 @@ from backend.app.schemas import (
     FormatterModelRequest,
     FormatterModelResponse,
     JobListResponse,
+    LocalModelCatalogResponse,
+    LocalModelDefaultRequest,
+    LocalModelRegistrationRequest,
+    LocalModelRecord,
+    LocalStageModelResponse,
     ModelConsentRequest,
     ModelDownloadRequest,
     ProfileRefreshRequest,
@@ -28,11 +33,8 @@ from backend.app.schemas import (
     SubmitSpeakerMappingRequest,
     TemplateDefinition,
 )
-from backend.models.diarization_registry import (
-    DEFAULT_LOCAL_DIARIZATION_MODEL_ID,
-    list_local_diarization_models,
-    resolve_local_diarization_model,
-)
+from backend.models.diarization_registry import list_local_diarization_models, resolve_local_diarization_model
+from backend.models.local_catalog import LOCAL_MODEL_CATALOG
 from backend.models.manager import MODEL_MANAGER
 from backend.pipeline.orchestrator import ORCHESTRATOR
 from backend.pipeline.template_manager import TEMPLATE_MANAGER
@@ -94,7 +96,7 @@ def get_formatter_model() -> FormatterModelResponse:
     """! @brief Get formatter model.
     @return Result produced by the operation.
     """
-    return FormatterModelResponse(model_tag=MODEL_MANAGER.get_formatter_model())
+    return FormatterModelResponse(model_tag=LOCAL_MODEL_CATALOG.get_formatter_tag())
 
 
 @app.post("/api/models/formatter", response_model=FormatterModelResponse)
@@ -103,7 +105,7 @@ def set_formatter_model(request: FormatterModelRequest) -> FormatterModelRespons
     @param request Request payload for the operation.
     """
     try:
-        model_tag = MODEL_MANAGER.set_formatter_model(request.model_tag)
+        model_tag = LOCAL_MODEL_CATALOG.set_formatter_tag(request.model_tag)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return FormatterModelResponse(model_tag=model_tag)
@@ -114,10 +116,65 @@ def get_diarization_models() -> DiarizationLocalModelResponse:
     """! @brief Get diarization models.
     @return Result produced by the operation.
     """
-    return DiarizationLocalModelResponse(
-        selected_model_id=DEFAULT_LOCAL_DIARIZATION_MODEL_ID,
-        models=list_local_diarization_models(),
-    )
+    payload = LOCAL_MODEL_CATALOG.list_stage("diarization")
+    return DiarizationLocalModelResponse(selected_model_id=payload.selected_model_id, models=list_local_diarization_models())
+
+
+@app.get("/api/models/local", response_model=LocalModelCatalogResponse)
+def get_local_models() -> LocalModelCatalogResponse:
+    """! @brief Get local models.
+    @return Result produced by the operation.
+    """
+    return LOCAL_MODEL_CATALOG.list_all()
+
+
+@app.get("/api/models/local/{stage}", response_model=LocalStageModelResponse)
+def get_local_stage_models(stage: str) -> LocalStageModelResponse:
+    """! @brief Get local stage models.
+    @param stage Value for stage.
+    @return Result produced by the operation.
+    """
+    try:
+        return LOCAL_MODEL_CATALOG.list_stage(stage.strip().lower())  # type: ignore[arg-type]
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Unknown stage") from exc
+
+
+@app.post("/api/models/local", response_model=LocalModelRecord)
+def register_local_model(request: LocalModelRegistrationRequest) -> LocalModelRecord:
+    """! @brief Register local model.
+    @param request Request payload for the operation.
+    @return Result produced by the operation.
+    """
+    try:
+        return LOCAL_MODEL_CATALOG.register(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/models/local/{model_id}")
+def delete_local_model(model_id: str) -> dict[str, str]:
+    """! @brief Delete local model.
+    @param model_id Identifier of the target model.
+    @return Dictionary produced by the operation.
+    """
+    try:
+        LOCAL_MODEL_CATALOG.delete(model_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "ok"}
+
+
+@app.post("/api/models/local/defaults", response_model=LocalStageModelResponse)
+def set_local_model_default(request: LocalModelDefaultRequest) -> LocalStageModelResponse:
+    """! @brief Set local model default.
+    @param request Request payload for the operation.
+    @return Result produced by the operation.
+    """
+    try:
+        return LOCAL_MODEL_CATALOG.set_default(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/models/consent")
@@ -315,7 +372,9 @@ async def create_job(
     diarization_execution: str = Form("local"),
     transcription_execution: str = Form("local"),
     formatter_execution: str = Form("local"),
-    local_diarization_model_id: str = Form(DEFAULT_LOCAL_DIARIZATION_MODEL_ID),
+    local_diarization_model_id: str = Form(""),
+    local_transcription_model_id: str = Form(""),
+    local_formatter_model_id: str = Form(""),
     openai_api_key: str | None = Form(None),
     openai_diarization_model: str = Form("gpt-4o-transcribe-diarize"),
     openai_transcription_model: str = Form("gpt-4o-transcribe"),
@@ -330,6 +389,8 @@ async def create_job(
     @param transcription_execution Value for transcription execution.
     @param formatter_execution Value for formatter execution.
     @param local_diarization_model_id Value for local diarization model id.
+    @param local_transcription_model_id Value for local transcription model id.
+    @param local_formatter_model_id Value for local formatter model id.
     @param openai_api_key Value for openai api key.
     @param openai_diarization_model Value for openai diarization model.
     @param openai_transcription_model Value for openai transcription model.
@@ -353,20 +414,27 @@ async def create_job(
             detail="OpenAI API key is required when any step is configured to use API execution.",
         )
 
-    required_local_models: set[str] = set()
-    if execution_values["diarization_execution"] == "local":
-        required_local_models.add("diarization")
-    if execution_values["transcription_execution"] == "local":
-        required_local_models.add("voxtral")
-    if execution_values["formatter_execution"] == "local":
-        required_local_models.add("formatter")
-
-    validation_ok, message = MODEL_MANAGER.validate_for_job_start(required_local_models)
+    selected_local_models = {
+        "diarization": local_diarization_model_id,
+        "transcription": local_transcription_model_id,
+        "formatter": local_formatter_model_id,
+    }
+    required_local_selections = {
+        stage: model_id
+        for stage, model_id in selected_local_models.items()
+        if execution_values[f"{stage}_execution"] == "local"
+    }
+    validation_ok, message = LOCAL_MODEL_CATALOG.validate_selection(required_local_selections)  # type: ignore[arg-type]
     if not validation_ok:
         raise HTTPException(status_code=400, detail=message)
 
     try:
         selected_local_diarization_model = resolve_local_diarization_model(local_diarization_model_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        selected_local_transcription_model = LOCAL_MODEL_CATALOG.resolve_model("transcription", local_transcription_model_id)
+        selected_local_formatter_model = LOCAL_MODEL_CATALOG.resolve_model("formatter", local_formatter_model_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -412,6 +480,8 @@ async def create_job(
         language_mode=language_mode,
         title=title,
         local_diarization_model_id=selected_local_diarization_model.model_id,
+        local_transcription_model_id=selected_local_transcription_model.model_id,
+        local_formatter_model_id=selected_local_formatter_model.model_id,
         api_config=api_config,
     )
     ORCHESTRATOR.submit(runtime.state.job_id)

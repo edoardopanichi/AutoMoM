@@ -46,6 +46,8 @@ def test_end_to_end_job_with_golden_outputs(isolated_settings, monkeypatch, tmp_
         language_mode="auto",
         title="Integration Test Meeting",
         local_diarization_model_id="pyannote-community-1",
+        local_transcription_model_id="whispercpp-local",
+        local_formatter_model_id="formatter-command-default",
     )
     job_id = runtime.state.job_id
 
@@ -229,6 +231,8 @@ def test_end_to_end_passthrough_uses_raw_formatter_output(isolated_settings, mon
         language_mode="auto",
         title="Passthrough Meeting",
         local_diarization_model_id="pyannote-community-1",
+        local_transcription_model_id="whispercpp-local",
+        local_formatter_model_id="formatter-command-default",
     )
     job_id = runtime.state.job_id
 
@@ -389,6 +393,8 @@ def test_end_to_end_stderr_prefixed_output_passthrough(isolated_settings, monkey
         language_mode="auto",
         title="Stderr Passthrough Meeting",
         local_diarization_model_id="pyannote-community-1",
+        local_transcription_model_id="whispercpp-local",
+        local_formatter_model_id="formatter-command-default",
     )
     job_id = runtime.state.job_id
 
@@ -552,6 +558,8 @@ def test_end_to_end_nonzero_formatter_exit_with_stdout_still_passthrough(
         language_mode="auto",
         title="Nonzero Passthrough Meeting",
         local_diarization_model_id="pyannote-community-1",
+        local_transcription_model_id="whispercpp-local",
+        local_formatter_model_id="formatter-command-default",
     )
     job_id = runtime.state.job_id
 

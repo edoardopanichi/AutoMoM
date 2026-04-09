@@ -13,6 +13,7 @@ from backend.app.config import SETTINGS
 from backend.app.job_store import JOB_STORE, OpenAIJobConfig, ensure_job_artifact_dir, write_json
 from backend.app.schemas import JobSpeakerInfo, SpeakerProfileMatch, SpeakerSnippet, SpeakerState
 from backend.models.diarization_registry import resolve_local_diarization_model
+from backend.models.local_catalog import LOCAL_MODEL_CATALOG
 from backend.pipeline.audio import extract_segment, normalize_audio, validate_audio_input
 from backend.pipeline.diarization import (
     CHUNKED_LOCAL_DIARIZATION_THRESHOLD_S,
@@ -25,7 +26,13 @@ from backend.pipeline.openai_client import OpenAIAPIError, OpenAIClient, OpenAID
 from backend.pipeline.snippets import extract_snippets, pick_snippet_ranges
 from backend.pipeline.subprocess_utils import SubprocessCancelledError
 from backend.pipeline.template_manager import TEMPLATE_MANAGER
-from backend.pipeline.transcription import OpenAITranscriber, TranscriptionError, VoxtralTranscriber, transcribe_segments
+from backend.pipeline.transcription import (
+    FasterWhisperTranscriber,
+    OpenAITranscriber,
+    TranscriptionError,
+    VoxtralTranscriber,
+    transcribe_segments,
+)
 from backend.pipeline.vad import detect_speech_regions
 from backend.profiles.manager import VOICE_PROFILE_MANAGER
 
@@ -461,20 +468,12 @@ class PipelineOrchestrator:
                         progress_callback=_segment_progress,
                     )
             else:
-                transcriber = VoxtralTranscriber(
-                    SETTINGS.voxtral_binary,
-                    SETTINGS.voxtral_model_path,
-                    job_id=job_id,
-                    compute_device=SETTINGS.compute_device,
-                    cuda_device_id=SETTINGS.cuda_device_id,
-                    gpu_layers=SETTINGS.voxtral_gpu_layers,
-                    threads=SETTINGS.voxtral_threads,
-                    processors=SETTINGS.voxtral_processors,
-                )
+                transcription_model = LOCAL_MODEL_CATALOG.resolve_model("transcription", runtime.local_transcription_model_id)
+                transcriber = self._build_local_transcriber(job_id, transcription_model)
                 if not transcriber.available():
                     raise TranscriptionError(
-                        "ASR runtime unavailable. Fix: set AUTOMOM_VOXTRAL_BIN to a valid ASR binary "
-                        "and AUTOMOM_VOXTRAL_MODEL to an existing model file before starting a job."
+                        f"ASR runtime unavailable for local model '{transcription_model.name}'. "
+                        f"Fix: {transcription_model.validation_error or 'verify the configured runtime details.'}"
                     )
                 for idx, segment in enumerate(transcription_chunks, start=1):
                     padding = 0.2
@@ -502,7 +501,8 @@ class PipelineOrchestrator:
                 JOB_STORE.append_log(
                     job_id,
                     (
-                        "ASR runtime detected; transcription uses external binary "
+                        f"ASR runtime detected; local model={transcription_model.name} "
+                        f"runtime={transcription_model.runtime} "
                         f"(requested={initial_runtime['requested_mode']} "
                         f"available={initial_runtime['available_mode']} "
                         f"binary={initial_runtime['binary_path']})"
@@ -564,20 +564,24 @@ class PipelineOrchestrator:
             )
             JOB_STORE.append_log(job_id, "Stage 8/9: formatting minutes of meeting")
             use_api_formatter = api_config is not None and api_config.formatter_execution == "api"
-            use_legacy_formatter_command = SETTINGS.formatter_backend == "command" and not use_api_formatter
+            local_formatter_model = None if use_api_formatter else LOCAL_MODEL_CATALOG.resolve_model(
+                "formatter",
+                runtime.local_formatter_model_id,
+            )
+            use_legacy_formatter_command = bool(local_formatter_model is not None and local_formatter_model.runtime == "command")
             JOB_STORE.append_log(
                 job_id,
                 (
                     f"Formatter backend: OpenAI ({api_config.formatter_model})"
                     if use_api_formatter
-                    else f"Formatter backend: {'command' if use_legacy_formatter_command else 'ollama'}"
+                    else f"Formatter backend: {local_formatter_model.runtime} ({local_formatter_model.name})"
                 ),
             )
             formatter = Formatter(
-                command_template=SETTINGS.formatter_command if use_legacy_formatter_command else "",
-                model_path=SETTINGS.formatter_model_path if use_legacy_formatter_command else "",
+                command_template=local_formatter_model.config.get("command_template", "") if use_legacy_formatter_command else "",
+                model_path=local_formatter_model.config.get("model_path", "") if use_legacy_formatter_command else "",
                 ollama_host=SETTINGS.ollama_host,
-                ollama_model=SETTINGS.formatter_ollama_model,
+                ollama_model="" if use_api_formatter or use_legacy_formatter_command else local_formatter_model.config.get("tag", ""),
                 openai_api_key=api_config.api_key if use_api_formatter else "",
                 openai_model=api_config.formatter_model if use_api_formatter else "",
                 job_id=job_id,
@@ -844,19 +848,21 @@ class PipelineOrchestrator:
         """
         api_config = runtime.api_config
         diarization_model = resolve_local_diarization_model(runtime.local_diarization_model_id)
+        local_transcription_model = LOCAL_MODEL_CATALOG.resolve_model("transcription", runtime.local_transcription_model_id)
+        local_formatter_model = LOCAL_MODEL_CATALOG.resolve_model("formatter", runtime.local_formatter_model_id)
         diarization_api = api_config is not None and api_config.diarization_execution == "api"
         transcription_api = api_config is not None and api_config.transcription_execution == "api"
         formatter_api = api_config is not None and api_config.formatter_execution == "api"
 
-        formatter_backend = "openai" if formatter_api else ("command" if SETTINGS.formatter_backend == "command" else "ollama")
+        formatter_backend = "openai" if formatter_api else local_formatter_model.runtime
         if formatter_api:
             formatter_model = api_config.formatter_model
             formatter_compute_active = "cloud"
         elif formatter_backend == "command":
-            formatter_model = SETTINGS.formatter_model_path
+            formatter_model = local_formatter_model.config.get("model_path", "")
             formatter_compute_active = "unknown"
         else:
-            formatter_model = SETTINGS.formatter_ollama_model
+            formatter_model = local_formatter_model.config.get("tag", "")
             formatter_compute_active = "unknown"
 
         return {
@@ -876,15 +882,16 @@ class PipelineOrchestrator:
                     if transcription_api
                     else transcription_runtime_payload.get("model_path", SETTINGS.voxtral_model_path)
                     if transcription_runtime_payload is not None
-                    else SETTINGS.voxtral_model_path
+                    else local_transcription_model.config.get("model_path", SETTINGS.voxtral_model_path)
                 ),
-                "backend": "openai" if transcription_api else "voxtral",
+                "model_id": None if transcription_api else local_transcription_model.model_id,
+                "backend": "openai" if transcription_api else local_transcription_model.runtime,
                 "binary_path": (
                     None
                     if transcription_api
                     else transcription_runtime_payload.get("binary_path")
                     if transcription_runtime_payload is not None
-                    else SETTINGS.voxtral_binary
+                    else local_transcription_model.config.get("binary_path", "")
                 ),
                 "compute_requested": (
                     "cloud"
@@ -904,12 +911,39 @@ class PipelineOrchestrator:
             "formatter": {
                 "mode": "api" if formatter_api else "local",
                 "model": formatter_model,
+                "model_id": None if formatter_api else local_formatter_model.model_id,
                 "backend": formatter_backend,
                 "formatter_mode": formatter.last_mode if formatter is not None else None,
                 "compute_requested": "cloud" if formatter_api else SETTINGS.compute_device,
                 "compute_active": formatter_compute_active,
             },
         }
+
+    def _build_local_transcriber(self, job_id: str, model_record):
+        """! @brief Build local transcriber.
+        @param job_id Identifier of the job being processed.
+        @param model_record Value for model record.
+        @return Result produced by the operation.
+        """
+        if model_record.runtime == "whisper.cpp":
+            return VoxtralTranscriber(
+                model_record.config.get("binary_path", ""),
+                model_record.config.get("model_path", ""),
+                job_id=job_id,
+                compute_device=SETTINGS.compute_device,
+                cuda_device_id=SETTINGS.cuda_device_id,
+                gpu_layers=SETTINGS.voxtral_gpu_layers,
+                threads=SETTINGS.voxtral_threads,
+                processors=SETTINGS.voxtral_processors,
+            )
+        if model_record.runtime == "faster-whisper":
+            return FasterWhisperTranscriber(
+                model_record.config.get("model_path", ""),
+                compute_device=SETTINGS.compute_device,
+                cuda_device_id=SETTINGS.cuda_device_id,
+                compute_type=model_record.config.get("compute_type", "auto"),
+            )
+        raise TranscriptionError(f"Unsupported local transcription runtime: {model_record.runtime}")
 
     def _diarize_with_openai(
         self,

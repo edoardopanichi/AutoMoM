@@ -23,6 +23,8 @@ def test_run_cancellable_subprocess_stops_registered_job(isolated_settings, tmp_
         language_mode="auto",
         title="Cancel Test",
         local_diarization_model_id="pyannote-community-1",
+        local_transcription_model_id="whispercpp-local",
+        local_formatter_model_id="formatter-ollama-default",
     )
 
     result: dict[str, object] = {}

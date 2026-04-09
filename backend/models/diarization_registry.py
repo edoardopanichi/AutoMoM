@@ -2,44 +2,38 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from backend.app.config import SETTINGS
 from backend.app.schemas import DiarizationLocalModel
+from backend.models.local_catalog import LOCAL_MODEL_CATALOG
 
 
 DEFAULT_LOCAL_DIARIZATION_MODEL_ID = "pyannote-community-1"
-
-
-def _default_pipeline_path() -> Path:
-    """! @brief Default pipeline path.
-    @return Path result produced by the operation.
-    """
-    return Path(SETTINGS.diarization_pipeline_path or SETTINGS.diarization_model_path).expanduser()
-
-
-def _default_embedding_ref(pipeline_path: Path) -> str:
-    """! @brief Default embedding ref.
-    @param pipeline_path Value for pipeline path.
-    @return str result produced by the operation.
-    """
-    embedding_dir = pipeline_path.resolve().parent / "embedding"
-    if embedding_dir.exists():
-        return str(embedding_dir)
-    return SETTINGS.diarization_embedding_model
 
 
 def list_local_diarization_models() -> list[DiarizationLocalModel]:
     """! @brief List local diarization models.
     @return List produced by the operation.
     """
-    pipeline_path = _default_pipeline_path()
-    return [
-        DiarizationLocalModel(
-            model_id=DEFAULT_LOCAL_DIARIZATION_MODEL_ID,
-            name="Pyannote Community-1",
-            pipeline_path=str(pipeline_path),
-            embedding_model_ref=_default_embedding_ref(pipeline_path),
+    payload = LOCAL_MODEL_CATALOG.list_stage("diarization")
+    models: list[DiarizationLocalModel] = []
+    for item in payload.models:
+        pipeline_path = item.config.get("pipeline_path", "")
+        embedding_ref = item.config.get("embedding_model_ref", "")
+        if not pipeline_path:
+            continue
+        path = Path(pipeline_path).expanduser()
+        if path.exists():
+            embedding_dir = path.resolve().parent / "embedding"
+            if embedding_dir.exists() and not embedding_ref:
+                embedding_ref = str(embedding_dir)
+        models.append(
+            DiarizationLocalModel(
+                model_id=item.model_id,
+                name=item.name,
+                pipeline_path=pipeline_path,
+                embedding_model_ref=embedding_ref,
+            )
         )
-    ]
+    return models
 
 
 def resolve_local_diarization_model(model_id: str | None) -> DiarizationLocalModel:
@@ -47,7 +41,7 @@ def resolve_local_diarization_model(model_id: str | None) -> DiarizationLocalMod
     @param model_id Identifier of the target model.
     @return Result produced by the operation.
     """
-    normalized = (model_id or DEFAULT_LOCAL_DIARIZATION_MODEL_ID).strip() or DEFAULT_LOCAL_DIARIZATION_MODEL_ID
+    normalized = (model_id or "").strip() or LOCAL_MODEL_CATALOG.list_stage("diarization").selected_model_id
     for item in list_local_diarization_models():
         if item.model_id == normalized:
             return item

@@ -34,6 +34,8 @@ class JobRuntime:
     language_mode: str
     title: str | None
     local_diarization_model_id: str
+    local_transcription_model_id: str
+    local_formatter_model_id: str
     api_config: OpenAIJobConfig | None
     state: JobState
     speaker_mapping_event: threading.Event = field(default_factory=threading.Event)
@@ -57,6 +59,8 @@ class JobStore:
         language_mode: str,
         title: str | None,
         local_diarization_model_id: str,
+        local_transcription_model_id: str,
+        local_formatter_model_id: str,
         api_config: OpenAIJobConfig | None = None,
     ) -> JobRuntime:
         """! @brief Create job.
@@ -66,6 +70,8 @@ class JobStore:
         @param language_mode Value for language mode.
         @param title Meeting title associated with the request.
         @param local_diarization_model_id Value for local diarization model id.
+        @param local_transcription_model_id Value for local transcription model id.
+        @param local_formatter_model_id Value for local formatter model id.
         @param api_config Value for api config.
         @return Result produced by the operation.
         """
@@ -84,6 +90,8 @@ class JobStore:
             language_mode=language_mode,
             title=title,
             local_diarization_model_id=local_diarization_model_id,
+            local_transcription_model_id=local_transcription_model_id,
+            local_formatter_model_id=local_formatter_model_id,
             api_config=api_config,
             state=state,
         )

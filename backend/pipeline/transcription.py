@@ -6,7 +6,7 @@ import re
 import subprocess
 from pathlib import Path
 import shutil
-from typing import Callable
+from typing import Callable, Protocol
 from functools import lru_cache
 
 from backend.pipeline.compute import should_enable_native_gpu
@@ -26,6 +26,29 @@ WHISPER_TAG_PATTERN = re.compile(r"<\|[^|>]+\|>")
 
 class TranscriptionError(RuntimeError):
     pass
+
+
+class LocalTranscriber(Protocol):
+    def available(self) -> bool:
+        """! @brief Available operation.
+        @return True when the requested condition is satisfied; otherwise False.
+        """
+
+    def transcribe(self, segment_path: Path) -> str:
+        """! @brief Transcribe operation.
+        @param segment_path Path to the segment audio file.
+        @return str result produced by the operation.
+        """
+
+    def runtime_report(self) -> dict[str, object]:
+        """! @brief Runtime report.
+        @return Dictionary produced by the operation.
+        """
+
+    def runtime_summary(self) -> str:
+        """! @brief Runtime summary.
+        @return str result produced by the operation.
+        """
 
 
 @dataclass(frozen=True)
@@ -333,6 +356,119 @@ class VoxtralTranscriber:
             self._runtime_report.last_error = ""
 
 
+class FasterWhisperTranscriber:
+    def __init__(
+        self,
+        model_path: str | None,
+        *,
+        compute_device: str = "auto",
+        cuda_device_id: int = 0,
+        compute_type: str = "auto",
+    ) -> None:
+        """! @brief Initialize the FasterWhisperTranscriber instance.
+        @param model_path Value for model path.
+        @param compute_device Requested compute device preference.
+        @param cuda_device_id CUDA device index to prefer when GPU execution is enabled.
+        @param compute_type Value for compute type.
+        """
+        self.model_path = model_path or ""
+        self._requested_mode = (compute_device or "auto").strip().lower() or "auto"
+        self._gpu_requested = should_enable_native_gpu(compute_device, cuda_device_id)
+        self._cuda_device_id = max(0, int(cuda_device_id))
+        self._compute_type = (compute_type or "auto").strip() or "auto"
+        self._runtime_available = bool(self.model_path and Path(self.model_path).exists() and _faster_whisper_available())
+        self._device = "cuda" if self._gpu_requested else "cpu"
+        self._model = None
+        self._runtime_report = ASRRuntimeReport(
+            binary_path="faster-whisper",
+            model_path=self.model_path,
+            requested_mode=self._requested_mode,
+            available_mode="cuda" if self._gpu_requested and self._runtime_available else ("cpu" if self._runtime_available else "fallback"),
+            active_mode="cpu" if self._runtime_available else "fallback",
+            gpu_requested=self._gpu_requested,
+            gpu_backend_available=self._gpu_requested,
+            gpu_verified_active=False,
+            supported_flags=[],
+            linked_backends=["cuda"] if self._gpu_requested else ["cpu"],
+            thread_count=0,
+            processor_count=0,
+        )
+
+    def available(self) -> bool:
+        """! @brief Available operation.
+        @return True when the requested condition is satisfied; otherwise False.
+        """
+        return self._runtime_available
+
+    def transcribe(self, segment_path: Path) -> str:
+        """! @brief Transcribe operation.
+        @param segment_path Path to the segment audio file.
+        @return str result produced by the operation.
+        """
+        if not self._runtime_available:
+            raise TranscriptionError(self._missing_runtime_message())
+        model = self._load_model()
+        try:
+            segments, _info = model.transcribe(str(segment_path), beam_size=1, vad_filter=False)
+        except Exception as exc:
+            self._runtime_report.last_error = str(exc)
+            raise TranscriptionError(f"faster-whisper transcription failed for '{segment_path.name}': {exc}") from exc
+
+        text = clean_transcript_text(" ".join(segment.text for segment in segments))
+        if not text:
+            raise TranscriptionError(
+                f"faster-whisper produced empty output for '{segment_path.name}'. Verify the model directory."
+            )
+        self._runtime_report.active_mode = self._device
+        self._runtime_report.gpu_verified_active = self._device == "cuda"
+        self._runtime_report.last_error = ""
+        return text
+
+    def runtime_report(self) -> dict[str, object]:
+        """! @brief Runtime report.
+        @return Dictionary produced by the operation.
+        """
+        return self._runtime_report.to_dict()
+
+    def runtime_summary(self) -> str:
+        """! @brief Runtime summary.
+        @return str result produced by the operation.
+        """
+        if self._runtime_report.gpu_verified_active:
+            return "compute=cuda (verified active)"
+        if self._requested_mode == "cpu" or not self._runtime_report.gpu_requested:
+            return "compute=cpu (GPU disabled by config)"
+        if not self._runtime_available:
+            return "compute=fallback (faster-whisper runtime unavailable)"
+        return f"compute={self._runtime_report.active_mode} (GPU requested but not verified active)"
+
+    def _load_model(self):
+        """! @brief Load model.
+        @return Result produced by the operation.
+        """
+        if self._model is not None:
+            return self._model
+        whisper_model_cls = _get_faster_whisper_model_class()
+        if whisper_model_cls is None:
+            raise TranscriptionError("faster-whisper is not installed. Fix: install the faster-whisper package.")
+        compute_type = self._compute_type
+        if compute_type == "auto":
+            compute_type = "float16" if self._device == "cuda" else "int8"
+        kwargs = {"device": self._device, "compute_type": compute_type}
+        if self._device == "cuda":
+            kwargs["device_index"] = self._cuda_device_id
+        self._model = whisper_model_cls(self.model_path, **kwargs)
+        return self._model
+
+    def _missing_runtime_message(self) -> str:
+        """! @brief Missing runtime message.
+        @return str result produced by the operation.
+        """
+        if not self.model_path or not Path(self.model_path).exists():
+            return "faster-whisper model path is missing. Register a valid local model directory."
+        return "faster-whisper runtime is unavailable. Fix: install the faster-whisper package."
+
+
 class OpenAITranscriber:
     def __init__(self, api_key: str, model: str) -> None:
         """! @brief Initialize the OpenAITranscriber instance.
@@ -354,7 +490,7 @@ class OpenAITranscriber:
 
 
 def transcribe_segments(
-    transcriber: VoxtralTranscriber | OpenAITranscriber,
+    transcriber: LocalTranscriber | OpenAITranscriber,
     segment_jobs: list[dict[str, object]],
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> list[dict[str, object]]:
@@ -544,3 +680,22 @@ def _binary_supports_any_flag(binary_path: str, flags: tuple[str, ...]) -> bool:
     if not help_text:
         return False
     return any(flag in help_text for flag in flags)
+
+
+@lru_cache(maxsize=1)
+def _get_faster_whisper_model_class():
+    """! @brief Get faster whisper model class.
+    @return Result produced by the operation.
+    """
+    try:
+        from faster_whisper import WhisperModel
+    except Exception:
+        return None
+    return WhisperModel
+
+
+def _faster_whisper_available() -> bool:
+    """! @brief Faster whisper available.
+    @return True when the requested condition is satisfied; otherwise False.
+    """
+    return _get_faster_whisper_model_class() is not None

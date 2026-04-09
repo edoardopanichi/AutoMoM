@@ -137,6 +137,7 @@ Frontend expectations that matter when changing backend behavior:
 - Download URLs and checksums are optional and come from environment variables
 - Formatter installation state is checked through Ollama tags, not a local file
 - Formatter model selection is persisted in `data/models/formatter/selected_model.txt`
+- Full local diarization/profile functionality requires the Python runtime to include `torch` and `pyannote.audio`
 
 ## Tests And Scripts
 

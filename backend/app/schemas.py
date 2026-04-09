@@ -18,6 +18,9 @@ PipelineStage = Literal[
     "Export",
 ]
 
+LocalModelStage = Literal["diarization", "transcription", "formatter"]
+LocalModelRuntime = Literal["pyannote", "whisper.cpp", "faster-whisper", "ollama", "command"]
+
 
 class ModelStatus(BaseModel):
     model_id: str
@@ -47,6 +50,45 @@ class FormatterModelRequest(BaseModel):
 
 class FormatterModelResponse(BaseModel):
     model_tag: str
+
+
+class LocalModelRecord(BaseModel):
+    model_id: str
+    stage: LocalModelStage
+    runtime: LocalModelRuntime
+    name: str
+    installed: bool
+    languages: list[str] = Field(default_factory=list)
+    notes: str = ""
+    config: dict[str, str] = Field(default_factory=dict)
+    validation_error: str | None = None
+
+
+class LocalModelCatalogResponse(BaseModel):
+    defaults: dict[LocalModelStage, str]
+    models: list[LocalModelRecord]
+
+
+class LocalStageModelResponse(BaseModel):
+    stage: LocalModelStage
+    selected_model_id: str
+    models: list[LocalModelRecord]
+
+
+class LocalModelRegistrationRequest(BaseModel):
+    stage: LocalModelStage
+    runtime: LocalModelRuntime
+    model_id: str | None = None
+    name: str
+    languages: list[str] = Field(default_factory=list)
+    notes: str = ""
+    config: dict[str, str] = Field(default_factory=dict)
+    set_as_default: bool = False
+
+
+class LocalModelDefaultRequest(BaseModel):
+    stage: LocalModelStage
+    model_id: str
 
 
 class TemplateSection(BaseModel):
