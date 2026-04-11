@@ -885,12 +885,23 @@ function setProgressBars(overall, stagePercent) {
 }
 
 /**
+ * @brief Format Stage Label.
+ * @param {*} stage Current stage label from the API.
+ */
+function formatStageLabel(stage) {
+  if (stage === "Validate/Normalize") {
+    return "Validating &\nNormalizing";
+  }
+  return stage || "-";
+}
+
+/**
  * @brief Update Progress View.
  * @param {*} jobState Job state payload from the API.
  */
 function updateProgressView(jobState) {
   qs("#overall-value").textContent = `${jobState.overall_percent.toFixed(1)}%`;
-  qs("#stage-value").textContent = jobState.current_stage || "-";
+  qs("#stage-value").textContent = formatStageLabel(jobState.current_stage);
   qs("#stage-percent").textContent = `${jobState.stage_percent.toFixed(1)}%`;
   qs("#segment-progress").textContent = jobState.transcript_segment_progress || jobState.stage_detail || "-";
   setProgressBars(jobState.overall_percent, jobState.stage_percent);

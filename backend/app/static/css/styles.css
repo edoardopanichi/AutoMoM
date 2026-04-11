@@ -715,6 +715,12 @@ textarea {
   font-size: clamp(1.35rem, 3vw, 2rem);
 }
 
+#stage-value {
+  font-size: 1.45rem;
+  line-height: 1.08;
+  white-space: pre-line;
+}
+
 .meter-block {
   margin-top: 0.95rem;
 }
