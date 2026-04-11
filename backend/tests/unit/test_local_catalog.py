@@ -150,3 +150,78 @@ def test_local_catalog_repairs_seeded_default_paths(isolated_settings, tmp_path:
     assert by_id["pyannote-community-1"].config["pipeline_path"] == str(real_pyannote)
     assert by_id["whispercpp-local"].config["binary_path"] == str(real_binary)
     assert by_id["whispercpp-local"].config["model_path"] == str(real_model)
+
+
+def test_runtime_descriptors_are_stage_first_and_hide_command_as_advanced(isolated_settings) -> None:
+    """! @brief Test model manager runtime descriptors.
+    @param isolated_settings Value for isolated settings.
+    """
+    catalog = LocalModelCatalog()
+
+    descriptors = catalog.runtime_descriptors()
+    by_runtime = {item.runtime: item for item in descriptors}
+
+    assert by_runtime["pyannote"].stage == "diarization"
+    assert by_runtime["whisper.cpp"].stage == "transcription"
+    assert by_runtime["faster-whisper"].stage == "transcription"
+    assert by_runtime["ollama"].stage == "formatter"
+    assert by_runtime["ollama"].supports_install is True
+    assert by_runtime["command"].stage == "formatter"
+    assert by_runtime["command"].advanced is True
+    assert any(field.key == "tag" and field.required for field in by_runtime["ollama"].fields)
+
+
+def test_discover_pyannote_uses_known_model_dir(isolated_settings, tmp_path: Path) -> None:
+    """! @brief Test pyannote discovery in known model directories.
+    @param isolated_settings Value for isolated settings.
+    @param tmp_path Value for tmp path.
+    """
+    pipeline = tmp_path / "models" / "diarization" / "custom-pyannote" / "config.yaml"
+    pipeline.parent.mkdir(parents=True)
+    pipeline.write_text("pipeline", encoding="utf-8")
+    object.__setattr__(SETTINGS, "models_dir", tmp_path / "models")
+    object.__setattr__(SETTINGS, "diarization_pipeline_path", "")
+    object.__setattr__(SETTINGS, "diarization_model_path", "")
+    object.__setattr__(SETTINGS, "diarization_embedding_model", "local-embedding")
+
+    catalog = LocalModelCatalog()
+    payload = catalog.discover("diarization", "pyannote")
+
+    assert any(item.config["pipeline_path"] == str(pipeline) for item in payload.suggestions)
+    assert any(item.config["embedding_model_ref"] == "local-embedding" for item in payload.suggestions)
+
+
+def test_discover_whisper_cpp_pairs_known_binary_and_model(isolated_settings, tmp_path: Path) -> None:
+    """! @brief Test whisper.cpp discovery in known model directories.
+    @param isolated_settings Value for isolated settings.
+    @param tmp_path Value for tmp path.
+    """
+    binary = tmp_path / "whisper-cli"
+    binary.write_text("binary", encoding="utf-8")
+    model = tmp_path / "models" / "transcription" / "tiny.gguf"
+    model.parent.mkdir(parents=True)
+    model.write_text("model", encoding="utf-8")
+    object.__setattr__(SETTINGS, "models_dir", tmp_path / "models")
+    object.__setattr__(SETTINGS, "transcription_binary", str(binary))
+    object.__setattr__(SETTINGS, "transcription_model_path", "")
+
+    catalog = LocalModelCatalog()
+    payload = catalog.discover("transcription", "whisper.cpp")
+
+    assert any(
+        item.config["binary_path"] == str(binary) and item.config["model_path"] == str(model)
+        for item in payload.suggestions
+    )
+
+
+def test_discover_ollama_uses_local_tags(isolated_settings, monkeypatch) -> None:
+    """! @brief Test Ollama discovery from local tags.
+    @param isolated_settings Value for isolated settings.
+    @param monkeypatch Value for monkeypatch.
+    """
+    catalog = LocalModelCatalog()
+    monkeypatch.setattr(catalog, "_ollama_tags", lambda: ["qwen2.5:3b", "phi4-mini"])
+
+    payload = catalog.discover("formatter", "ollama")
+
+    assert [item.config["tag"] for item in payload.suggestions] == ["qwen2.5:3b", "phi4-mini"]

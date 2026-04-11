@@ -328,7 +328,7 @@
             <form id="local-model-form" class="stack">
               <div class="template-inline-row">
                 <label>
-                  Stage
+                  <span class="model-field-label">Stage <span class="required-mark">*</span></span>
                   <select id="local-model-stage">
                     <option value="transcription">Transcription</option>
                     <option value="formatter">MoM generation</option>
@@ -336,41 +336,41 @@
                   </select>
                 </label>
                 <label>
-                  Runtime
-                  <select id="local-model-runtime"></select>
-                </label>
-                <label>
-                  Name
+                  <span class="model-field-label">Name <span class="required-mark">*</span></span>
                   <input type="text" id="local-model-name" placeholder="Visible model name" />
-                </label>
-              </div>
-              <div class="template-inline-row">
-                <label>
-                  <span id="local-model-primary-label">Primary setting</span>
-                  <input type="text" id="local-model-primary" />
-                </label>
-                <label>
-                  <span id="local-model-secondary-label">Secondary setting</span>
-                  <input type="text" id="local-model-secondary" />
-                </label>
-              </div>
-              <div class="template-inline-row">
-                <label>
-                  Languages
-                  <input type="text" id="local-model-languages" placeholder="english,multilingual" />
-                </label>
-                <label>
-                  Notes
-                  <input type="text" id="local-model-notes" placeholder="Optional usage notes" />
                 </label>
                 <label class="speaker-toggle">
                   <input type="checkbox" id="local-model-default" checked />
                   Set as default
                 </label>
               </div>
+              <div class="model-manager-row">
+                <div>
+                  <p class="form-label">Runtime <span class="required-mark">*</span></p>
+                  <div id="local-runtime-options" class="runtime-options"></div>
+                </div>
+                <label class="speaker-toggle">
+                  <input type="checkbox" id="local-model-advanced" />
+                  Show advanced runtimes
+                </label>
+              </div>
               <p id="local-model-help" class="cloud-note"></p>
+              <div id="local-model-fields" class="model-field-grid"></div>
               <div class="template-inline-row">
+                <label>
+                  <span class="model-field-label">Languages <span class="field-info" title="Optional comma-separated language notes used for display only." aria-label="Optional comma-separated language notes used for display only.">?</span></span>
+                  <input type="text" id="local-model-languages" placeholder="english,multilingual" />
+                </label>
+                <label>
+                  <span class="model-field-label">Notes <span class="field-info" title="Optional usage note shown in the model inventory." aria-label="Optional usage note shown in the model inventory.">?</span></span>
+                  <input type="text" id="local-model-notes" placeholder="Optional usage notes" />
+                </label>
+              </div>
+              <div id="local-model-suggestions" class="model-suggestions"></div>
+              <div class="model-action-row">
+                <button type="button" id="scan-local-models" class="small-btn">Scan Known Locations</button>
                 <button type="button" id="register-local-model" class="small-btn">Register Local Model</button>
+                <button type="button" id="install-local-model" class="small-btn hidden">Pull With Ollama</button>
                 <p id="local-model-status" class="cloud-note"></p>
               </div>
             </form>

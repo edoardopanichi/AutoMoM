@@ -1,19 +1,29 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import threading
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 from backend.app.config import SETTINGS
 from backend.app.schemas import (
     LocalModelCatalogResponse,
     LocalModelDefaultRequest,
+    LocalModelDiscoveryResponse,
+    LocalModelDiscoverySuggestion,
+    LocalModelFieldDescriptor,
+    LocalModelInstallRequest,
+    LocalModelInstallTask,
     LocalModelRecord,
     LocalModelRegistrationRequest,
     LocalModelRuntime,
+    LocalModelRuntimeDescriptor,
     LocalModelStage,
     LocalStageModelResponse,
 )
@@ -29,6 +39,11 @@ RUNTIMES_BY_STAGE: dict[LocalModelStage, tuple[LocalModelRuntime, ...]] = {
 
 
 class LocalModelCatalog:
+    def __init__(self) -> None:
+        """! @brief Initialize local model catalog state."""
+        self._install_lock = threading.RLock()
+        self._install_tasks: dict[str, LocalModelInstallTask] = {}
+
     def _catalog_path(self) -> Path:
         """! @brief Catalog path.
         @return Path result produced by the operation.
@@ -157,6 +172,177 @@ class LocalModelCatalog:
         self._write_payload(payload)
         self._sync_legacy_settings()
         return self.list_stage(request.stage)
+
+    def runtime_descriptors(self) -> list[LocalModelRuntimeDescriptor]:
+        """! @brief Describe model runtime forms supported by the catalog.
+        @return List of descriptors consumed by the frontend.
+        """
+        return [
+            LocalModelRuntimeDescriptor(
+                stage="diarization",
+                runtime="pyannote",
+                label="pyannote",
+                description=(
+                    "Use an existing pyannote diarization pipeline. Hugging Face-gated models must "
+                    "already be downloaded or available in your cache."
+                ),
+                fields=[
+                    LocalModelFieldDescriptor(
+                        key="pipeline_path",
+                        label="Pipeline config path",
+                        placeholder="/abs/path/to/config.yaml",
+                        help="Absolute path to the local pyannote pipeline config.yaml file.",
+                    ),
+                    LocalModelFieldDescriptor(
+                        key="embedding_model_ref",
+                        label="Embedding model ref",
+                        placeholder="pyannote/wespeaker-voxceleb-resnet34-LM",
+                        help="Embedding model name or local path used for saved speaker profile matching.",
+                    ),
+                ],
+            ),
+            LocalModelRuntimeDescriptor(
+                stage="transcription",
+                runtime="whisper.cpp",
+                label="whisper.cpp",
+                description="Use a whisper.cpp CLI binary with a local GGUF transcription model.",
+                fields=[
+                    LocalModelFieldDescriptor(
+                        key="binary_path",
+                        label="whisper.cpp binary",
+                        placeholder="/abs/path/to/whisper-cli",
+                        help="Path or PATH-resolvable command for the whisper.cpp CLI executable.",
+                    ),
+                    LocalModelFieldDescriptor(
+                        key="model_path",
+                        label="GGUF model path",
+                        placeholder="/abs/path/to/model.gguf",
+                        help="Absolute path to the local GGUF model used by whisper.cpp.",
+                    ),
+                ],
+            ),
+            LocalModelRuntimeDescriptor(
+                stage="transcription",
+                runtime="faster-whisper",
+                label="faster-whisper",
+                description="Use an existing CTranslate2 faster-whisper model directory.",
+                fields=[
+                    LocalModelFieldDescriptor(
+                        key="model_path",
+                        label="Model directory",
+                        placeholder="/abs/path/to/ctranslate2-model",
+                        help="Directory containing the faster-whisper model files.",
+                    ),
+                    LocalModelFieldDescriptor(
+                        key="compute_type",
+                        label="Compute type",
+                        required=False,
+                        placeholder="auto | float16 | int8",
+                        help="Optional faster-whisper compute type. Leave empty for automatic selection.",
+                    ),
+                ],
+            ),
+            LocalModelRuntimeDescriptor(
+                stage="formatter",
+                runtime="ollama",
+                label="Ollama",
+                description="Use a locally installed Ollama tag, or pull a new tag through Ollama.",
+                supports_install=True,
+                fields=[
+                    LocalModelFieldDescriptor(
+                        key="tag",
+                        label="Ollama tag",
+                        placeholder="qwen2.5:3b-instruct-q5_K_M",
+                        help="The exact local Ollama model tag to use for MoM generation.",
+                    ),
+                ],
+            ),
+            LocalModelRuntimeDescriptor(
+                stage="formatter",
+                runtime="command",
+                label="Command",
+                description="Advanced formatter runtime for a custom local command template.",
+                advanced=True,
+                fields=[
+                    LocalModelFieldDescriptor(
+                        key="command_template",
+                        label="Command template",
+                        placeholder="bash -lc \"... {model} ...\"",
+                        help="Command that AutoMoM runs for formatting. It must include the expected placeholders.",
+                    ),
+                    LocalModelFieldDescriptor(
+                        key="model_path",
+                        label="Model path",
+                        placeholder="/abs/path/to/model.gguf",
+                        help="Path to the local model file passed into the command runtime.",
+                    ),
+                ],
+            ),
+        ]
+
+    def discover(self, stage: LocalModelStage, runtime: LocalModelRuntime) -> LocalModelDiscoveryResponse:
+        """! @brief Discover likely local models for a supported runtime.
+        @param stage Value for stage.
+        @param runtime Value for runtime.
+        @return Suggestions found in known safe locations.
+        """
+        self._validate_stage_runtime(stage, runtime)
+        suggestions = {
+            "pyannote": self._discover_pyannote,
+            "whisper.cpp": self._discover_whisper_cpp,
+            "faster-whisper": self._discover_faster_whisper,
+            "ollama": self._discover_ollama,
+            "command": self._discover_command,
+        }[runtime](stage, runtime)
+        return LocalModelDiscoveryResponse(stage=stage, runtime=runtime, suggestions=suggestions[:50])
+
+    def start_install(self, request: LocalModelInstallRequest) -> LocalModelInstallTask:
+        """! @brief Start an install task for runtimes with managed install support.
+        @param request Request payload for the operation.
+        @return Install task record.
+        """
+        self._validate_stage_runtime(request.stage, request.runtime)
+        if request.runtime != "ollama":
+            raise ValueError(f"Auto-install is not available for runtime '{request.runtime}'")
+        tag = request.config.get("tag", "").strip()
+        if not tag:
+            raise ValueError("Ollama install requires tag")
+
+        now = self._now()
+        task = LocalModelInstallTask(
+            task_id=uuid4().hex,
+            stage=request.stage,
+            runtime=request.runtime,
+            status="queued",
+            message=f"Queued Ollama pull for {tag}",
+            percent=0.0,
+            created_at=now,
+            updated_at=now,
+        )
+        with self._install_lock:
+            self._install_tasks[task.task_id] = task
+
+        thread = threading.Thread(target=self._run_ollama_install, args=(task.task_id, request), daemon=True)
+        thread.start()
+        return task
+
+    def get_install_task(self, task_id: str) -> LocalModelInstallTask:
+        """! @brief Get install task.
+        @param task_id Identifier of the task.
+        @return Install task.
+        """
+        with self._install_lock:
+            task = self._install_tasks.get(task_id)
+        if not task:
+            raise KeyError(task_id)
+        return task
+
+    def list_install_tasks(self) -> list[LocalModelInstallTask]:
+        """! @brief List install tasks.
+        @return Task records.
+        """
+        with self._install_lock:
+            return sorted(self._install_tasks.values(), key=lambda item: item.created_at, reverse=True)
 
     def validate_selection(self, selections: dict[LocalModelStage, str]) -> tuple[bool, str | None]:
         """! @brief Validate selection.
@@ -438,24 +624,299 @@ class LocalModelCatalog:
             return False, f"Command formatter model path does not exist: {model_path}"
         return True, None
 
-    def _ollama_has_model(self, model_tag: str) -> bool:
-        """! @brief Ollama has model.
-        @param model_tag Value for model tag.
-        @return True when the requested condition is satisfied; otherwise False.
-        """
+    def _discover_pyannote(
+        self,
+        stage: LocalModelStage,
+        runtime: LocalModelRuntime,
+    ) -> list[LocalModelDiscoverySuggestion]:
+        """! @brief Discover pyannote pipeline configs."""
+        paths = [
+            SETTINGS.diarization_pipeline_path,
+            SETTINGS.diarization_model_path,
+        ]
+        paths.extend(str(path) for path in self._iter_known_files([SETTINGS.models_dir / "diarization"], "config.yaml"))
+        paths.extend(str(path) for path in self._iter_known_files(self._hf_cache_roots(), "config.yaml", limit=40))
+        suggestions: list[LocalModelDiscoverySuggestion] = []
+        for path in self._dedupe_existing_paths(paths):
+            suggestions.append(
+                LocalModelDiscoverySuggestion(
+                    stage=stage,
+                    runtime=runtime,
+                    name=self._display_name_from_path(path, "Pyannote diarization"),
+                    source="local scan",
+                    details=str(path),
+                    config={
+                        "pipeline_path": str(path),
+                        "embedding_model_ref": SETTINGS.diarization_embedding_model,
+                    },
+                )
+            )
+        return suggestions
+
+    def _discover_whisper_cpp(
+        self,
+        stage: LocalModelStage,
+        runtime: LocalModelRuntime,
+    ) -> list[LocalModelDiscoverySuggestion]:
+        """! @brief Discover whisper.cpp binaries and GGUF model files."""
+        repo_root = Path(__file__).resolve().parents[2]
+        binary_paths = [
+            SETTINGS.transcription_binary,
+            str(repo_root / "tools" / "whisper.cpp" / "build-cuda" / "bin" / "whisper-cli"),
+            str(repo_root / "tools" / "whisper.cpp" / "build" / "bin" / "whisper-cli"),
+            shutil.which("whisper-cli") or "",
+        ]
+        binaries = self._dedupe_existing_paths(binary_paths)
+        model_paths = [SETTINGS.transcription_model_path]
+        model_paths.extend(str(path) for path in self._iter_known_files([SETTINGS.models_dir / "transcription"], "*.gguf"))
+        model_paths.extend(str(path) for path in self._iter_known_files([SETTINGS.models_dir / "voxtral"], "*.gguf"))
+        model_paths.extend(str(path) for path in self._iter_known_files(self._hf_cache_roots(), "*.gguf", limit=50))
+        models = self._dedupe_existing_paths(model_paths)
+
+        suggestions: list[LocalModelDiscoverySuggestion] = []
+        for model_path in models:
+            binary_path = str(binaries[0]) if binaries else SETTINGS.transcription_binary
+            suggestions.append(
+                LocalModelDiscoverySuggestion(
+                    stage=stage,
+                    runtime=runtime,
+                    name=self._display_name_from_path(model_path, "whisper.cpp"),
+                    source="local scan",
+                    details=f"{model_path}",
+                    config={"binary_path": binary_path, "model_path": str(model_path)},
+                )
+            )
+        return suggestions
+
+    def _discover_faster_whisper(
+        self,
+        stage: LocalModelStage,
+        runtime: LocalModelRuntime,
+    ) -> list[LocalModelDiscoverySuggestion]:
+        """! @brief Discover faster-whisper model directories."""
+        roots = [
+            SETTINGS.models_dir / "transcription",
+            SETTINGS.models_dir / "faster-whisper",
+            *self._hf_cache_roots(),
+        ]
+        candidates: list[str] = []
+        for path in self._iter_known_files(roots, "config.json", limit=50):
+            candidates.append(str(path.parent))
+        for path in self._iter_known_files(roots, "model.bin", limit=50):
+            candidates.append(str(path.parent))
+
+        suggestions: list[LocalModelDiscoverySuggestion] = []
+        for path in self._dedupe_existing_paths(candidates):
+            suggestions.append(
+                LocalModelDiscoverySuggestion(
+                    stage=stage,
+                    runtime=runtime,
+                    name=self._display_name_from_path(path, "faster-whisper"),
+                    source="local scan",
+                    details=str(path),
+                    config={"model_path": str(path), "compute_type": "auto"},
+                )
+            )
+        return suggestions
+
+    def _discover_ollama(
+        self,
+        stage: LocalModelStage,
+        runtime: LocalModelRuntime,
+    ) -> list[LocalModelDiscoverySuggestion]:
+        """! @brief Discover local Ollama model tags."""
+        suggestions: list[LocalModelDiscoverySuggestion] = []
+        for tag in self._ollama_tags():
+            suggestions.append(
+                LocalModelDiscoverySuggestion(
+                    stage=stage,
+                    runtime=runtime,
+                    name=tag,
+                    source="ollama",
+                    details=f"{SETTINGS.ollama_host.rstrip('/')}/api/tags",
+                    config={"tag": tag},
+                )
+            )
+        return suggestions
+
+    def _discover_command(
+        self,
+        stage: LocalModelStage,
+        runtime: LocalModelRuntime,
+    ) -> list[LocalModelDiscoverySuggestion]:
+        """! @brief Suggest current command formatter settings when configured."""
+        if not SETTINGS.formatter_command.strip() or not Path(SETTINGS.formatter_model_path).expanduser().exists():
+            return []
+        return [
+            LocalModelDiscoverySuggestion(
+                stage=stage,
+                runtime=runtime,
+                name="Current command formatter",
+                source="settings",
+                details=SETTINGS.formatter_model_path,
+                config={
+                    "command_template": SETTINGS.formatter_command,
+                    "model_path": SETTINGS.formatter_model_path,
+                },
+            )
+        ]
+
+    def _run_ollama_install(self, task_id: str, request: LocalModelInstallRequest) -> None:
+        """! @brief Pull an Ollama tag and register it when available."""
+        tag = request.config.get("tag", "").strip()
+        self._update_install_task(task_id, status="running", message=f"Checking Ollama tag {tag}", percent=2.0)
+        try:
+            if not self._ollama_has_model(tag):
+                self._pull_ollama_tag(tag, lambda message, percent: self._update_install_task(
+                    task_id,
+                    status="running",
+                    message=message,
+                    percent=percent,
+                ))
+            self._update_install_task(task_id, status="running", message=f"Registering {tag}", percent=98.0)
+            record = self.register(
+                LocalModelRegistrationRequest(
+                    stage=request.stage,
+                    runtime=request.runtime,
+                    name=request.name.strip() or tag,
+                    languages=request.languages,
+                    notes=request.notes,
+                    config={"tag": tag},
+                    set_as_default=request.set_as_default,
+                )
+            )
+            self._update_install_task(
+                task_id,
+                status="completed",
+                message=f"Installed and registered {tag}",
+                percent=100.0,
+                model_id=record.model_id,
+            )
+        except Exception as exc:  # pragma: no cover - thread guard
+            self._update_install_task(
+                task_id,
+                status="failed",
+                message=f"Unable to install {tag}",
+                error=str(exc),
+            )
+
+    def _pull_ollama_tag(self, tag: str, progress_callback) -> None:
+        """! @brief Pull an Ollama model tag with streaming progress."""
+        body = json.dumps({"name": tag, "stream": True}).encode("utf-8")
+        request = urllib.request.Request(
+            url=f"{SETTINGS.ollama_host.rstrip('/')}/api/pull",
+            data=body,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                last_percent = 5.0
+                for raw_line in response:
+                    if not raw_line.strip():
+                        continue
+                    payload = json.loads(raw_line.decode("utf-8", errors="replace"))
+                    message = str(payload.get("status") or f"Pulling {tag}")
+                    total = int(payload.get("total") or 0)
+                    completed = int(payload.get("completed") or 0)
+                    if total > 0:
+                        last_percent = min(97.0, max(last_percent, completed / total * 95.0))
+                    progress_callback(message, last_percent)
+                    if payload.get("error"):
+                        raise RuntimeError(str(payload["error"]))
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"Ollama pull failed for {tag}: {exc}") from exc
+
+    def _update_install_task(self, task_id: str, **updates: object) -> None:
+        """! @brief Update install task state."""
+        with self._install_lock:
+            task = self._install_tasks[task_id]
+            self._install_tasks[task_id] = task.model_copy(
+                update={**updates, "updated_at": self._now()}
+            )
+
+    def _ollama_tags(self) -> list[str]:
+        """! @brief List local Ollama tags."""
         request = urllib.request.Request(url=f"{SETTINGS.ollama_host.rstrip('/')}/api/tags", method="GET")
         try:
             with urllib.request.urlopen(request, timeout=5) as response:
                 payload = json.loads(response.read().decode("utf-8", errors="replace"))
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError):
-            return False
+            return []
+        return [
+            str(item.get("name", "")).strip()
+            for item in payload.get("models", [])
+            if str(item.get("name", "")).strip()
+        ]
 
+    def _ollama_has_model(self, model_tag: str) -> bool:
+        """! @brief Ollama has model.
+        @param model_tag Value for model tag.
+        @return True when the requested condition is satisfied; otherwise False.
+        """
         wanted = model_tag.strip().lower()
-        for item in payload.get("models", []):
-            name = str(item.get("name", "")).strip().lower()
-            if name == wanted:
+        for tag in self._ollama_tags():
+            if tag.strip().lower() == wanted:
                 return True
         return False
+
+    @staticmethod
+    def _iter_known_files(roots: list[Path], pattern: str, limit: int = 25) -> list[Path]:
+        """! @brief Iterate matching files under known roots."""
+        matches: list[Path] = []
+        for root in roots:
+            root = root.expanduser()
+            if not root.exists():
+                continue
+            if root.is_file() and root.match(pattern):
+                matches.append(root)
+            elif root.is_dir():
+                for path in root.rglob(pattern):
+                    if path.is_file():
+                        matches.append(path)
+                    if len(matches) >= limit:
+                        return matches
+        return matches
+
+    @staticmethod
+    def _hf_cache_roots() -> list[Path]:
+        """! @brief Return known Hugging Face cache roots without broad home scanning."""
+        roots = []
+        for env_name in ("HF_HOME", "TRANSFORMERS_CACHE"):
+            value = os.getenv(env_name, "").strip()
+            if value:
+                roots.append(Path(value))
+        roots.append(Path.home() / ".cache" / "huggingface" / "hub")
+        return roots
+
+    @staticmethod
+    def _dedupe_existing_paths(paths: list[str]) -> list[Path]:
+        """! @brief Deduplicate existing filesystem paths."""
+        seen: set[str] = set()
+        result: list[Path] = []
+        for raw_path in paths:
+            if not raw_path:
+                continue
+            path = Path(raw_path).expanduser()
+            if not path.exists():
+                continue
+            key = str(path.resolve())
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(path)
+        return result
+
+    @staticmethod
+    def _display_name_from_path(path: Path, fallback: str) -> str:
+        """! @brief Create a human name from a model path."""
+        name = path.parent.name if path.name == "config.yaml" else path.stem if path.is_file() else path.name
+        return name or fallback
+
+    @staticmethod
+    def _now() -> datetime:
+        """! @brief Current UTC time."""
+        return datetime.now(timezone.utc)
 
     def _legacy_formatter_tag(self) -> str:
         """! @brief Legacy formatter tag.

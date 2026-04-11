@@ -510,6 +510,109 @@ textarea {
   flex: 1;
 }
 
+.model-manager-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: end;
+}
+
+.form-label,
+.model-field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin: 0 0 0.35rem;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  max-width: 100%;
+  min-width: 0;
+  vertical-align: middle;
+}
+
+.model-field-copy {
+  min-width: 0;
+}
+
+.required-mark {
+  color: var(--danger);
+  font-weight: 900;
+  line-height: 1;
+}
+
+.field-info {
+  display: inline-grid;
+  place-items: center;
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+  border: 1px solid rgba(13, 92, 99, 0.34);
+  border-radius: 50%;
+  background: rgba(230, 247, 246, 0.82);
+  color: var(--accent);
+  cursor: help;
+  font-size: 0.68rem;
+  font-weight: 900;
+  line-height: 1;
+  transform: translateY(-0.03rem);
+}
+
+.runtime-options {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.runtime-option,
+.model-suggestion {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid rgba(53, 37, 27, 0.16);
+  background: rgba(255, 252, 246, 0.72);
+  color: var(--ink);
+  padding: 0.65rem 0.75rem;
+  text-align: left;
+  box-shadow: none;
+}
+
+.runtime-option:hover,
+.model-suggestion:hover {
+  background: rgba(235, 246, 245, 0.92);
+}
+
+.runtime-option.active {
+  border-color: rgba(13, 92, 99, 0.5);
+  background: rgba(230, 247, 246, 0.96);
+}
+
+.runtime-option strong,
+.runtime-option span,
+.model-suggestion strong,
+.model-suggestion span {
+  display: block;
+}
+
+.runtime-option span,
+.model-suggestion span {
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.model-field-grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+
+.model-suggestions {
+  display: grid;
+  gap: 0.5rem;
+}
+
 .small-btn {
   padding: 0.55rem 0.85rem;
   font-size: 0.84rem;
@@ -1025,9 +1128,20 @@ textarea {
   .template-inline-row,
   .template-creator-actions,
   .model-action-row,
+  .model-manager-row,
+  .form-submit-row {
+    align-items: stretch;
+  }
+
+  .template-inline-row,
+  .template-creator-actions,
+  .model-action-row,
   .form-submit-row {
     flex-direction: column;
-    align-items: stretch;
+  }
+
+  .model-manager-row {
+    grid-template-columns: 1fr;
   }
 
   .engine-card-head,

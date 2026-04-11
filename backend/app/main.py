@@ -23,8 +23,12 @@ from backend.app.schemas import (
     JobListResponse,
     LocalModelCatalogResponse,
     LocalModelDefaultRequest,
+    LocalModelDiscoveryResponse,
+    LocalModelInstallRequest,
+    LocalModelInstallTask,
     LocalModelRegistrationRequest,
     LocalModelRecord,
+    LocalModelRuntimeDescriptor,
     LocalStageModelResponse,
     ModelConsentRequest,
     ModelDownloadRequest,
@@ -126,6 +130,61 @@ def get_local_models() -> LocalModelCatalogResponse:
     @return Result produced by the operation.
     """
     return LOCAL_MODEL_CATALOG.list_all()
+
+
+@app.get("/api/models/local/runtimes", response_model=list[LocalModelRuntimeDescriptor])
+def get_local_model_runtimes() -> list[LocalModelRuntimeDescriptor]:
+    """! @brief Get local model runtime descriptors.
+    @return Runtime descriptors.
+    """
+    return LOCAL_MODEL_CATALOG.runtime_descriptors()
+
+
+@app.get("/api/models/local/discovery/{stage}/{runtime}", response_model=LocalModelDiscoveryResponse)
+def discover_local_models(stage: str, runtime: str) -> LocalModelDiscoveryResponse:
+    """! @brief Discover local models for a stage/runtime pair.
+    @param stage Value for stage.
+    @param runtime Value for runtime.
+    @return Discovery suggestions.
+    """
+    try:
+        return LOCAL_MODEL_CATALOG.discover(stage.strip().lower(), runtime.strip())  # type: ignore[arg-type]
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Unknown stage") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/models/local/installs", response_model=list[LocalModelInstallTask])
+def list_local_model_installs() -> list[LocalModelInstallTask]:
+    """! @brief List local model install tasks.
+    @return Install tasks.
+    """
+    return LOCAL_MODEL_CATALOG.list_install_tasks()
+
+
+@app.post("/api/models/local/installs", response_model=LocalModelInstallTask)
+def start_local_model_install(request: LocalModelInstallRequest) -> LocalModelInstallTask:
+    """! @brief Start local model install.
+    @param request Request payload for the operation.
+    @return Install task.
+    """
+    try:
+        return LOCAL_MODEL_CATALOG.start_install(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/models/local/installs/{task_id}", response_model=LocalModelInstallTask)
+def get_local_model_install(task_id: str) -> LocalModelInstallTask:
+    """! @brief Get local model install task.
+    @param task_id Identifier of the task.
+    @return Install task.
+    """
+    try:
+        return LOCAL_MODEL_CATALOG.get_install_task(task_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Unknown install task") from exc
 
 
 @app.get("/api/models/local/{stage}", response_model=LocalStageModelResponse)

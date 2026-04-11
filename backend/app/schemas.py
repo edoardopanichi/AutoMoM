@@ -91,6 +91,63 @@ class LocalModelDefaultRequest(BaseModel):
     model_id: str
 
 
+class LocalModelFieldDescriptor(BaseModel):
+    key: str
+    label: str
+    required: bool = True
+    placeholder: str = ""
+    help: str = ""
+    input_type: str = "text"
+
+
+class LocalModelRuntimeDescriptor(BaseModel):
+    stage: LocalModelStage
+    runtime: LocalModelRuntime
+    label: str
+    description: str = ""
+    fields: list[LocalModelFieldDescriptor] = Field(default_factory=list)
+    supports_install: bool = False
+    advanced: bool = False
+
+
+class LocalModelDiscoverySuggestion(BaseModel):
+    stage: LocalModelStage
+    runtime: LocalModelRuntime
+    name: str
+    source: str
+    details: str = ""
+    config: dict[str, str] = Field(default_factory=dict)
+
+
+class LocalModelDiscoveryResponse(BaseModel):
+    stage: LocalModelStage
+    runtime: LocalModelRuntime
+    suggestions: list[LocalModelDiscoverySuggestion] = Field(default_factory=list)
+
+
+class LocalModelInstallRequest(BaseModel):
+    stage: LocalModelStage
+    runtime: LocalModelRuntime
+    name: str
+    languages: list[str] = Field(default_factory=list)
+    notes: str = ""
+    config: dict[str, str] = Field(default_factory=dict)
+    set_as_default: bool = False
+
+
+class LocalModelInstallTask(BaseModel):
+    task_id: str
+    stage: LocalModelStage
+    runtime: LocalModelRuntime
+    status: Literal["queued", "running", "completed", "failed"]
+    message: str = ""
+    percent: float = 0.0
+    model_id: str | None = None
+    error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class TemplateSection(BaseModel):
     heading: str
     required: bool = True

@@ -7,6 +7,8 @@ const state = {
   profileRefreshPoller: null,
   speakerFormFingerprint: null,
   localModelCatalog: { defaults: {}, models: [] },
+  localRuntimeDescriptors: [],
+  localModelInstallPoller: null,
   diarizationModels: [],
   transcriptionModels: [],
   formatterModels: [],
@@ -14,60 +16,6 @@ const state = {
 };
 
 const LAST_JOB_STORAGE_KEY = "automom:lastJobId";
-
-const LOCAL_RUNTIME_OPTIONS = {
-  diarization: ["pyannote"],
-  transcription: ["whisper.cpp", "faster-whisper"],
-  formatter: ["ollama", "command"],
-};
-
-const LOCAL_MODEL_FIELD_CONFIG = {
-  "pyannote": {
-    primaryKey: "pipeline_path",
-    primaryLabel: "Pipeline path",
-    primaryPlaceholder: "/abs/path/to/config.yaml",
-    secondaryKey: "embedding_model_ref",
-    secondaryLabel: "Embedding model ref",
-    secondaryPlaceholder: "pyannote/wespeaker-voxceleb-resnet34-LM",
-    help: "Register an existing local pyannote pipeline config and its embedding reference.",
-  },
-  "whisper.cpp": {
-    primaryKey: "binary_path",
-    primaryLabel: "Binary path",
-    primaryPlaceholder: "/abs/path/to/whisper-cli",
-    secondaryKey: "model_path",
-    secondaryLabel: "Model path",
-    secondaryPlaceholder: "/abs/path/to/model.gguf",
-    help: "Register an existing whisper.cpp binary and GGUF model file.",
-  },
-  "faster-whisper": {
-    primaryKey: "model_path",
-    primaryLabel: "Model directory",
-    primaryPlaceholder: "/abs/path/to/ctranslate2-model",
-    secondaryKey: "compute_type",
-    secondaryLabel: "Compute type",
-    secondaryPlaceholder: "auto | float16 | int8",
-    help: "Register an existing faster-whisper model directory. The package must already be installed.",
-  },
-  "ollama": {
-    primaryKey: "tag",
-    primaryLabel: "Ollama tag",
-    primaryPlaceholder: "phi4-mini",
-    secondaryKey: "",
-    secondaryLabel: "Secondary setting",
-    secondaryPlaceholder: "",
-    help: "Register an already-pulled Ollama model tag.",
-  },
-  "command": {
-    primaryKey: "command_template",
-    primaryLabel: "Command template",
-    primaryPlaceholder: "bash -lc \"... {model} ...\"",
-    secondaryKey: "model_path",
-    secondaryLabel: "Model path",
-    secondaryPlaceholder: "/abs/path/to/model.gguf",
-    help: "Register a command-based formatter with an existing local model file.",
-  },
-};
 
 /**
  * @brief Query the first matching DOM element.
@@ -222,14 +170,16 @@ function formatDateTime(value) {
  * @brief Load Startup Data.
  */
 async function loadStartupData() {
-  const [templates, models, profiles, downloads, localModelCatalog] = await Promise.all([
+  const [templates, models, profiles, downloads, localModelCatalog, localRuntimeDescriptors] = await Promise.all([
     fetchJSON("/api/templates"),
     fetchJSON("/api/models"),
     fetchJSON("/api/profiles"),
     fetchJSON("/api/models/downloads"),
     fetchJSON("/api/models/local"),
+    fetchJSON("/api/models/local/runtimes"),
   ]);
   state.localModelCatalog = localModelCatalog;
+  state.localRuntimeDescriptors = localRuntimeDescriptors || [];
   state.diarizationModels = (localModelCatalog.models || []).filter((item) => item.stage === "diarization");
   state.transcriptionModels = (localModelCatalog.models || []).filter((item) => item.stage === "transcription");
   state.formatterModels = (localModelCatalog.models || []).filter((item) => item.stage === "formatter");
@@ -717,14 +667,16 @@ async function pollProfileRefreshTask(taskId) {
  * @brief Refresh Settings.
  */
 async function refreshSettings() {
-  const [templates, models, profiles, downloads, localModelCatalog] = await Promise.all([
+  const [templates, models, profiles, downloads, localModelCatalog, localRuntimeDescriptors] = await Promise.all([
     fetchJSON("/api/templates"),
     fetchJSON("/api/models"),
     fetchJSON("/api/profiles"),
     fetchJSON("/api/models/downloads"),
     fetchJSON("/api/models/local"),
+    fetchJSON("/api/models/local/runtimes"),
   ]);
   state.localModelCatalog = localModelCatalog;
+  state.localRuntimeDescriptors = localRuntimeDescriptors || [];
   state.diarizationModels = (localModelCatalog.models || []).filter((item) => item.stage === "diarization");
   state.transcriptionModels = (localModelCatalog.models || []).filter((item) => item.stage === "transcription");
   state.formatterModels = (localModelCatalog.models || []).filter((item) => item.stage === "formatter");
@@ -745,69 +697,96 @@ async function refreshSettings() {
  */
 function syncLocalModelForm() {
   const stageSelect = qs("#local-model-stage");
-  const runtimeSelect = qs("#local-model-runtime");
-  const primaryLabel = qs("#local-model-primary-label");
-  const secondaryLabel = qs("#local-model-secondary-label");
-  const primaryInput = qs("#local-model-primary");
-  const secondaryInput = qs("#local-model-secondary");
+  const form = qs("#local-model-form");
+  const runtimeContainer = qs("#local-runtime-options");
+  const fieldsContainer = qs("#local-model-fields");
   const help = qs("#local-model-help");
-  if (!stageSelect || !runtimeSelect) return;
+  const installBtn = qs("#install-local-model");
+  const suggestions = qs("#local-model-suggestions");
+  if (!stageSelect || !form || !runtimeContainer || !fieldsContainer) return;
 
   const stage = stageSelect.value || "transcription";
-  const runtimes = LOCAL_RUNTIME_OPTIONS[stage] || [];
-  const currentRuntime = runtimeSelect.value;
-  runtimeSelect.innerHTML = "";
-  runtimes.forEach((runtime) => {
-    const option = document.createElement("option");
-    option.value = runtime;
-    option.textContent = runtime;
-    runtimeSelect.appendChild(option);
-  });
-  runtimeSelect.value = runtimes.includes(currentRuntime) ? currentRuntime : runtimes[0];
+  if (form.dataset.stage !== stage && suggestions) {
+    suggestions.innerHTML = "";
+  }
+  form.dataset.stage = stage;
+  const showAdvanced = Boolean(qs("#local-model-advanced")?.checked);
+  const descriptors = state.localRuntimeDescriptors.filter((item) => item.stage === stage);
+  const visibleDescriptors = descriptors.filter((item) => showAdvanced || !item.advanced);
+  const currentRuntime = form.dataset.runtime;
+  const selected = visibleDescriptors.find((item) => item.runtime === currentRuntime) || visibleDescriptors[0] || descriptors[0];
+  if (!selected) {
+    runtimeContainer.innerHTML = "";
+    fieldsContainer.innerHTML = "";
+    help.textContent = "No runtime descriptors are available.";
+    return;
+  }
+  form.dataset.runtime = selected.runtime;
 
-  const fieldConfig = LOCAL_MODEL_FIELD_CONFIG[runtimeSelect.value];
-  primaryLabel.textContent = fieldConfig.primaryLabel;
-  secondaryLabel.textContent = fieldConfig.secondaryLabel || "Secondary setting";
-  primaryInput.placeholder = fieldConfig.primaryPlaceholder || "";
-  secondaryInput.placeholder = fieldConfig.secondaryPlaceholder || "";
-  secondaryInput.disabled = !fieldConfig.secondaryKey;
-  help.textContent = fieldConfig.help;
+  runtimeContainer.innerHTML = "";
+  visibleDescriptors.forEach((descriptor) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "runtime-option";
+    button.dataset.runtime = descriptor.runtime;
+    button.classList.toggle("active", descriptor.runtime === selected.runtime);
+    const name = document.createElement("strong");
+    name.textContent = descriptor.label;
+    const description = document.createElement("span");
+    description.textContent = descriptor.description;
+    button.append(name, description);
+    button.addEventListener("click", () => {
+      form.dataset.runtime = descriptor.runtime;
+      if (suggestions) suggestions.innerHTML = "";
+      syncLocalModelForm();
+    });
+    runtimeContainer.appendChild(button);
+  });
+
+  fieldsContainer.innerHTML = "";
+  selected.fields.forEach((field) => {
+    const label = document.createElement("label");
+    const labelText = document.createElement("span");
+    labelText.className = "model-field-label";
+    const labelCopy = document.createElement("span");
+    labelCopy.className = "model-field-copy";
+    labelCopy.textContent = field.label;
+    labelText.appendChild(labelCopy);
+    if (field.required) {
+      const required = document.createElement("span");
+      required.className = "required-mark";
+      required.textContent = "*";
+      labelText.appendChild(required);
+    }
+    if (field.help) {
+      const info = document.createElement("span");
+      info.className = "field-info";
+      info.title = field.help;
+      info.setAttribute("aria-label", field.help);
+      info.textContent = "?";
+      labelText.appendChild(info);
+    }
+    const input = document.createElement("input");
+    input.type = field.input_type || "text";
+    input.dataset.configKey = field.key;
+    input.placeholder = field.placeholder || "";
+    input.required = Boolean(field.required);
+    label.append(labelText, input);
+    fieldsContainer.appendChild(label);
+  });
+  help.textContent = selected.description || "";
+  installBtn?.classList.toggle("hidden", !selected.supports_install);
 }
 
 /**
  * @brief Register Local Model.
  */
 async function registerLocalModel() {
-  const stage = qs("#local-model-stage").value;
-  const runtime = qs("#local-model-runtime").value;
-  const name = qs("#local-model-name").value.trim();
-  const primary = qs("#local-model-primary").value.trim();
-  const secondary = qs("#local-model-secondary").value.trim();
-  const languages = qs("#local-model-languages").value
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-  const notes = qs("#local-model-notes").value.trim();
   const status = qs("#local-model-status");
-  const fieldConfig = LOCAL_MODEL_FIELD_CONFIG[runtime];
-  if (!name || !primary) {
-    status.textContent = "Name and the primary setting are required.";
+  const payload = buildLocalModelPayload();
+  if (!payload) {
+    status.textContent = "Fill the required fields before registering.";
     return;
-  }
-
-  const payload = {
-    stage,
-    runtime,
-    name,
-    languages,
-    notes,
-    set_as_default: qs("#local-model-default").checked,
-    config: {
-      [fieldConfig.primaryKey]: primary,
-    },
-  };
-  if (fieldConfig.secondaryKey && secondary) {
-    payload.config[fieldConfig.secondaryKey] = secondary;
   }
 
   status.textContent = "Registering...";
@@ -817,16 +796,183 @@ async function registerLocalModel() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    qs("#local-model-name").value = "";
-    qs("#local-model-primary").value = "";
-    qs("#local-model-secondary").value = "";
-    qs("#local-model-languages").value = "";
-    qs("#local-model-notes").value = "";
+    clearLocalModelForm();
     status.textContent = "Model registered.";
     await refreshSettings();
   } catch (error) {
     status.textContent = error.message;
   }
+}
+
+/**
+ * @brief Build Local Model Payload.
+ */
+function buildLocalModelPayload() {
+  const form = qs("#local-model-form");
+  const stage = qs("#local-model-stage").value;
+  const runtime = form?.dataset.runtime;
+  const descriptor = getRuntimeDescriptor(stage, runtime);
+  const name = qs("#local-model-name").value.trim();
+  if (!descriptor || !name) return null;
+  const config = {};
+  for (const field of descriptor.fields) {
+    const input = qs(`[data-config-key="${CSS.escape(field.key)}"]`);
+    const value = input?.value.trim() || "";
+    if (field.required && !value) return null;
+    if (value) config[field.key] = value;
+  }
+  return {
+    stage,
+    runtime,
+    name,
+    languages: qs("#local-model-languages").value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean),
+    notes: qs("#local-model-notes").value.trim(),
+    set_as_default: qs("#local-model-default").checked,
+    config,
+  };
+}
+
+/**
+ * @brief Get Runtime Descriptor.
+ * @param {*} stage Stage id.
+ * @param {*} runtime Runtime id.
+ */
+function getRuntimeDescriptor(stage, runtime) {
+  return state.localRuntimeDescriptors.find((item) => item.stage === stage && item.runtime === runtime);
+}
+
+/**
+ * @brief Clear Local Model Form.
+ */
+function clearLocalModelForm() {
+  qs("#local-model-name").value = "";
+  qs("#local-model-languages").value = "";
+  qs("#local-model-notes").value = "";
+  qsa("[data-config-key]").forEach((input) => {
+    input.value = "";
+  });
+  const suggestions = qs("#local-model-suggestions");
+  if (suggestions) suggestions.innerHTML = "";
+}
+
+/**
+ * @brief Discover local model candidates.
+ */
+async function scanLocalModels() {
+  const form = qs("#local-model-form");
+  const stage = qs("#local-model-stage").value;
+  const runtime = form?.dataset.runtime;
+  const status = qs("#local-model-status");
+  const suggestions = qs("#local-model-suggestions");
+  if (!stage || !runtime || !suggestions) return;
+  status.textContent = "Scanning known locations...";
+  suggestions.innerHTML = "";
+  try {
+    const payload = await fetchJSON(
+      `/api/models/local/discovery/${encodeURIComponent(stage)}/${encodeURIComponent(runtime)}`,
+    );
+    renderLocalModelSuggestions(payload.suggestions || []);
+    status.textContent = payload.suggestions?.length ? "Scan complete." : "No candidates found in known locations.";
+  } catch (error) {
+    status.textContent = error.message;
+  }
+}
+
+/**
+ * @brief Render local model suggestions.
+ * @param {*} suggestions Discovery suggestions.
+ */
+function renderLocalModelSuggestions(suggestions) {
+  const container = qs("#local-model-suggestions");
+  container.innerHTML = "";
+  if (!suggestions.length) return;
+  const title = document.createElement("p");
+  title.className = "form-label";
+  title.textContent = "Discovered candidates";
+  container.appendChild(title);
+  suggestions.forEach((suggestion) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "model-suggestion";
+    const name = document.createElement("strong");
+    name.textContent = suggestion.name;
+    const details = document.createElement("span");
+    details.textContent = `${suggestion.source}${suggestion.details ? ` | ${suggestion.details}` : ""}`;
+    button.append(name, details);
+    button.addEventListener("click", () => applyLocalModelSuggestion(suggestion));
+    container.appendChild(button);
+  });
+}
+
+/**
+ * @brief Apply local model suggestion.
+ * @param {*} suggestion Discovery suggestion.
+ */
+function applyLocalModelSuggestion(suggestion) {
+  qs("#local-model-name").value = suggestion.name || "";
+  Object.entries(suggestion.config || {}).forEach(([key, value]) => {
+    const input = qs(`[data-config-key="${CSS.escape(key)}"]`);
+    if (input) input.value = value;
+  });
+  qs("#local-model-status").textContent = "Candidate loaded. Review the fields, then register it.";
+}
+
+/**
+ * @brief Install an Ollama model and register it.
+ */
+async function installLocalModel() {
+  const status = qs("#local-model-status");
+  const payload = buildLocalModelPayload();
+  if (!payload) {
+    status.textContent = "Fill the required fields before pulling with Ollama.";
+    return;
+  }
+  status.textContent = "Starting Ollama pull...";
+  try {
+    const task = await fetchJSON("/api/models/local/installs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    startLocalModelInstallPolling(task.task_id);
+  } catch (error) {
+    status.textContent = error.message;
+  }
+}
+
+/**
+ * @brief Poll local model install status.
+ * @param {*} taskId Install task id.
+ */
+function startLocalModelInstallPolling(taskId) {
+  if (state.localModelInstallPoller) clearInterval(state.localModelInstallPoller);
+  const poll = async () => {
+    const status = qs("#local-model-status");
+    try {
+      const task = await fetchJSON(`/api/models/local/installs/${encodeURIComponent(taskId)}`);
+      const suffix = task.percent ? ` (${task.percent.toFixed(1)}%)` : "";
+      status.textContent = `${task.message || task.status}${suffix}`;
+      if (task.status === "completed" || task.status === "failed") {
+        clearInterval(state.localModelInstallPoller);
+        state.localModelInstallPoller = null;
+        if (task.status === "completed") {
+          clearLocalModelForm();
+          await refreshSettings();
+        } else {
+          status.textContent = task.error || task.message || "Install failed.";
+        }
+      }
+    } catch (error) {
+      clearInterval(state.localModelInstallPoller);
+      state.localModelInstallPoller = null;
+      status.textContent = error.message;
+    }
+  };
+  poll();
+  state.localModelInstallPoller = setInterval(poll, 1500);
 }
 
 /**
@@ -1354,8 +1500,10 @@ function bindEvents() {
   qs("#cancel-template-inline").addEventListener("click", () => toggleTemplateCreator(false));
   qs("#save-template-inline").addEventListener("click", saveTemplateInline);
   qs("#local-model-stage").addEventListener("change", syncLocalModelForm);
-  qs("#local-model-runtime").addEventListener("change", syncLocalModelForm);
+  qs("#local-model-advanced").addEventListener("change", syncLocalModelForm);
+  qs("#scan-local-models").addEventListener("click", scanLocalModels);
   qs("#register-local-model").addEventListener("click", registerLocalModel);
+  qs("#install-local-model").addEventListener("click", installLocalModel);
   qsa(".engine-option").forEach((button) => {
     button.addEventListener("click", () => {
       setExecutionMode(button.dataset.stage, button.dataset.mode);
