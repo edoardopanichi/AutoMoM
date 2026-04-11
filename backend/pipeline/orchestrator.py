@@ -228,12 +228,17 @@ class PipelineOrchestrator:
                         )
 
                 try:
+                    diarization_chunk_s = (
+                        SETTINGS.diarization_pyannote_chunk_s
+                        if SETTINGS.diarization_backend in {"auto", "pyannote"}
+                        else SETTINGS.diarization_max_chunk_s
+                    )
                     diarization_result = diarize(
                         normalized_audio_path,
                         speech_regions,
                         min_speakers=min_speakers,
                         max_speakers=max_speakers,
-                        max_chunk_s=SETTINGS.diarization_max_chunk_s,
+                        max_chunk_s=diarization_chunk_s,
                         backend=SETTINGS.diarization_backend,
                         model_path=Path(diarization_model.pipeline_path),
                         pipeline_path=diarization_model.pipeline_path,

@@ -85,6 +85,7 @@ class Settings:
         "AUTOMOM_DIARIZATION_EMBEDDING_MODEL",
         "pyannote/wespeaker-voxceleb-resnet34-LM",
     )
+    diarization_pyannote_chunk_s: float = float(os.getenv("AUTOMOM_DIARIZATION_PYANNOTE_CHUNK_S", "300.0"))
     transcription_binary: str = _env_first("AUTOMOM_TRANSCRIPTION_BIN", "AUTOMOM_VOXTRAL_BIN")
     transcription_model_path: str = _env_first(
         "AUTOMOM_TRANSCRIPTION_MODEL",

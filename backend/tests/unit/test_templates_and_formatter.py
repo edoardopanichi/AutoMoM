@@ -5,6 +5,7 @@ import urllib.error
 from pathlib import Path
 
 from backend.app.config import SETTINGS
+from backend.app.schemas import TemplateDefinition
 from backend.pipeline.formatter import Formatter, _extract_model_text, _strip_runtime_logs, validate_markdown_output
 from backend.pipeline.template_manager import TemplateManager
 
@@ -217,3 +218,23 @@ def test_validate_markdown_output_requires_template_headings() -> None:
 
     assert not result["valid"]
     assert any("Missing required heading '#### Concise Overview:'" in item for item in result["errors"])
+
+
+def test_template_manager_persists_default_template(isolated_settings) -> None:
+    """! @brief Test template manager persists default template selection.
+    @param isolated_settings Value for isolated settings.
+    """
+    manager = TemplateManager()
+    custom = TemplateDefinition(
+        template_id="custom_sync",
+        name="Custom Sync",
+        prompt_block="Write a short sync summary.",
+        sections=manager.load("default").sections,
+    )
+    manager.save(custom)
+
+    assert manager.set_default_template_id("custom_sync") == "custom_sync"
+    assert manager.get_default_template_id() == "custom_sync"
+    summaries = {item.template_id: item for item in manager.list_templates()}
+    assert summaries["custom_sync"].is_default is True
+    assert summaries["default"].is_default is False

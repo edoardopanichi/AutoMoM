@@ -71,40 +71,59 @@
               <div class="template-inline-row">
                 <select id="template-select"></select>
                 <button type="button" id="open-template-creator" class="small-btn">New Template</button>
+                <button type="button" id="edit-selected-template" class="small-btn">Edit Template</button>
               </div>
             </label>
             <div id="template-creator" class="template-creator hidden">
-              <label>
-                Template ID
-                <input type="text" id="new-template-id" placeholder="e.g. project_sync" />
-              </label>
-              <label>
-                Name
-                <input type="text" id="new-template-name" placeholder="Template name" />
-              </label>
-              <label>
-                Version
-                <input type="text" id="new-template-version" value="1.0.0" />
-              </label>
-              <label>
-                Description
-                <input type="text" id="new-template-description" placeholder="Optional short description" />
-              </label>
+              <div class="template-guidance">
+                <div>
+                  <h3 id="template-editor-title">Guided template</h3>
+                  <p><strong>Sections</strong> are the markdown headings AutoMoM validates in order. <strong>Prompt block</strong> tells the formatter how to write inside those sections.</p>
+                </div>
+              </div>
+              <div class="template-editor-grid">
+                <label>
+                  Template ID
+                  <input type="text" id="new-template-id" placeholder="e.g. project_sync" />
+                </label>
+                <label>
+                  Name
+                  <input type="text" id="new-template-name" placeholder="Template name" />
+                </label>
+                <label>
+                  Version
+                  <input type="text" id="new-template-version" value="1.0.0" />
+                </label>
+                <label>
+                  Description
+                  <input type="text" id="new-template-description" placeholder="Optional short description" />
+                </label>
+              </div>
               <label>
                 Prompt Block
                 <textarea
                   id="new-template-prompt-block"
-                  rows="4"
-                  placeholder="Instructions sent to the formatter model"
+                  rows="7"
+                  placeholder="Describe tone, level of detail, and what information to extract from the transcript."
                 ></textarea>
               </label>
+              <div class="template-section-editor">
+                <div class="template-section-editor-head">
+                  <div>
+                    <h4>Mandatory sections</h4>
+                    <p>Each heading becomes a required section unless you uncheck it. Use markdown heading syntax.</p>
+                  </div>
+                  <button type="button" id="add-template-section" class="small-btn">Add Section</button>
+                </div>
+                <div id="template-sections"></div>
+              </div>
               <div class="template-creator-actions">
                 <button type="button" id="save-template-inline" class="small-btn">Save Template</button>
                 <button type="button" id="cancel-template-inline" class="small-btn danger-btn">Cancel</button>
               </div>
             </div>
             <label>
-              Meeting title
+              <span id="meeting-title-label">Meeting title</span>
               <input type="text" id="meeting-title" placeholder="Optional" />
             </label>
             <div class="form-submit-row">

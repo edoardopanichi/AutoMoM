@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from backend.pipeline.diarization import _diarize_with_pyannote_impl
+from backend.pipeline.diarization import TARGET_LOCAL_DIARIZATION_CHUNK_S
 from backend.pipeline.vad import SpeechRegion
 
 
@@ -48,7 +49,9 @@ def main(argv: list[str] | None = None) -> int:
             cuda_device_id=int(request.get("cuda_device_id") or 0),
             pipeline_path=str(request.get("pipeline_path") or "") or None,
             embedding_model=str(request.get("embedding_model") or "") or None,
+            max_chunk_s=float(request.get("max_chunk_s") or TARGET_LOCAL_DIARIZATION_CHUNK_S),
             progress_callback=lambda event: _emit({"type": "progress", "event": event}),
+            isolate_pipeline=False,
         )
     except Exception as exc:  # pragma: no cover
         _emit({"type": "error", "error": f"pyannote_worker_runtime_error:{exc.__class__.__name__}"})

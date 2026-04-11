@@ -1,16 +1,51 @@
 {
   "template_id": "xlab_MoM",
   "name": "xlab MoM",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Standard XLab MoM template",
-  "prompt_block": "You are an assistant that generates Minutes of Meeting (MoM) in English.\n\nSTRICT REQUIREMENTS (MANDATORY):\n- Output MUST be valid Markdown only.\n- Output MUST follow EXACTLY the structure, section names, and order defined below.\n- DO NOT add, remove, rename, or reorder any section.\n- DO NOT include explanations, comments, or extra text outside the required structure.\n- If a section has no content, write exactly: \"None\".\n- Be concise and factual. Do NOT speculate unless explicitly allowed.\n\nINPUT:\n- Transcript of the meeting\n- Optional participant list\n\nCONTENT RULES:\n- DO NOT exaggerate or fabricate DECISION/OPEN POINTS or RISKS. These are rare.\n- Prefer explicit information from the transcript over inference.\n- Inference is allowed ONLY when highly confident and must be explicitly marked.\n- Use clear, professional, and concise language.\n- Avoid redundancy.\n- Each bullet point must contain one single idea only.\n",
+  "prompt_block": "You are an assistant that generates Minutes of Meeting (MoM) in English.\n\nSTRICT REQUIREMENTS (MANDATORY):\n- Output MUST be valid Markdown only.\n- Output MUST follow EXACTLY the structure, section names, and order defined below.\n- DO NOT add, remove, rename, or reorder any section.\n- DO NOT include explanations, comments, or extra text outside the required structure.\n- If a section has no content, write exactly: \"None\".\n- Be concise and factual. Do NOT speculate unless explicitly allowed.\n\nINPUT:\n- Transcript of the meeting\n- Optional participant list\n\nCONTENT RULES:\n- DO NOT exaggerate or fabricate DECISION/OPEN POINTS or RISKS. These are rare.\n- Prefer explicit information from the transcript over inference.\n- Inference is allowed ONLY when highly confident and must be explicitly marked. For example, if a TODO or a Conclusion is inferred, then add (inferred by AutoMoM) \n- Use clear, professional, and concise language.\n- Avoid redundancy.\n- Each bullet point must contain one single idea only.",
   "sections": [
-    {"heading": "### Title:", "required": true, "allow_prefix": true, "empty_value": "None"},
-    {"heading": "#### Participants:", "required": true, "allow_prefix": false, "empty_value": "None"},
-    {"heading": "#### Concise Overview:", "required": true, "allow_prefix": false, "empty_value": "None"},
-    {"heading": "#### TODO's:", "required": true, "allow_prefix": false, "empty_value": "None"},
-    {"heading": "#### CONCLUSIONS:", "required": true, "allow_prefix": false, "empty_value": "None"},
-    {"heading": "#### DECISION/OPEN POINTS:", "required": true, "allow_prefix": false, "empty_value": "None"},
-    {"heading": "#### RISKS:", "required": true, "allow_prefix": false, "empty_value": "None"}
+    {
+      "heading": "### Title:",
+      "required": true,
+      "allow_prefix": true,
+      "empty_value": "None"
+    },
+    {
+      "heading": "#### Participants:",
+      "required": true,
+      "allow_prefix": false,
+      "empty_value": "None"
+    },
+    {
+      "heading": "#### Concise Overview:",
+      "required": true,
+      "allow_prefix": false,
+      "empty_value": "None"
+    },
+    {
+      "heading": "#### TODO's:",
+      "required": true,
+      "allow_prefix": false,
+      "empty_value": "None"
+    },
+    {
+      "heading": "#### CONCLUSIONS:",
+      "required": true,
+      "allow_prefix": false,
+      "empty_value": "None"
+    },
+    {
+      "heading": "#### DECISION/OPEN POINTS:",
+      "required": true,
+      "allow_prefix": false,
+      "empty_value": "None"
+    },
+    {
+      "heading": "#### RISKS:",
+      "required": true,
+      "allow_prefix": false,
+      "empty_value": "None"
+    }
   ]
 }

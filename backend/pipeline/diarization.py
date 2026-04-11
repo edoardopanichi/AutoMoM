@@ -112,6 +112,7 @@ def diarize(
             compute_device=compute_device,
             cuda_device_id=cuda_device_id,
             embedding_model=embedding_model,
+            max_chunk_s=max_chunk_s,
             job_id=job_id,
             progress_callback=progress_callback,
         )
@@ -172,11 +173,15 @@ def _pyannote_error_message(
             "Fix: install pyannote.audio and torch dependencies, then retry."
         )
     if reason.startswith("pyannote_runtime_error"):
-        if "outofmemoryerror" in reason.lower() or "out_of_memory" in reason.lower():
+        if (
+            "outofmemoryerror" in reason.lower()
+            or "out_of_memory" in reason.lower()
+            or "memoryerror" in reason.lower()
+        ):
             return (
                 f"Pyannote diarization ran out of memory ({reason}). "
                 f"Configured pipeline: '{pipeline_ref or '<unset>'}'. "
-                "Fix: retry on CPU, reduce concurrent GPU load, or use a shorter recording chunk."
+                "Fix: retry with a shorter local diarization chunk, retry on CPU, or reduce concurrent GPU load."
             )
         return (
             f"Pyannote diarization failed at runtime ({reason}). "
@@ -216,6 +221,7 @@ def _diarize_with_pyannote(
     cuda_device_id: int,
     pipeline_path: str | None = None,
     embedding_model: str | None = None,
+    max_chunk_s: float = TARGET_LOCAL_DIARIZATION_CHUNK_S,
     job_id: str | None = None,
     progress_callback: Callable[[dict[str, object]], None] | None = None,
 ) -> tuple[DiarizationResult | None, str | None]:
@@ -229,6 +235,7 @@ def _diarize_with_pyannote(
     @param cuda_device_id CUDA device index to prefer when GPU execution is enabled.
     @param pipeline_path Value for pipeline path.
     @param embedding_model Value for embedding model.
+    @param max_chunk_s Maximum local pyannote chunk duration in seconds.
     @param job_id Identifier of the job being processed.
     @param progress_callback Optional callback invoked with progress updates.
     @return Tuple produced by the operation.
@@ -248,6 +255,7 @@ def _diarize_with_pyannote(
             cuda_device_id=cuda_device_id,
             pipeline_path=pipeline_path,
             embedding_model=embedding_model,
+            max_chunk_s=max_chunk_s,
             job_id=job_id,
             progress_callback=progress_callback,
         )
@@ -262,6 +270,7 @@ def _diarize_with_pyannote(
         cuda_device_id=cuda_device_id,
         pipeline_path=pipeline_path,
         embedding_model=embedding_model,
+        max_chunk_s=max_chunk_s,
         progress_callback=progress_callback,
     )
 
@@ -276,7 +285,9 @@ def _diarize_with_pyannote_impl(
     cuda_device_id: int,
     pipeline_path: str | None = None,
     embedding_model: str | None = None,
+    max_chunk_s: float = TARGET_LOCAL_DIARIZATION_CHUNK_S,
     progress_callback: Callable[[dict[str, object]], None] | None = None,
+    isolate_pipeline: bool = True,
 ) -> tuple[DiarizationResult | None, str | None]:
     """! @brief Diarize with pyannote impl.
     @param audio_path Path to the audio file.
@@ -288,7 +299,9 @@ def _diarize_with_pyannote_impl(
     @param cuda_device_id CUDA device index to prefer when GPU execution is enabled.
     @param pipeline_path Value for pipeline path.
     @param embedding_model Value for embedding model.
+    @param max_chunk_s Maximum local pyannote chunk duration in seconds.
     @param progress_callback Optional callback invoked with progress updates.
+    @param isolate_pipeline Copy the cached pipeline before running it.
     @return Tuple produced by the operation.
     """
     pipeline_ref = _resolve_pyannote_pipeline_ref(model_path, pipeline_path)
@@ -327,10 +340,12 @@ def _diarize_with_pyannote_impl(
                 compute_device=compute_device,
                 cuda_device_id=cuda_device_id,
                 token=token,
+                max_chunk_s=max_chunk_s,
                 progress_callback=progress_callback,
+                isolate_pipeline=isolate_pipeline,
             )
 
-        pipeline = copy.deepcopy(_load_pyannote_pipeline(pipeline_ref, token))
+        pipeline = _pipeline_for_run(pipeline_ref, token, isolate_pipeline=isolate_pipeline)
         target_device = resolve_torch_device(compute_device, cuda_device_id)
         if progress_callback is not None:
             progress_callback({"phase": "loading", "detail": "Running full-recording diarization"})
@@ -401,6 +416,7 @@ def _diarize_with_pyannote_subprocess(
     cuda_device_id: int,
     pipeline_path: str | None,
     embedding_model: str | None,
+    max_chunk_s: float,
     job_id: str | None,
     progress_callback: Callable[[dict[str, object]], None] | None,
 ) -> tuple[DiarizationResult | None, str | None]:
@@ -414,6 +430,7 @@ def _diarize_with_pyannote_subprocess(
     @param cuda_device_id CUDA device index to prefer when GPU execution is enabled.
     @param pipeline_path Value for pipeline path.
     @param embedding_model Value for embedding model.
+    @param max_chunk_s Maximum local pyannote chunk duration in seconds.
     @param job_id Identifier of the job being processed.
     @param progress_callback Optional callback invoked with progress updates.
     @return Tuple produced by the operation.
@@ -428,6 +445,7 @@ def _diarize_with_pyannote_subprocess(
         "cuda_device_id": cuda_device_id,
         "pipeline_path": pipeline_path,
         "embedding_model": embedding_model,
+        "max_chunk_s": max_chunk_s,
     }
     temp_path: str | None = None
     process: subprocess.Popen[str] | None = None
@@ -541,7 +559,9 @@ def _diarize_with_pyannote_in_chunks(
     compute_device: str,
     cuda_device_id: int,
     token: str | None,
+    max_chunk_s: float,
     progress_callback: Callable[[dict[str, object]], None] | None,
+    isolate_pipeline: bool = True,
 ) -> tuple[DiarizationResult | None, str | None]:
     """! @brief Diarize with pyannote in chunks.
     @param audio_path Path to the audio file.
@@ -554,7 +574,9 @@ def _diarize_with_pyannote_in_chunks(
     @param compute_device Requested compute device preference.
     @param cuda_device_id CUDA device index to prefer when GPU execution is enabled.
     @param token Value for token.
+    @param max_chunk_s Maximum local pyannote chunk duration in seconds.
     @param progress_callback Optional callback invoked with progress updates.
+    @param isolate_pipeline Copy the cached pipeline before running it.
     @return Tuple produced by the operation.
     """
     try:
@@ -565,6 +587,7 @@ def _diarize_with_pyannote_in_chunks(
     chunk_plan = _plan_chunked_diarization(
         speech_regions=speech_regions,
         total_duration_s=total_duration_s,
+        max_chunk_s=max_chunk_s,
     )
     # Each chunk owns only its central window but reads with overlap on both sides so pyannote gets
     # enough context without duplicating final segments across adjacent chunks.
@@ -579,7 +602,7 @@ def _diarize_with_pyannote_in_chunks(
             }
         )
 
-    pipeline = copy.deepcopy(_load_pyannote_pipeline(pipeline_ref, token))
+    pipeline = _pipeline_for_run(pipeline_ref, token, isolate_pipeline=isolate_pipeline)
     target_device = resolve_torch_device(compute_device, cuda_device_id)
     pipeline_kwargs: dict[str, int] = {}
     if min_speakers is not None:
@@ -747,13 +770,19 @@ def _plan_chunked_diarization(
     *,
     speech_regions: list[SpeechRegion],
     total_duration_s: float,
+    max_chunk_s: float = TARGET_LOCAL_DIARIZATION_CHUNK_S,
 ) -> list[dict[str, object]]:
     """! @brief Plan chunked diarization.
     @param speech_regions Detected speech regions used as input.
     @param total_duration_s Value for total duration s.
+    @param max_chunk_s Maximum owned chunk duration in seconds.
     @return List produced by the operation.
     """
-    chunk_count = max(1, int(math.ceil(total_duration_s / TARGET_LOCAL_DIARIZATION_CHUNK_S)))
+    target_chunk_s = min(
+        TARGET_LOCAL_DIARIZATION_CHUNK_S,
+        max(60.0, float(max_chunk_s or TARGET_LOCAL_DIARIZATION_CHUNK_S)),
+    )
+    chunk_count = max(1, int(math.ceil(total_duration_s / target_chunk_s)))
     own_chunk_s = total_duration_s / chunk_count
     silence_points = _silence_boundary_points(speech_regions, total_duration_s)
     boundaries = [0.0]
@@ -1037,6 +1066,19 @@ def _load_pyannote_pipeline(pipeline_ref: str, token: str | None):
     if token:
         kwargs["use_auth_token"] = token
     return Pipeline.from_pretrained(pipeline_ref, **kwargs)
+
+
+def _pipeline_for_run(pipeline_ref: str, token: str | None, *, isolate_pipeline: bool):
+    """! @brief Return a pyannote pipeline instance for one run.
+    @param pipeline_ref Value for pipeline ref.
+    @param token Value for token.
+    @param isolate_pipeline Copy the cached pipeline before running it.
+    @return Pipeline instance.
+    """
+    pipeline = _load_pyannote_pipeline(pipeline_ref, token)
+    if isolate_pipeline:
+        return copy.deepcopy(pipeline)
+    return pipeline
 
 
 def _run_pyannote_pipeline(

@@ -24,6 +24,7 @@ def isolated_settings(tmp_path: Path):
         "diarization_model_path": SETTINGS.diarization_model_path,
         "diarization_pipeline_path": SETTINGS.diarization_pipeline_path,
         "diarization_embedding_model": SETTINGS.diarization_embedding_model,
+        "diarization_pyannote_chunk_s": SETTINGS.diarization_pyannote_chunk_s,
         "transcription_binary": SETTINGS.transcription_binary,
         "transcription_model_path": SETTINGS.transcription_model_path,
         "transcription_threads": SETTINGS.transcription_threads,

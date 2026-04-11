@@ -455,6 +455,25 @@ button:disabled {
   gap: 0.9rem;
 }
 
+.job-form-grid.template-editing {
+  grid-template-columns: 1fr;
+}
+
+.job-form-grid.template-editing .field-cluster {
+  border-radius: 22px;
+}
+
+.job-form-grid.template-editing .cloud-panel,
+.job-form-grid.template-editing #meeting-title-label,
+.job-form-grid.template-editing #meeting-title,
+.job-form-grid.template-editing .form-submit-row {
+  display: none;
+}
+
+.job-form-grid.template-editing #template-creator {
+  margin-top: 0.5rem;
+}
+
 .hidden {
   display: none !important;
 }
@@ -621,7 +640,77 @@ textarea {
 
 .template-creator {
   margin-top: 0.1rem;
-  border-radius: 18px;
+  border-radius: 8px;
+  padding: 1rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.template-guidance,
+.template-section-editor {
+  padding: 1rem;
+  border-radius: 8px;
+  border: 1px solid rgba(53, 37, 27, 0.12);
+  background: rgba(255, 252, 246, 0.7);
+}
+
+.template-editor-grid {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.template-creator input,
+.template-creator textarea {
+  font-weight: 400;
+}
+
+.template-guidance h3,
+.template-section-editor h4 {
+  margin: 0;
+}
+
+.template-guidance p,
+.template-section-editor p {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.template-section-editor-head,
+.template-section-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+#template-sections {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.75rem;
+}
+
+.template-section-row {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto auto auto;
+  padding: 0.75rem;
+  border-radius: 8px;
+  border: 1px solid rgba(53, 37, 27, 0.12);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.template-section-row input[type="text"] {
+  min-width: 0;
+}
+
+.template-section-row label {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  width: auto;
+  white-space: nowrap;
 }
 
 .template-creator-actions,
@@ -1160,6 +1249,15 @@ textarea {
 
   .model-manager-row {
     grid-template-columns: 1fr;
+  }
+
+  .template-editor-grid,
+  .template-section-row {
+    grid-template-columns: 1fr;
+  }
+
+  .template-section-row label {
+    justify-content: flex-start;
   }
 
   .engine-card-head,

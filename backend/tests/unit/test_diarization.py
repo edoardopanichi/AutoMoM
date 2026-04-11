@@ -107,6 +107,33 @@ def test_plan_chunked_diarization_uses_ceil_20_min_windows() -> None:
     assert chunks[-1]["own_end_s"] == 57 * 60.0
 
 
+def test_plan_chunked_diarization_honors_configured_chunk_size() -> None:
+    """! @brief Test plan chunked diarization honors configured chunk size.
+    """
+    chunks = diarization_module._plan_chunked_diarization(
+        speech_regions=[],
+        total_duration_s=57 * 60.0,
+        max_chunk_s=5 * 60.0,
+    )
+
+    assert len(chunks) == 12
+    assert max(float(item["own_end_s"]) - float(item["own_start_s"]) for item in chunks) <= 5 * 60.0
+
+
+def test_pyannote_memory_error_message_is_actionable(tmp_path: Path) -> None:
+    """! @brief Test pyannote memory error message is actionable.
+    @param tmp_path Path provided by pytest.
+    """
+    message = diarization_module._pyannote_error_message(
+        "pyannote_runtime_error:MemoryError",
+        model_path=tmp_path / "config.yaml",
+        pipeline_path=str(tmp_path / "config.yaml"),
+    )
+
+    assert "ran out of memory" in message
+    assert "shorter local diarization chunk" in message
+
+
 def test_filter_segments_to_owned_window_clips_and_deduplicates_overlap() -> None:
     """! @brief Test filter segments to owned window clips and deduplicates overlap.
     """

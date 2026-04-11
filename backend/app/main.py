@@ -36,6 +36,7 @@ from backend.app.schemas import (
     ProfileRefreshTask,
     SubmitSpeakerMappingRequest,
     TemplateDefinition,
+    TemplateDefaultRequest,
 )
 from backend.models.diarization_registry import list_local_diarization_models, resolve_local_diarization_model
 from backend.models.local_catalog import LOCAL_MODEL_CATALOG
@@ -318,6 +319,21 @@ def save_template(template: TemplateDefinition) -> dict[str, str]:
     """
     TEMPLATE_MANAGER.save(template)
     return {"status": "ok"}
+
+
+@app.post("/api/templates/default")
+def set_default_template(request: TemplateDefaultRequest) -> dict[str, str]:
+    """! @brief Set default template.
+    @param request Request payload used by the operation.
+    @return Dictionary produced by the operation.
+    """
+    try:
+        template_id = TEMPLATE_MANAGER.set_default_template_id(request.template_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Template not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "ok", "template_id": template_id}
 
 
 @app.delete("/api/templates/{template_id}")

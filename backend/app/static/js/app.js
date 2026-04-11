@@ -16,6 +16,15 @@ const state = {
 };
 
 const LAST_JOB_STORAGE_KEY = "automom:lastJobId";
+const DEFAULT_TEMPLATE_SECTIONS = [
+  { heading: "### Title:", required: true, allow_prefix: true, empty_value: "None" },
+  { heading: "#### Participants:", required: true, allow_prefix: false, empty_value: "None" },
+  { heading: "#### Concise Overview:", required: true, allow_prefix: false, empty_value: "None" },
+  { heading: "#### TODO's:", required: true, allow_prefix: false, empty_value: "None" },
+  { heading: "#### CONCLUSIONS:", required: true, allow_prefix: false, empty_value: "None" },
+  { heading: "#### DECISION/OPEN POINTS:", required: true, allow_prefix: false, empty_value: "None" },
+  { heading: "#### RISKS:", required: true, allow_prefix: false, empty_value: "None" },
+];
 
 /**
  * @brief Query the first matching DOM element.
@@ -291,13 +300,18 @@ function renderFormatterModels() {
  */
 function renderTemplateSelect(templates) {
   const select = qs("#template-select");
+  const currentValue = select.value;
+  const defaultTemplate = templates.find((template) => template.is_default) || templates[0];
   select.innerHTML = "";
   templates.forEach((template) => {
     const option = document.createElement("option");
     option.value = template.template_id;
-    option.textContent = `${template.name} (${template.version})`;
+    option.textContent = `${template.name} (${template.version})${template.is_default ? " - default" : ""}`;
     select.appendChild(option);
   });
+  select.value = templates.some((template) => template.template_id === currentValue)
+    ? currentValue
+    : defaultTemplate?.template_id || "";
 }
 
 /**
@@ -313,11 +327,16 @@ function renderExecutionModelLabels() {
  * @brief Reset Template Creator.
  */
 function resetTemplateCreator() {
-  qs("#new-template-id").value = "";
+  const idInput = qs("#new-template-id");
+  qs("#template-creator").dataset.mode = "create";
+  qs("#template-editor-title").textContent = "Guided template";
+  idInput.disabled = false;
+  idInput.value = "";
   qs("#new-template-name").value = "";
   qs("#new-template-version").value = "1.0.0";
   qs("#new-template-description").value = "";
   qs("#new-template-prompt-block").value = "";
+  renderTemplateSectionRows(DEFAULT_TEMPLATE_SECTIONS);
 }
 
 /**
@@ -326,10 +345,89 @@ function resetTemplateCreator() {
  */
 function toggleTemplateCreator(show) {
   const panel = qs("#template-creator");
+  const form = qs("#job-form");
   panel.classList.toggle("hidden", !show);
-  if (!show) {
+  form?.classList.toggle("template-editing", show);
+  if (show && !qs("#template-sections")?.children.length) {
+    renderTemplateSectionRows(DEFAULT_TEMPLATE_SECTIONS);
+  } else if (!show) {
     resetTemplateCreator();
   }
+}
+
+/**
+ * @brief Edit Template Inline.
+ * @param {*} templateId Identifier of the template to edit.
+ */
+async function editTemplateInline(templateId) {
+  try {
+    const template = await fetchJSON(`/api/templates/${encodeURIComponent(templateId)}`);
+    const panel = qs("#template-creator");
+    panel.dataset.mode = "edit";
+    qs("#template-editor-title").textContent = `Edit ${template.name}`;
+    qs("#new-template-id").value = template.template_id;
+    qs("#new-template-id").disabled = true;
+    qs("#new-template-name").value = template.name || "";
+    qs("#new-template-version").value = template.version || "1.0.0";
+    qs("#new-template-description").value = template.description || "";
+    qs("#new-template-prompt-block").value = template.prompt_block || "";
+    renderTemplateSectionRows(template.sections?.length ? template.sections : DEFAULT_TEMPLATE_SECTIONS);
+    toggleTemplateCreator(true);
+  } catch (error) {
+    alert(`Unable to load template: ${error.message}`);
+  }
+}
+
+/**
+ * @brief Render Template Section Rows.
+ * @param {*} sections Template section definitions.
+ */
+function renderTemplateSectionRows(sections) {
+  const container = qs("#template-sections");
+  if (!container) return;
+  container.innerHTML = "";
+  sections.forEach((section) => addTemplateSectionRow(section));
+}
+
+/**
+ * @brief Add Template Section Row.
+ * @param {*} section Optional section defaults.
+ */
+function addTemplateSectionRow(section = {}) {
+  const container = qs("#template-sections");
+  if (!container) return;
+  const row = document.createElement("div");
+  row.className = "template-section-row";
+
+  const heading = document.createElement("input");
+  heading.type = "text";
+  heading.placeholder = "#### Section heading:";
+  heading.value = section.heading || "";
+  heading.dataset.sectionField = "heading";
+
+  const requiredLabel = document.createElement("label");
+  const required = document.createElement("input");
+  required.type = "checkbox";
+  required.checked = section.required !== false;
+  required.dataset.sectionField = "required";
+  requiredLabel.append(required, document.createTextNode("Required"));
+
+  const prefixLabel = document.createElement("label");
+  const allowPrefix = document.createElement("input");
+  allowPrefix.type = "checkbox";
+  allowPrefix.checked = Boolean(section.allow_prefix);
+  allowPrefix.dataset.sectionField = "allow_prefix";
+  prefixLabel.title = "Accepts content on the same line as the heading, for example: ### Title: Project Sync";
+  prefixLabel.append(allowPrefix, document.createTextNode("Allow inline content"));
+
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "small-btn danger-btn";
+  remove.textContent = "Remove";
+  remove.addEventListener("click", () => row.remove());
+
+  row.append(heading, requiredLabel, prefixLabel, remove);
+  container.appendChild(row);
 }
 
 /**
@@ -414,9 +512,31 @@ function renderTemplates(templates) {
 
     const meta = document.createElement("div");
     meta.className = "card-meta";
-    meta.textContent = `Version ${template.version}${template.description ? ` | ${template.description}` : ""}`;
+    meta.textContent = `Version ${template.version}${template.is_default ? " | Default" : ""}${template.description ? ` | ${template.description}` : ""}`;
 
-    card.append(eyebrow, title, meta);
+    const actions = document.createElement("div");
+    actions.className = "model-action-row";
+
+    const defaultBtn = document.createElement("button");
+    defaultBtn.type = "button";
+    defaultBtn.className = "small-btn";
+    defaultBtn.textContent = template.is_default ? "Default" : "Set default";
+    defaultBtn.disabled = Boolean(template.is_default);
+    defaultBtn.addEventListener("click", async () => {
+      try {
+        await fetchJSON("/api/templates/default", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ template_id: template.template_id }),
+        });
+        await refreshSettings();
+      } catch (error) {
+        alert(`Unable to set default template: ${error.message}`);
+      }
+    });
+    actions.append(defaultBtn);
+
+    card.append(eyebrow, title, meta, actions);
     container.appendChild(card);
   });
 }
@@ -1482,9 +1602,25 @@ async function saveTemplateInline() {
   const version = qs("#new-template-version").value.trim() || "1.0.0";
   const description = qs("#new-template-description").value.trim();
   const promptBlock = qs("#new-template-prompt-block").value.trim();
+  const sections = qsa(".template-section-row")
+    .map((row) => {
+      const heading = row.querySelector('[data-section-field="heading"]')?.value.trim() || "";
+      if (!heading) return null;
+      return {
+        heading,
+        required: Boolean(row.querySelector('[data-section-field="required"]')?.checked),
+        allow_prefix: Boolean(row.querySelector('[data-section-field="allow_prefix"]')?.checked),
+        empty_value: "None",
+      };
+    })
+    .filter(Boolean);
 
   if (!templateId || !name || !promptBlock) {
     alert("Template ID, Name, and Prompt Block are required.");
+    return;
+  }
+  if (!sections.length) {
+    alert("Add at least one section so AutoMoM knows what structure to request and validate.");
     return;
   }
 
@@ -1498,6 +1634,7 @@ async function saveTemplateInline() {
         version,
         description,
         prompt_block: promptBlock,
+        sections,
       }),
     });
     await refreshSettings();
@@ -1521,8 +1658,13 @@ function bindEvents() {
   qs("#refresh-profiles-btn").addEventListener("click", refreshProfilesForSelectedModel);
   qs("#submit-speakers").addEventListener("click", submitSpeakerMapping);
   qs("#open-template-creator").addEventListener("click", () => toggleTemplateCreator(true));
+  qs("#edit-selected-template").addEventListener("click", () => {
+    const templateId = qs("#template-select").value;
+    if (templateId) editTemplateInline(templateId);
+  });
   qs("#cancel-template-inline").addEventListener("click", () => toggleTemplateCreator(false));
   qs("#save-template-inline").addEventListener("click", saveTemplateInline);
+  qs("#add-template-section").addEventListener("click", () => addTemplateSectionRow());
   qs("#local-model-stage").addEventListener("change", syncLocalModelForm);
   qs("#local-model-advanced").addEventListener("change", syncLocalModelForm);
   qs("#scan-local-models").addEventListener("click", scanLocalModels);

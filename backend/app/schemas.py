@@ -169,6 +169,11 @@ class TemplateSummary(BaseModel):
     name: str
     version: str
     description: str
+    is_default: bool = False
+
+
+class TemplateDefaultRequest(BaseModel):
+    template_id: str
 
 
 class SpeakerSnippet(BaseModel):
