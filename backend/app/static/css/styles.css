@@ -978,6 +978,24 @@ textarea {
   flex: 1 1 220px;
 }
 
+.export-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.result-preview-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.result-preview-block h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
 .logs,
 .preview {
   margin-top: 1rem;

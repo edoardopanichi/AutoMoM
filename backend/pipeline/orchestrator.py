@@ -626,9 +626,11 @@ class PipelineOrchestrator:
             write_json(job_dir / "mom_structured.json", formatter_result.structured)
             (job_dir / "formatter_system_prompt.txt").write_text(formatter_result.system_prompt, encoding="utf-8")
             (job_dir / "formatter_user_prompt.txt").write_text(formatter_result.user_prompt, encoding="utf-8")
+            (job_dir / "full_meeting_transcript.md").write_text(formatter_result.user_prompt, encoding="utf-8")
             write_json(job_dir / "formatter_validation.json", formatter_result.validation)
             JOB_STORE.set_artifact(job_id, "formatter_system_prompt", job_dir / "formatter_system_prompt.txt")
             JOB_STORE.set_artifact(job_id, "formatter_user_prompt", job_dir / "formatter_user_prompt.txt")
+            JOB_STORE.set_artifact(job_id, "full_meeting_transcript", job_dir / "full_meeting_transcript.md")
             JOB_STORE.set_artifact(job_id, "formatter_validation", job_dir / "formatter_validation.json")
             if formatter_result.reduced_notes:
                 write_json(job_dir / "formatter_reduced_notes.json", formatter_result.reduced_notes)

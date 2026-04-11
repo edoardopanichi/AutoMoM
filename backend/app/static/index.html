@@ -303,11 +303,23 @@
         <div class="panel-heading">
           <div>
             <h2>Minutes output</h2>
-            <p>Preview the generated markdown and download the final meeting notes when the run completes.</p>
+            <p>Preview the generated minutes and the full transcript prompt used for formatting.</p>
           </div>
-          <a id="download-link" class="download-link" href="#">Download Markdown</a>
+          <div class="export-actions">
+            <a id="download-link" class="download-link" href="#">Download MoM</a>
+            <a id="transcript-download-link" class="download-link" href="#">Download Transcript</a>
+          </div>
         </div>
-        <pre id="mom-preview" class="preview"></pre>
+        <div class="result-preview-grid">
+          <section class="result-preview-block">
+            <h3>Minutes</h3>
+            <pre id="mom-preview" class="preview"></pre>
+          </section>
+          <section class="result-preview-block">
+            <h3>Full meeting transcript</h3>
+            <pre id="full-transcript-preview" class="preview"></pre>
+          </section>
+        </div>
       </section>
 
       <section id="settings" class="panel">

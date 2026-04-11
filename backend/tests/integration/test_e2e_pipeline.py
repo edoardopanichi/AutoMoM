@@ -190,6 +190,8 @@ def test_end_to_end_job_with_golden_outputs(isolated_settings, monkeypatch, tmp_
 
     transcript_path = Path(state.artifact_paths["transcript"])
     mom_path = Path(state.artifact_paths["mom_markdown"])
+    full_transcript_path = Path(state.artifact_paths["full_meeting_transcript"])
+    formatter_user_prompt_path = Path(state.artifact_paths["formatter_user_prompt"])
     runtime_path = Path(state.artifact_paths["transcription_runtime"])
     summary_path = Path(state.artifact_paths["job_summary"])
 
@@ -200,6 +202,9 @@ def test_end_to_end_job_with_golden_outputs(isolated_settings, monkeypatch, tmp_
     assert generated_transcript == expected_transcript
 
     assert mom_path.read_text(encoding="utf-8").rstrip() == raw_formatter_output.rstrip()
+    assert full_transcript_path.name == "full_meeting_transcript.md"
+    assert full_transcript_path.read_text(encoding="utf-8") == formatter_user_prompt_path.read_text(encoding="utf-8")
+    assert "Alice: We decided to prioritize customer onboarding." in full_transcript_path.read_text(encoding="utf-8")
     runtime_payload = json.loads(runtime_path.read_text(encoding="utf-8"))
     summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
     assert runtime_payload["thread_count"] == 2

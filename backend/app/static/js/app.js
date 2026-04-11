@@ -65,6 +65,8 @@ function resetJobUi() {
   qs("#stage-percent").textContent = "0.0%";
   qs("#segment-progress").textContent = "-";
   qs("#logs").textContent = "";
+  qs("#full-transcript-preview").textContent = "";
+  qs("#transcript-download-link").removeAttribute("href");
   setProgressBars(0, 0);
   switchTab("new-job");
 }
@@ -1246,16 +1248,38 @@ async function submitSpeakerMapping() {
  */
 async function loadResult(jobId) {
   qs("#download-link").href = `/api/jobs/${jobId}/download/mom`;
+  qs("#transcript-download-link").href = `/api/jobs/${jobId}/download/full-meeting-transcript`;
+  await Promise.all([
+    loadTextPreview({
+      primaryUrl: `/api/jobs/${jobId}/mom`,
+      fallbackUrl: `/api/jobs/${jobId}/download/mom`,
+      selector: "#mom-preview",
+      failureText: "Unable to load markdown preview.",
+    }),
+    loadTextPreview({
+      primaryUrl: `/api/jobs/${jobId}/full-meeting-transcript`,
+      fallbackUrl: `/api/jobs/${jobId}/artifacts/formatter_user_prompt`,
+      selector: "#full-transcript-preview",
+      failureText: "Unable to load full meeting transcript.",
+    }),
+  ]);
+}
+
+/**
+ * @brief Load text preview from an endpoint.
+ * @param {*} options Request and target details.
+ */
+async function loadTextPreview({ primaryUrl, fallbackUrl, selector, failureText }) {
   try {
-    let response = await fetch(`/api/jobs/${jobId}/mom`, { cache: "no-store" });
-    if (!response.ok) {
-      response = await fetch(`/api/jobs/${jobId}/download/mom`, { cache: "no-store" });
+    let response = await fetch(primaryUrl, { cache: "no-store" });
+    if (!response.ok && fallbackUrl) {
+      response = await fetch(fallbackUrl, { cache: "no-store" });
     }
-    if (!response.ok) throw new Error(`Unable to fetch markdown preview (${response.status})`);
+    if (!response.ok) throw new Error(`Unable to fetch preview (${response.status})`);
     const text = await response.text();
-    qs("#mom-preview").textContent = text;
+    qs(selector).textContent = text;
   } catch (error) {
-    qs("#mom-preview").textContent = "Unable to load markdown preview.";
+    qs(selector).textContent = failureText;
   }
 }
 

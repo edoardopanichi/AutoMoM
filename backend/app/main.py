@@ -719,6 +719,29 @@ def _resolve_mom_export_path(job_id: str) -> Path:
     return path
 
 
+def _resolve_full_meeting_transcript_path(job_id: str) -> Path:
+    """! @brief Resolve full meeting transcript export path.
+    @param job_id Identifier of the job being processed.
+    @return Path result produced by the operation.
+    """
+    try:
+        state = JOB_STORE.get_state(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Job not found") from exc
+
+    transcript_path = (
+        state.artifact_paths.get("full_meeting_transcript")
+        or state.artifact_paths.get("formatter_user_prompt")
+    )
+    if not transcript_path:
+        raise HTTPException(status_code=404, detail="Full meeting transcript not available")
+
+    path = Path(transcript_path)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Full meeting transcript file missing")
+    return path
+
+
 @app.get("/api/jobs/{job_id}/mom")
 def get_mom(job_id: str) -> PlainTextResponse:
     """! @brief Get MoM.
@@ -738,6 +761,27 @@ def download_mom(job_id: str) -> FileResponse:
     """
     path = _resolve_mom_export_path(job_id)
     return FileResponse(path, media_type="text/markdown", filename=f"{job_id}_mom.md")
+
+
+@app.get("/api/jobs/{job_id}/full-meeting-transcript")
+def get_full_meeting_transcript(job_id: str) -> PlainTextResponse:
+    """! @brief Get full meeting transcript.
+    @param job_id Identifier of the job being processed.
+    @return Result produced by the operation.
+    """
+    path = _resolve_full_meeting_transcript_path(job_id)
+    markdown = path.read_text(encoding="utf-8")
+    return PlainTextResponse(markdown, media_type="text/markdown")
+
+
+@app.get("/api/jobs/{job_id}/download/full-meeting-transcript")
+def download_full_meeting_transcript(job_id: str) -> FileResponse:
+    """! @brief Download full meeting transcript.
+    @param job_id Identifier of the job being processed.
+    @return Result produced by the operation.
+    """
+    path = _resolve_full_meeting_transcript_path(job_id)
+    return FileResponse(path, media_type="text/markdown", filename="full_meeting_transcript.md")
 
 
 @app.get("/api/system/startup-check")
