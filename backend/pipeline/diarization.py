@@ -663,6 +663,13 @@ def _diarize_with_pyannote_in_chunks(
             global_bank,
             speaker_order,
         )
+        _assign_unrepresented_chunk_speakers_to_global(
+            segments=merged_owned,
+            local_to_global=local_to_global,
+            global_bank=global_bank,
+            speaker_order=speaker_order,
+            debug_rows=match_debug,
+        )
         debug_matches.append(
             {
                 "chunk_index": index,
@@ -977,6 +984,38 @@ def _assign_chunk_speakers_to_global(
             }
         )
     return mapping, debug_rows
+
+
+def _assign_unrepresented_chunk_speakers_to_global(
+    *,
+    segments: list[DiarizationSegment],
+    local_to_global: dict[str, str],
+    global_bank: dict[str, list[np.ndarray]],
+    speaker_order: list[str],
+    debug_rows: list[dict[str, object]],
+) -> None:
+    """! @brief Assign speakers without embeddings to fresh global labels.
+    @param segments Segment collection processed by the operation.
+    @param local_to_global Existing chunk-local to global speaker mapping.
+    @param global_bank Global speaker embedding bank.
+    @param speaker_order Ordered global speaker ids.
+    @param debug_rows Stitching debug rows to append to.
+    """
+    for local_speaker in sorted({segment.speaker_id for segment in segments} - set(local_to_global)):
+        chosen = f"GLOBAL_{len(speaker_order)}"
+        speaker_order.append(chosen)
+        global_bank.setdefault(chosen, [])
+        local_to_global[local_speaker] = chosen
+        debug_rows.append(
+            {
+                "local_speaker_id": local_speaker,
+                "assigned_global_speaker_id": chosen,
+                "best_score": None,
+                "runner_up_score": None,
+                "matched_existing": False,
+                "reason": "no_representative_embedding",
+            }
+        )
 
 
 @lru_cache(maxsize=2)

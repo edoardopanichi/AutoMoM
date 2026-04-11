@@ -151,6 +151,31 @@ def test_assign_chunk_speakers_to_global_reuses_matching_speaker() -> None:
     assert any(row["assigned_global_speaker_id"] == "GLOBAL_0" for row in debug_rows)
 
 
+def test_unrepresented_chunk_speakers_get_global_ids() -> None:
+    """! @brief Test unrepresented chunk speakers get global ids.
+    """
+    mapping = {"chunk_speaker_0": "GLOBAL_0"}
+    global_bank = {"GLOBAL_0": [np.array([1.0, 0.0], dtype=np.float32)]}
+    speaker_order = ["GLOBAL_0"]
+    debug_rows: list[dict[str, object]] = []
+
+    diarization_module._assign_unrepresented_chunk_speakers_to_global(
+        segments=[
+            diarization_module.DiarizationSegment("chunk_speaker_0", 0.0, 1.0),
+            diarization_module.DiarizationSegment("chunk_speaker_1", 1.0, 1.2),
+        ],
+        local_to_global=mapping,
+        global_bank=global_bank,
+        speaker_order=speaker_order,
+        debug_rows=debug_rows,
+    )
+
+    assert mapping["chunk_speaker_1"] == "GLOBAL_1"
+    assert "chunk_speaker_1" not in speaker_order
+    assert speaker_order == ["GLOBAL_0", "GLOBAL_1"]
+    assert debug_rows[0]["reason"] == "no_representative_embedding"
+
+
 def test_diarize_auto_raises_when_pyannote_unavailable(monkeypatch, tmp_path: Path) -> None:
     """! @brief Test diarize auto raises when pyannote unavailable.
     @param monkeypatch Value for monkeypatch.
