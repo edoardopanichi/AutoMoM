@@ -428,15 +428,30 @@ async def create_job(
     if not validation_ok:
         raise HTTPException(status_code=400, detail=message)
 
-    try:
-        selected_local_diarization_model = resolve_local_diarization_model(local_diarization_model_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    try:
-        selected_local_transcription_model = LOCAL_MODEL_CATALOG.resolve_model("transcription", local_transcription_model_id)
-        selected_local_formatter_model = LOCAL_MODEL_CATALOG.resolve_model("formatter", local_formatter_model_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    selected_local_diarization_model_id = None
+    selected_local_transcription_model_id = None
+    selected_local_formatter_model_id = None
+    if execution_values["diarization_execution"] == "local":
+        try:
+            selected_local_diarization_model_id = resolve_local_diarization_model(local_diarization_model_id).model_id
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if execution_values["transcription_execution"] == "local":
+        try:
+            selected_local_transcription_model_id = LOCAL_MODEL_CATALOG.resolve_model(
+                "transcription",
+                local_transcription_model_id,
+            ).model_id
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if execution_values["formatter_execution"] == "local":
+        try:
+            selected_local_formatter_model_id = LOCAL_MODEL_CATALOG.resolve_model(
+                "formatter",
+                local_formatter_model_id,
+            ).model_id
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     try:
         TEMPLATE_MANAGER.load(template_id)
@@ -479,9 +494,9 @@ async def create_job(
         template_id=template_id,
         language_mode=language_mode,
         title=title,
-        local_diarization_model_id=selected_local_diarization_model.model_id,
-        local_transcription_model_id=selected_local_transcription_model.model_id,
-        local_formatter_model_id=selected_local_formatter_model.model_id,
+        local_diarization_model_id=selected_local_diarization_model_id,
+        local_transcription_model_id=selected_local_transcription_model_id,
+        local_formatter_model_id=selected_local_formatter_model_id,
         api_config=api_config,
     )
     ORCHESTRATOR.submit(runtime.state.job_id)
@@ -551,6 +566,21 @@ def cancel_job(job_id: str) -> dict[str, str]:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Job not found") from exc
     return {"status": "cancelled"}
+
+
+@app.delete("/api/jobs/{job_id}")
+def delete_job(job_id: str) -> dict[str, str]:
+    """! @brief Delete terminal job artifacts and upload.
+    @param job_id Identifier of the job being processed.
+    @return Dictionary produced by the operation.
+    """
+    try:
+        JOB_STORE.delete_job(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Job not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "ok"}
 
 
 @app.post("/api/jobs/{job_id}/speaker-mapping")

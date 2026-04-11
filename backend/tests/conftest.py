@@ -21,6 +21,16 @@ def isolated_settings(tmp_path: Path):
         "templates_dir": SETTINGS.templates_dir,
         "profiles_dir": SETTINGS.profiles_dir,
         "uploads_dir": SETTINGS.uploads_dir,
+        "diarization_model_path": SETTINGS.diarization_model_path,
+        "diarization_pipeline_path": SETTINGS.diarization_pipeline_path,
+        "diarization_embedding_model": SETTINGS.diarization_embedding_model,
+        "voxtral_binary": SETTINGS.voxtral_binary,
+        "voxtral_model_path": SETTINGS.voxtral_model_path,
+        "formatter_backend": SETTINGS.formatter_backend,
+        "formatter_command": SETTINGS.formatter_command,
+        "formatter_model_path": SETTINGS.formatter_model_path,
+        "formatter_ollama_model": SETTINGS.formatter_ollama_model,
+        "ollama_host": SETTINGS.ollama_host,
     }
 
     object.__setattr__(SETTINGS, "data_dir", tmp_path / "data")

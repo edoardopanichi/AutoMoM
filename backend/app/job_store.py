@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import threading
@@ -33,9 +34,9 @@ class JobRuntime:
     template_id: str
     language_mode: str
     title: str | None
-    local_diarization_model_id: str
-    local_transcription_model_id: str
-    local_formatter_model_id: str
+    local_diarization_model_id: str | None
+    local_transcription_model_id: str | None
+    local_formatter_model_id: str | None
     api_config: OpenAIJobConfig | None
     state: JobState
     speaker_mapping_event: threading.Event = field(default_factory=threading.Event)
@@ -45,11 +46,15 @@ class JobRuntime:
 
 
 class JobStore:
+    TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
+    INTERRUPTED_RESTART_ERROR = "Job interrupted by server restart"
+
     def __init__(self) -> None:
         """! @brief Initialize the JobStore instance.
         """
         self._jobs: dict[str, JobRuntime] = {}
         self._lock = threading.RLock()
+        self._load_persisted_jobs()
 
     def create_job(
         self,
@@ -58,9 +63,9 @@ class JobStore:
         template_id: str,
         language_mode: str,
         title: str | None,
-        local_diarization_model_id: str,
-        local_transcription_model_id: str,
-        local_formatter_model_id: str,
+        local_diarization_model_id: str | None,
+        local_transcription_model_id: str | None,
+        local_formatter_model_id: str | None,
         api_config: OpenAIJobConfig | None = None,
     ) -> JobRuntime:
         """! @brief Create job.
@@ -100,6 +105,7 @@ class JobStore:
 
         job_dir = SETTINGS.jobs_dir / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
+        self._persist_runtime(job_id)
         self._persist_state(job_id)
         return runtime
 
@@ -361,6 +367,22 @@ class JobStore:
             except Exception:
                 continue
 
+    def delete_job(self, job_id: str) -> None:
+        """! @brief Delete job artifacts and associated upload.
+        @param job_id Identifier of the job being processed.
+        """
+        with self._lock:
+            runtime = self.get_runtime(job_id)
+            if runtime.state.status not in self.TERMINAL_STATUSES:
+                raise ValueError("Only completed, failed, or cancelled jobs can be deleted")
+            audio_path = runtime.audio_path
+            del self._jobs[job_id]
+
+        job_dir = SETTINGS.jobs_dir / job_id
+        if audio_path.exists() and self._is_relative_to(audio_path.resolve(), SETTINGS.uploads_dir.resolve()):
+            audio_path.unlink(missing_ok=True)
+        shutil.rmtree(job_dir, ignore_errors=True)
+
     def is_cancelled(self, job_id: str) -> bool:
         """! @brief Is cancelled.
         @param job_id Identifier of the job being processed.
@@ -392,10 +414,152 @@ class JobStore:
         @param job_id Identifier of the job being processed.
         """
         with self._lock:
-            runtime = self.get_runtime(job_id)
+            runtime = self._jobs[job_id]
             state_path = SETTINGS.jobs_dir / job_id / "job_state.json"
             state_path.parent.mkdir(parents=True, exist_ok=True)
             state_path.write_text(json.dumps(runtime.state.model_dump(mode="json"), indent=2), encoding="utf-8")
+
+    def _persist_runtime(self, job_id: str) -> None:
+        """! @brief Persist non-public runtime metadata.
+        @param job_id Identifier of the job being processed.
+        """
+        with self._lock:
+            runtime = self._jobs[job_id]
+            runtime_path = SETTINGS.jobs_dir / job_id / "job_runtime.json"
+            runtime_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "audio_path": str(runtime.audio_path),
+                "original_filename": runtime.original_filename,
+                "template_id": runtime.template_id,
+                "language_mode": runtime.language_mode,
+                "title": runtime.title,
+                "local_diarization_model_id": runtime.local_diarization_model_id,
+                "local_transcription_model_id": runtime.local_transcription_model_id,
+                "local_formatter_model_id": runtime.local_formatter_model_id,
+                "api_config": self._api_config_payload(runtime.api_config),
+            }
+            runtime_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    def _load_persisted_jobs(self) -> None:
+        """! @brief Load persisted job state from disk.
+        """
+        if not SETTINGS.jobs_dir.exists():
+            return
+        for state_path in sorted(SETTINGS.jobs_dir.glob("*/job_state.json")):
+            try:
+                state = JobState.model_validate(json.loads(state_path.read_text(encoding="utf-8")))
+            except Exception:
+                continue
+            job_id = state.job_id
+            runtime_payload = self._load_runtime_payload(state_path.parent, state)
+            if state.status not in self.TERMINAL_STATUSES:
+                state.status = "failed"
+                state.error = self.INTERRUPTED_RESTART_ERROR
+                state.stage_detail = None
+                state.updated_at = datetime.now(timezone.utc)
+                state.logs.append(
+                    f"[{state.updated_at.isoformat(timespec='seconds')}] {self.INTERRUPTED_RESTART_ERROR}"
+                )
+                if len(state.logs) > 200:
+                    state.logs = state.logs[-200:]
+
+            runtime = JobRuntime(
+                audio_path=Path(str(runtime_payload.get("audio_path") or "")),
+                original_filename=self._optional_str(runtime_payload.get("original_filename")),
+                template_id=str(runtime_payload.get("template_id") or "default"),
+                language_mode=str(runtime_payload.get("language_mode") or "auto"),
+                title=self._optional_str(runtime_payload.get("title")),
+                local_diarization_model_id=self._optional_str(runtime_payload.get("local_diarization_model_id")),
+                local_transcription_model_id=self._optional_str(runtime_payload.get("local_transcription_model_id")),
+                local_formatter_model_id=self._optional_str(runtime_payload.get("local_formatter_model_id")),
+                api_config=self._load_api_config(runtime_payload.get("api_config")),
+                state=state,
+            )
+            with self._lock:
+                self._jobs[job_id] = runtime
+            if state.status == "failed" and state.error == self.INTERRUPTED_RESTART_ERROR:
+                self._persist_state(job_id)
+
+    def _load_runtime_payload(self, job_dir: Path, state: JobState) -> dict[str, object]:
+        runtime_path = job_dir / "job_runtime.json"
+        if runtime_path.exists():
+            try:
+                payload = json.loads(runtime_path.read_text(encoding="utf-8"))
+                if isinstance(payload, dict):
+                    return payload
+            except Exception:
+                pass
+        summary_path = job_dir / "job_summary.json"
+        if summary_path.exists():
+            try:
+                summary = json.loads(summary_path.read_text(encoding="utf-8"))
+                audio = summary.get("audio") if isinstance(summary, dict) else {}
+                if isinstance(audio, dict):
+                    return {
+                        "audio_path": audio.get("stored_path") or "",
+                        "original_filename": audio.get("original_filename"),
+                        "template_id": summary.get("template_id") or "default",
+                        "language_mode": "auto",
+                        "title": summary.get("meeting_title"),
+                    }
+            except Exception:
+                pass
+        return {
+            "audio_path": "",
+            "original_filename": None,
+            "template_id": "default",
+            "language_mode": "auto",
+            "title": None,
+        }
+
+    @staticmethod
+    def _api_config_payload(api_config: OpenAIJobConfig | None) -> dict[str, str] | None:
+        if api_config is None:
+            return None
+        return {
+            "api_key": "",
+            "diarization_execution": api_config.diarization_execution,
+            "transcription_execution": api_config.transcription_execution,
+            "formatter_execution": api_config.formatter_execution,
+            "diarization_model": api_config.diarization_model,
+            "transcription_model": api_config.transcription_model,
+            "formatter_model": api_config.formatter_model,
+        }
+
+    @staticmethod
+    def _load_api_config(payload: object) -> OpenAIJobConfig | None:
+        if not isinstance(payload, dict):
+            return None
+        if not any(str(payload.get(key) or "").strip() == "api" for key in (
+            "diarization_execution",
+            "transcription_execution",
+            "formatter_execution",
+        )):
+            return None
+        return OpenAIJobConfig(
+            api_key=str(payload.get("api_key") or ""),
+            diarization_execution=str(payload.get("diarization_execution") or "local"),
+            transcription_execution=str(payload.get("transcription_execution") or "local"),
+            formatter_execution=str(payload.get("formatter_execution") or "local"),
+            diarization_model=str(payload.get("diarization_model") or "gpt-4o-transcribe-diarize"),
+            transcription_model=str(payload.get("transcription_model") or "gpt-4o-transcribe"),
+            formatter_model=str(payload.get("formatter_model") or "gpt-5-mini"),
+        )
+
+    @staticmethod
+    def _optional_str(value: object) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    @staticmethod
+    def _is_relative_to(path: Path, parent: Path) -> bool:
+        try:
+            path.relative_to(parent)
+        except ValueError:
+            return False
+        return True
 
 
 JOB_STORE = JobStore()

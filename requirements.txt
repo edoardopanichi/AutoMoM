@@ -4,6 +4,8 @@ pydantic==2.10.6
 numpy==2.2.2
 soundfile==0.13.0
 python-multipart==0.0.20
-torch>=2.2,<3
-pyannote.audio>=3.3,<4
+torch>=2.8,<2.9
+torchaudio>=2.8,<2.9
+torchcodec>=0.7,<0.8
+pyannote.audio>=4,<5
 faster-whisper>=1.1,<2

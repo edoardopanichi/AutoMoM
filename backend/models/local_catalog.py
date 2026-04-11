@@ -225,9 +225,12 @@ class LocalModelCatalog:
             LocalModelRecord.model_validate(item).model_dump(mode="json")
             for item in models
         ]
+        normalized_models, repaired = self._repair_seeded_default_paths(normalized_models)
         if any(stage not in normalized_defaults for stage in STAGES):
             for stage in STAGES:
                 normalized_defaults.setdefault(stage, "")
+            repaired = True
+        if repaired:
             self._write_payload({"models": normalized_models, "defaults": normalized_defaults})
         return {"models": normalized_models, "defaults": normalized_defaults}
 
@@ -319,6 +322,44 @@ class LocalModelCatalog:
         }[record.runtime]
         installed, validation_error = validator(record.config)
         return record.model_copy(update={"installed": installed, "validation_error": validation_error})
+
+    def _repair_seeded_default_paths(self, models: list[dict[str, object]]) -> tuple[list[dict[str, object]], bool]:
+        """! @brief Repair invalid seeded model paths from current settings when possible.
+        @param models Value for models.
+        @return Tuple produced by the operation.
+        """
+        repaired = False
+        next_models: list[dict[str, object]] = []
+        for item in models:
+            record = LocalModelRecord.model_validate(item)
+            updated_config = dict(record.config)
+            if record.model_id == "pyannote-community-1" and record.runtime == "pyannote":
+                candidate = SETTINGS.diarization_pipeline_path or SETTINGS.diarization_model_path
+                if self._should_repair_path(updated_config.get("pipeline_path", ""), candidate):
+                    updated_config["pipeline_path"] = candidate
+            elif record.model_id == "whispercpp-local" and record.runtime == "whisper.cpp":
+                if self._should_repair_path(updated_config.get("binary_path", ""), SETTINGS.voxtral_binary):
+                    updated_config["binary_path"] = SETTINGS.voxtral_binary
+                if self._should_repair_path(updated_config.get("model_path", ""), SETTINGS.voxtral_model_path):
+                    updated_config["model_path"] = SETTINGS.voxtral_model_path
+            if updated_config != record.config:
+                record = record.model_copy(update={"config": updated_config})
+                repaired = True
+            next_models.append(record.model_dump(mode="json"))
+        return next_models, repaired
+
+    @staticmethod
+    def _should_repair_path(current_path: str, candidate_path: str) -> bool:
+        """! @brief Check whether a stored path should be repaired from settings.
+        @param current_path Value for current path.
+        @param candidate_path Value for candidate path.
+        @return True when the requested condition is satisfied; otherwise False.
+        """
+        current = current_path.strip()
+        candidate = candidate_path.strip()
+        if not candidate or not Path(candidate).expanduser().exists():
+            return False
+        return not current or not Path(current).expanduser().exists()
 
     def _validate_pyannote(self, config: dict[str, str]) -> tuple[bool, str | None]:
         """! @brief Validate pyannote.

@@ -112,3 +112,41 @@ def test_set_default_rejects_uninstalled_model(isolated_settings, monkeypatch) -
         assert "not installed locally" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("Expected set_default to reject an uninstalled model")
+
+
+def test_local_catalog_repairs_seeded_default_paths(isolated_settings, tmp_path: Path, monkeypatch) -> None:
+    """! @brief Test local catalog repairs seeded default paths.
+    @param isolated_settings Value for isolated settings.
+    @param tmp_path Value for tmp path.
+    @param monkeypatch Value for monkeypatch.
+    """
+    real_pyannote = tmp_path / "real-pyannote" / "config.yaml"
+    real_pyannote.parent.mkdir()
+    real_pyannote.write_text("pipeline", encoding="utf-8")
+    real_binary = tmp_path / "real-whisper-cli"
+    real_binary.write_text("binary", encoding="utf-8")
+    real_model = tmp_path / "real-model.gguf"
+    real_model.write_text("model", encoding="utf-8")
+    missing_root = tmp_path / "removed"
+
+    object.__setattr__(SETTINGS, "diarization_pipeline_path", str(real_pyannote))
+    object.__setattr__(SETTINGS, "voxtral_binary", str(real_binary))
+    object.__setattr__(SETTINGS, "voxtral_model_path", str(real_model))
+
+    catalog = LocalModelCatalog()
+    monkeypatch.setattr(catalog, "_ollama_has_model", lambda _tag: False)
+    payload = catalog._seed_payload()
+    for item in payload["models"]:
+        if item["model_id"] == "pyannote-community-1":
+            item["config"]["pipeline_path"] = str(missing_root / "pyannote" / "config.yaml")
+        if item["model_id"] == "whispercpp-local":
+            item["config"]["binary_path"] = str(missing_root / "whisper-cli")
+            item["config"]["model_path"] = str(missing_root / "model.gguf")
+    catalog._write_payload(payload)
+
+    repaired = catalog.list_all()
+    by_id = {item.model_id: item for item in repaired.models}
+
+    assert by_id["pyannote-community-1"].config["pipeline_path"] == str(real_pyannote)
+    assert by_id["whispercpp-local"].config["binary_path"] == str(real_binary)
+    assert by_id["whispercpp-local"].config["model_path"] == str(real_model)

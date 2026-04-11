@@ -10,7 +10,10 @@ const state = {
   diarizationModels: [],
   transcriptionModels: [],
   formatterModels: [],
+  jobs: [],
 };
+
+const LAST_JOB_STORAGE_KEY = "automom:lastJobId";
 
 const LOCAL_RUNTIME_OPTIONS = {
   diarization: ["pyannote"],
@@ -100,6 +103,7 @@ function resetJobUi() {
   state.currentJobId = null;
   state.latestJobState = null;
   state.speakerFormFingerprint = null;
+  localStorage.removeItem(LAST_JOB_STORAGE_KEY);
   qs("#audio-file").value = "";
   qs("#meeting-title").value = "";
   qs("#start-error").textContent = "";
@@ -129,6 +133,89 @@ async function fetchJSON(url, options = {}) {
     throw new Error(payload.detail || `HTTP ${response.status}`);
   }
   return response.json();
+}
+
+/**
+ * @brief Load Jobs.
+ */
+async function loadJobs() {
+  const payload = await fetchJSON("/api/jobs");
+  state.jobs = payload.jobs || [];
+  renderJobList();
+  return state.jobs;
+}
+
+/**
+ * @brief Render Job List.
+ */
+function renderJobList() {
+  const list = qs("#job-list");
+  if (!list) return;
+  list.innerHTML = "";
+  if (!state.jobs.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    empty.textContent = "No jobs yet.";
+    list.appendChild(empty);
+    return;
+  }
+
+  state.jobs.forEach((job) => {
+    const card = document.createElement("article");
+    card.className = "job-card";
+
+    const header = document.createElement("div");
+    header.className = "job-card-header";
+    const title = document.createElement("h3");
+    title.className = "job-card-title";
+    title.textContent = job.job_id;
+    const status = document.createElement("span");
+    status.className = "job-status";
+    status.textContent = job.status;
+    header.append(title, status);
+
+    const meta = document.createElement("div");
+    meta.className = "job-card-meta";
+    const stage = document.createElement("span");
+    stage.textContent = job.current_stage || "No active stage";
+    const updated = document.createElement("span");
+    updated.textContent = `Updated ${formatDateTime(job.updated_at)}`;
+    const progress = document.createElement("span");
+    progress.textContent = `${Number(job.overall_percent || 0).toFixed(1)}%`;
+    meta.append(stage, updated, progress);
+
+    const actions = document.createElement("div");
+    actions.className = "job-card-actions";
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.className = "small-btn";
+    openBtn.textContent = job.status === "completed" ? "Open Result" : "Open Job";
+    openBtn.addEventListener("click", () => reopenJob(job.job_id));
+    actions.appendChild(openBtn);
+
+    if (["completed", "failed", "cancelled"].includes(job.status)) {
+      const deleteBtn = document.createElement("button");
+      deleteBtn.type = "button";
+      deleteBtn.className = "small-btn danger-btn";
+      deleteBtn.textContent = "Delete";
+      deleteBtn.addEventListener("click", () => deleteJob(job.job_id));
+      actions.appendChild(deleteBtn);
+    }
+
+    card.append(header, meta, actions);
+    list.appendChild(card);
+  });
+}
+
+/**
+ * @brief Format Date Time.
+ * @param {*} value Date value received from API.
+ */
+function formatDateTime(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString();
 }
 
 /**
@@ -986,6 +1073,84 @@ async function loadResult(jobId) {
 }
 
 /**
+ * @brief Apply Job State.
+ * @param {*} jobState Job state payload from the API.
+ */
+async function applyJobState(jobState, { navigate = false } = {}) {
+  state.currentJobId = jobState.job_id;
+  state.latestJobState = jobState;
+  localStorage.setItem(LAST_JOB_STORAGE_KEY, jobState.job_id);
+  updateProgressView(jobState);
+
+  if (jobState.status === "waiting_speaker_input") {
+    const nextFingerprint = speakerFormFingerprint(jobState);
+    if (nextFingerprint !== state.speakerFormFingerprint) {
+      renderSpeakerForm(jobState);
+      state.speakerFormFingerprint = nextFingerprint;
+    }
+    switchTab("progress");
+    return;
+  }
+
+  state.speakerFormFingerprint = null;
+  if (jobState.status === "completed") {
+    await loadResult(jobState.job_id);
+    switchTab("result");
+    return;
+  }
+  if (navigate) {
+    switchTab("progress");
+  }
+}
+
+/**
+ * @brief Reopen Job.
+ * @param {*} jobId Identifier of the job to reopen.
+ */
+async function reopenJob(jobId) {
+  try {
+    const jobState = await fetchJSON(`/api/jobs/${jobId}`);
+    await applyJobState(jobState, { navigate: true });
+    if (["created", "running", "waiting_speaker_input"].includes(jobState.status)) {
+      openJobEventStream(jobId);
+    }
+  } catch (error) {
+    alert(`Unable to open job: ${error.message}`);
+  }
+}
+
+/**
+ * @brief Delete Job.
+ * @param {*} jobId Identifier of the job to delete.
+ */
+async function deleteJob(jobId) {
+  const confirmed = window.confirm(`Delete ${jobId} and its local artifacts?`);
+  if (!confirmed) return;
+  try {
+    await fetchJSON(`/api/jobs/${jobId}`, { method: "DELETE" });
+    if (state.currentJobId === jobId) {
+      resetJobUi();
+    }
+    await loadJobs();
+  } catch (error) {
+    alert(`Unable to delete job: ${error.message}`);
+  }
+}
+
+/**
+ * @brief Restore Last Job.
+ */
+async function restoreLastJob() {
+  const jobId = localStorage.getItem(LAST_JOB_STORAGE_KEY);
+  if (!jobId) return;
+  try {
+    await reopenJob(jobId);
+  } catch (error) {
+    localStorage.removeItem(LAST_JOB_STORAGE_KEY);
+  }
+}
+
+/**
  * @brief Open Job Event Stream.
  * @param {*} jobId Identifier of the active job.
  */
@@ -998,25 +1163,12 @@ function openJobEventStream(jobId) {
 
   source.onmessage = async (event) => {
     const jobState = JSON.parse(event.data);
-    state.latestJobState = jobState;
-    updateProgressView(jobState);
-
-    if (jobState.status === "waiting_speaker_input") {
-      const nextFingerprint = speakerFormFingerprint(jobState);
-      if (nextFingerprint !== state.speakerFormFingerprint) {
-        renderSpeakerForm(jobState);
-        state.speakerFormFingerprint = nextFingerprint;
-      }
-      switchTab("progress");
-      return;
-    }
-
-    state.speakerFormFingerprint = null;
+    await applyJobState(jobState);
 
     if (jobState.status === "completed") {
-      await loadResult(jobId);
-      switchTab("result");
       source.close();
+      state.eventSource = null;
+      await loadJobs();
       return;
     }
 
@@ -1024,14 +1176,24 @@ function openJobEventStream(jobId) {
       alert(`Job ${jobState.status}: ${jobState.error || "No details"}`);
       source.close();
       state.eventSource = null;
+      await loadJobs();
       if (jobState.status === "cancelled") {
         resetJobUi();
       }
     }
   };
 
-  source.onerror = () => {
+  source.onerror = async () => {
     source.close();
+    state.eventSource = null;
+    if (!state.currentJobId) return;
+    try {
+      const jobState = await fetchJSON(`/api/jobs/${state.currentJobId}`);
+      await applyJobState(jobState);
+      await loadJobs();
+    } catch (error) {
+      localStorage.removeItem(LAST_JOB_STORAGE_KEY);
+    }
   };
 }
 
@@ -1081,8 +1243,10 @@ async function startJob(event) {
     }
     const job = await response.json();
     state.currentJobId = job.job_id;
+    localStorage.setItem(LAST_JOB_STORAGE_KEY, job.job_id);
     switchTab("progress");
     openJobEventStream(job.job_id);
+    await loadJobs();
   } catch (error) {
     qs("#start-error").textContent = error.message;
   }
@@ -1095,6 +1259,7 @@ async function cancelJob() {
   if (!state.currentJobId) return;
   await fetchJSON(`/api/jobs/${state.currentJobId}/cancel`, { method: "POST" });
   resetJobUi();
+  await loadJobs();
 }
 
 /**
@@ -1141,6 +1306,7 @@ function bindEvents() {
   });
   qs("#job-form").addEventListener("submit", startJob);
   qs("#cancel-job").addEventListener("click", cancelJob);
+  qs("#refresh-jobs").addEventListener("click", loadJobs);
   qs("#refresh-profiles-btn").addEventListener("click", refreshProfilesForSelectedModel);
   qs("#submit-speakers").addEventListener("click", submitSpeakerMapping);
   qs("#open-template-creator").addEventListener("click", () => toggleTemplateCreator(true));
@@ -1164,6 +1330,8 @@ async function init() {
   bindEvents();
   syncCloudExecutionControls();
   await loadStartupData();
+  await loadJobs();
+  await restoreLastJob();
 }
 
 init();

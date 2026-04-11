@@ -3,6 +3,7 @@ from __future__ import annotations
 import concurrent.futures
 from dataclasses import asdict
 from datetime import datetime, timezone
+import math
 from pathlib import Path
 import statistics
 import threading
@@ -22,7 +23,13 @@ from backend.pipeline.diarization import (
     diarize,
 )
 from backend.pipeline.formatter import Formatter
-from backend.pipeline.openai_client import OpenAIAPIError, OpenAIClient, OpenAIDiarizationResult
+from backend.pipeline.openai_client import (
+    OPENAI_MAX_FILE_BYTES,
+    OpenAIAPIError,
+    OpenAIClient,
+    OpenAIDiarizationResult,
+    OpenAIDiarizedSegment,
+)
 from backend.pipeline.snippets import extract_snippets, pick_snippet_ranges
 from backend.pipeline.subprocess_utils import SubprocessCancelledError
 from backend.pipeline.template_manager import TEMPLATE_MANAGER
@@ -178,16 +185,20 @@ class PipelineOrchestrator:
                 self._begin_stage_timing(2)
             )
             JOB_STORE.append_log(job_id, "Stage 3/9: speaker diarization")
-            diarization_model = resolve_local_diarization_model(runtime.local_diarization_model_id)
+            diarization_model = None
             diarization_progress_stop: threading.Event | None = None
             diarization_progress_thread: threading.Thread | None = None
             if api_config is not None and api_config.diarization_execution == "api":
                 api_diarization_result = self._diarize_with_openai(
                     runtime=runtime,
                     normalized_audio_path=normalized_audio_path,
+                    job_id=job_id,
+                    job_dir=job_dir,
+                    audio_metadata_payload=audio_metadata_payload,
                 )
                 diarization_result = self._diarization_result_from_openai(api_diarization_result)
             else:
+                diarization_model = resolve_local_diarization_model(runtime.local_diarization_model_id)
                 min_speakers = SETTINGS.diarization_min_speakers if SETTINGS.diarization_min_speakers > 0 else None
                 max_speakers = SETTINGS.diarization_max_speakers if SETTINGS.diarization_max_speakers > 0 else None
                 JOB_STORE.set_stage_percent(job_id, 6.0, overall_percent=self._overall(2, 6.0))
@@ -329,6 +340,12 @@ class PipelineOrchestrator:
             for mapping in mapping_items:
                 if not mapping.save_voice_profile:
                     continue
+                if diarization_model is None:
+                    JOB_STORE.append_log(
+                        job_id,
+                        f"Skipped voice profile save for {mapping.name}: local diarization embeddings are unavailable for API diarization",
+                    )
+                    continue
                 segments = self._select_profile_segments(segments_by_speaker.get(mapping.speaker_id, []), max_segments=2)
                 profile = VOICE_PROFILE_MANAGER.save_profile_sample(
                     name=mapping.name,
@@ -436,27 +453,16 @@ class PipelineOrchestrator:
                     )
                 else:
                     transcriber = OpenAITranscriber(api_config.api_key, api_config.transcription_model)
+                    audio_duration_s = self._audio_duration_s(normalized_audio_path, audio_metadata_payload)
                     for idx, segment in enumerate(transcription_chunks, start=1):
-                        padding = 0.2
-                        start_s = max(0.0, float(segment["start_s"]) - padding)
-                        end_s = float(segment["end_s"]) + padding
-                        segment_path = transcription_dir / f"segment_{idx:04d}.wav"
-                        extract_segment(
-                            normalized_audio_path,
-                            segment_path,
-                            start_s,
-                            end_s,
-                            ffmpeg_bin=SETTINGS.ffmpeg_bin,
+                        self._append_openai_transcription_jobs(
                             job_id=job_id,
-                        )
-                        segment_jobs.append(
-                            {
-                                "segment_path": str(segment_path),
-                                "speaker_id": str(segment["speaker_id"]),
-                                "speaker_name": str(segment["speaker_name"]),
-                                "start_s": float(segment["start_s"]),
-                                "end_s": float(segment["end_s"]),
-                            }
+                            source_audio_path=normalized_audio_path,
+                            output_dir=transcription_dir,
+                            segment_index=idx,
+                            segment=segment,
+                            segment_jobs=segment_jobs,
+                            total_duration_s=audio_duration_s,
                         )
                     JOB_STORE.append_log(
                         job_id,
@@ -663,6 +669,20 @@ class PipelineOrchestrator:
             active_stage_started_at = None
             active_stage_started_monotonic = None
 
+            self._write_job_summary(
+                job_id=job_id,
+                runtime=runtime,
+                job_dir=job_dir,
+                run_started_at=run_started_at,
+                run_started_monotonic=run_started_monotonic,
+                stage_timings=stage_timings,
+                diarization_result=diarization_result,
+                mapping_items=mapping_items,
+                transcript_segments=transcript_segments,
+                audio_metadata_payload=audio_metadata_payload,
+                transcription_runtime_payload=transcription_runtime_payload,
+                formatter=formatter,
+            )
             JOB_STORE.mark_completed(job_id)
             JOB_STORE.append_log(job_id, "Job completed successfully")
         except (CancelledError, SubprocessCancelledError) as exc:
@@ -685,21 +705,6 @@ class PipelineOrchestrator:
                     active_stage_name,
                     active_stage_started_at,
                     active_stage_started_monotonic,
-                )
-            if runtime is not None and job_dir is not None:
-                self._write_job_summary(
-                    job_id=job_id,
-                    runtime=runtime,
-                    job_dir=job_dir,
-                    run_started_at=run_started_at,
-                    run_started_monotonic=run_started_monotonic,
-                    stage_timings=stage_timings,
-                    diarization_result=diarization_result,
-                    mapping_items=mapping_items,
-                    transcript_segments=transcript_segments,
-                    audio_metadata_payload=audio_metadata_payload,
-                    transcription_runtime_payload=transcription_runtime_payload,
-                    formatter=formatter,
                 )
 
     def _begin_stage_timing(self, stage_index: int) -> tuple[str, str, datetime, float]:
@@ -811,7 +816,7 @@ class PipelineOrchestrator:
             "meeting_title": runtime.title or runtime.audio_path.stem,
             "template_id": runtime.template_id,
             "template_name": template_name,
-            "status": state.status,
+            "status": "completed" if state.status == "running" and state.error is None else state.status,
             "created_at": state.created_at.isoformat(timespec="seconds"),
             "completed_at": state.updated_at.isoformat(timespec="seconds"),
             "error": state.error,
@@ -847,12 +852,19 @@ class PipelineOrchestrator:
         @return Dictionary produced by the operation.
         """
         api_config = runtime.api_config
-        diarization_model = resolve_local_diarization_model(runtime.local_diarization_model_id)
-        local_transcription_model = LOCAL_MODEL_CATALOG.resolve_model("transcription", runtime.local_transcription_model_id)
-        local_formatter_model = LOCAL_MODEL_CATALOG.resolve_model("formatter", runtime.local_formatter_model_id)
         diarization_api = api_config is not None and api_config.diarization_execution == "api"
         transcription_api = api_config is not None and api_config.transcription_execution == "api"
         formatter_api = api_config is not None and api_config.formatter_execution == "api"
+
+        diarization_model = None if diarization_api else resolve_local_diarization_model(runtime.local_diarization_model_id)
+        local_transcription_model = None if transcription_api else LOCAL_MODEL_CATALOG.resolve_model(
+            "transcription",
+            runtime.local_transcription_model_id,
+        )
+        local_formatter_model = None if formatter_api else LOCAL_MODEL_CATALOG.resolve_model(
+            "formatter",
+            runtime.local_formatter_model_id,
+        )
 
         formatter_backend = "openai" if formatter_api else local_formatter_model.runtime
         if formatter_api:
@@ -949,27 +961,48 @@ class PipelineOrchestrator:
         self,
         runtime,
         normalized_audio_path: Path,
+        job_id: str,
+        job_dir: Path,
+        audio_metadata_payload: dict[str, object] | None,
     ) -> OpenAIDiarizationResult:
         """! @brief Diarize with openai.
         @param runtime Value for runtime.
         @param normalized_audio_path Value for normalized audio path.
+        @param job_id Identifier of the job being processed.
+        @param job_dir Value for job dir.
+        @param audio_metadata_payload Value for audio metadata payload.
         @return Result produced by the operation.
         """
         api_config = runtime.api_config
         if api_config is None:
             raise RuntimeError("OpenAI diarization requested without API configuration.")
         client = OpenAIClient(api_config.api_key)
-        audio_path = self._pick_openai_audio_source(runtime.audio_path, normalized_audio_path)
+        audio_path = self._pick_openai_audio_source(runtime.audio_path, normalized_audio_path, raise_on_oversize=False)
+        if audio_path is None:
+            return self._diarize_with_openai_chunks(
+                client=client,
+                model=api_config.diarization_model,
+                normalized_audio_path=normalized_audio_path,
+                job_id=job_id,
+                job_dir=job_dir,
+                audio_metadata_payload=audio_metadata_payload,
+            )
         try:
             return client.diarize_audio(audio_path, model=api_config.diarization_model)
         except OpenAIAPIError as exc:
             raise RuntimeError(f"OpenAI diarization failed: {exc}") from exc
 
     @staticmethod
-    def _pick_openai_audio_source(original_audio_path: Path, normalized_audio_path: Path) -> Path:
+    def _pick_openai_audio_source(
+        original_audio_path: Path,
+        normalized_audio_path: Path,
+        *,
+        raise_on_oversize: bool = True,
+    ) -> Path | None:
         """! @brief Pick openai audio source.
         @param original_audio_path Value for original audio path.
         @param normalized_audio_path Value for normalized audio path.
+        @param raise_on_oversize Whether to raise when no direct upload candidate is available.
         @return Path result produced by the operation.
         """
         supported_suffixes = {".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm"}
@@ -977,15 +1010,273 @@ class PipelineOrchestrator:
         if (
             original_audio_path.exists()
             and original_suffix in supported_suffixes
-            and original_audio_path.stat().st_size <= 25 * 1024 * 1024
+            and original_audio_path.stat().st_size <= OPENAI_MAX_FILE_BYTES
         ):
             return original_audio_path
-        if normalized_audio_path.exists() and normalized_audio_path.stat().st_size <= 25 * 1024 * 1024:
+        if normalized_audio_path.exists() and normalized_audio_path.stat().st_size <= OPENAI_MAX_FILE_BYTES:
             return normalized_audio_path
+        if not raise_on_oversize:
+            return None
         raise RuntimeError(
             "OpenAI audio upload requires a supported source file under 25 MB. "
             "Use a shorter/compressed input or keep this step on local execution."
         )
+
+    def _diarize_with_openai_chunks(
+        self,
+        *,
+        client: OpenAIClient,
+        model: str,
+        normalized_audio_path: Path,
+        job_id: str,
+        job_dir: Path,
+        audio_metadata_payload: dict[str, object] | None,
+    ) -> OpenAIDiarizationResult:
+        duration_s = self._audio_duration_s(normalized_audio_path, audio_metadata_payload)
+        chunk_plan = self._plan_openai_audio_chunks(
+            normalized_audio_path,
+            total_duration_s=duration_s,
+            span_start_s=0.0,
+            span_end_s=duration_s,
+            overlap_s=2.0,
+        )
+        if not chunk_plan:
+            raise RuntimeError("OpenAI audio chunking could not build an upload plan.")
+
+        chunks_dir = ensure_job_artifact_dir(job_id, "openai_audio_chunks")
+        JOB_STORE.append_log(job_id, f"OpenAI diarization chunking enabled ({len(chunk_plan)} chunks)")
+        write_json(job_dir / "openai_audio_chunks.json", chunk_plan)
+        JOB_STORE.set_artifact(job_id, "openai_audio_chunks", job_dir / "openai_audio_chunks.json")
+
+        merged_segments: list[OpenAIDiarizedSegment] = []
+        previous_mapping: dict[str, str] = {}
+        next_speaker_index = 0
+        merged_text_parts: list[str] = []
+        for index, chunk in enumerate(chunk_plan, start=1):
+            JOB_STORE.append_log(job_id, f"OpenAI diarization chunk {index}/{len(chunk_plan)}")
+            chunk_path = chunks_dir / f"diarization_chunk_{index:04d}.wav"
+            extract_segment(
+                normalized_audio_path,
+                chunk_path,
+                float(chunk["audio_start_s"]),
+                float(chunk["audio_end_s"]),
+                ffmpeg_bin=SETTINGS.ffmpeg_bin,
+                job_id=job_id,
+            )
+            if chunk_path.stat().st_size > OPENAI_MAX_FILE_BYTES:
+                raise RuntimeError(
+                    f"OpenAI diarization chunk '{chunk_path.name}' exceeds the 25 MB upload limit after splitting."
+                )
+            try:
+                result = client.diarize_audio(chunk_path, model=model)
+            except OpenAIAPIError as exc:
+                raise RuntimeError(f"OpenAI diarization failed for chunk {index}/{len(chunk_plan)}: {exc}") from exc
+            if result.text:
+                merged_text_parts.append(result.text)
+            owned, previous_mapping, next_speaker_index = self._globalize_openai_chunk_segments(
+                result.segments,
+                chunk,
+                existing_segments=merged_segments,
+                previous_mapping=previous_mapping,
+                next_speaker_index=next_speaker_index,
+            )
+            merged_segments.extend(owned)
+            stage_percent = min(99.0, (index / max(1, len(chunk_plan))) * 99.0)
+            JOB_STORE.set_stage_percent(
+                job_id,
+                stage_percent,
+                overall_percent=self._overall(2, stage_percent),
+                stage_detail=f"OpenAI chunk {index}/{len(chunk_plan)}",
+            )
+
+        ordered = sorted(merged_segments, key=lambda item: (item.start_s, item.end_s))
+        return OpenAIDiarizationResult(text="\n".join(merged_text_parts).strip(), segments=ordered)
+
+    @staticmethod
+    def _globalize_openai_chunk_segments(
+        segments: list[OpenAIDiarizedSegment],
+        chunk: dict[str, object],
+        *,
+        existing_segments: list[OpenAIDiarizedSegment],
+        previous_mapping: dict[str, str],
+        next_speaker_index: int,
+    ) -> tuple[list[OpenAIDiarizedSegment], dict[str, str], int]:
+        audio_start_s = float(chunk["audio_start_s"])
+        own_start_s = float(chunk["own_start_s"])
+        own_end_s = float(chunk["own_end_s"])
+        mapping = dict(previous_mapping)
+        globalized_raw: list[OpenAIDiarizedSegment] = []
+
+        for item in sorted(segments, key=lambda segment: (segment.start_s, segment.end_s)):
+            global_start = audio_start_s + float(item.start_s)
+            global_end = audio_start_s + float(item.end_s)
+            speaker_id = mapping.get(item.speaker_id)
+            if speaker_id is None:
+                speaker_id = PipelineOrchestrator._match_openai_speaker_by_overlap(
+                    global_start,
+                    global_end,
+                    existing_segments,
+                )
+            if speaker_id is None:
+                speaker_id = f"SPEAKER_{next_speaker_index}"
+                next_speaker_index += 1
+            mapping[item.speaker_id] = speaker_id
+            globalized_raw.append(
+                OpenAIDiarizedSegment(
+                    speaker_id=speaker_id,
+                    start_s=global_start,
+                    end_s=global_end,
+                    text=item.text,
+                )
+            )
+
+        owned: list[OpenAIDiarizedSegment] = []
+        for item in globalized_raw:
+            midpoint = (item.start_s + item.end_s) / 2.0
+            if midpoint < own_start_s or midpoint > own_end_s:
+                continue
+            clipped_start = max(item.start_s, own_start_s)
+            clipped_end = min(item.end_s, own_end_s)
+            if clipped_end <= clipped_start:
+                continue
+            owned.append(
+                OpenAIDiarizedSegment(
+                    speaker_id=item.speaker_id,
+                    start_s=clipped_start,
+                    end_s=clipped_end,
+                    text=item.text,
+                )
+            )
+        return owned, mapping, next_speaker_index
+
+    @staticmethod
+    def _match_openai_speaker_by_overlap(
+        start_s: float,
+        end_s: float,
+        existing_segments: list[OpenAIDiarizedSegment],
+    ) -> str | None:
+        overlap_by_speaker: dict[str, float] = {}
+        for item in existing_segments:
+            overlap = max(0.0, min(end_s, item.end_s) - max(start_s, item.start_s))
+            if overlap > 0.0:
+                overlap_by_speaker[item.speaker_id] = overlap_by_speaker.get(item.speaker_id, 0.0) + overlap
+        if not overlap_by_speaker:
+            return None
+        speaker_id, overlap_s = max(overlap_by_speaker.items(), key=lambda item: item[1])
+        return speaker_id if overlap_s >= 0.1 else None
+
+    @staticmethod
+    def _audio_duration_s(audio_path: Path, audio_metadata_payload: dict[str, object] | None = None) -> float:
+        if audio_metadata_payload is not None:
+            try:
+                duration = float(audio_metadata_payload.get("duration_s") or 0.0)
+                if duration > 0.0:
+                    return duration
+            except (TypeError, ValueError):
+                pass
+        try:
+            import soundfile as sf
+
+            info = sf.info(str(audio_path))
+            return float(info.duration)
+        except Exception:
+            return max(1.0, audio_path.stat().st_size / 32000.0)
+
+    @staticmethod
+    def _plan_openai_audio_chunks(
+        audio_path: Path,
+        *,
+        total_duration_s: float,
+        span_start_s: float,
+        span_end_s: float,
+        overlap_s: float,
+    ) -> list[dict[str, object]]:
+        span_start_s = max(0.0, span_start_s)
+        span_end_s = min(total_duration_s, max(span_start_s, span_end_s))
+        span_duration_s = span_end_s - span_start_s
+        if span_duration_s <= 0.0:
+            return []
+        safe_bytes = OPENAI_MAX_FILE_BYTES - (1024 * 1024)
+        bytes_per_second = max(1.0, audio_path.stat().st_size / max(1.0, total_duration_s))
+        max_chunk_s = max(5.0, math.floor((safe_bytes / bytes_per_second) * 0.95))
+        if span_duration_s <= max_chunk_s:
+            return [
+                {
+                    "chunk_index": 1,
+                    "own_start_s": span_start_s,
+                    "own_end_s": span_end_s,
+                    "audio_start_s": span_start_s,
+                    "audio_end_s": span_end_s,
+                }
+            ]
+
+        chunk_count = max(1, int(math.ceil(span_duration_s / max_chunk_s)))
+        own_chunk_s = span_duration_s / chunk_count
+        chunks: list[dict[str, object]] = []
+        for index in range(chunk_count):
+            own_start = span_start_s + (own_chunk_s * index)
+            own_end = span_end_s if index == chunk_count - 1 else span_start_s + (own_chunk_s * (index + 1))
+            chunks.append(
+                {
+                    "chunk_index": index + 1,
+                    "own_start_s": own_start,
+                    "own_end_s": own_end,
+                    "audio_start_s": max(span_start_s, own_start - overlap_s),
+                    "audio_end_s": min(span_end_s, own_end + overlap_s),
+                }
+            )
+        return chunks
+
+    def _append_openai_transcription_jobs(
+        self,
+        *,
+        job_id: str,
+        source_audio_path: Path,
+        output_dir: Path,
+        segment_index: int,
+        segment: dict[str, object],
+        segment_jobs: list[dict[str, object]],
+        total_duration_s: float,
+    ) -> None:
+        padding = 0.2
+        padded_start_s = max(0.0, float(segment["start_s"]) - padding)
+        padded_end_s = min(total_duration_s, float(segment["end_s"]) + padding)
+        plan = self._plan_openai_audio_chunks(
+            source_audio_path,
+            total_duration_s=total_duration_s,
+            span_start_s=padded_start_s,
+            span_end_s=padded_end_s,
+            overlap_s=0.0,
+        )
+        if len(plan) > 1:
+            JOB_STORE.append_log(
+                job_id,
+                f"OpenAI transcription segment {segment_index} split into {len(plan)} upload chunks",
+            )
+        for chunk_index, chunk in enumerate(plan, start=1):
+            suffix = f"_{chunk_index:02d}" if len(plan) > 1 else ""
+            segment_path = output_dir / f"segment_{segment_index:04d}{suffix}.wav"
+            extract_segment(
+                source_audio_path,
+                segment_path,
+                float(chunk["audio_start_s"]),
+                float(chunk["audio_end_s"]),
+                ffmpeg_bin=SETTINGS.ffmpeg_bin,
+                job_id=job_id,
+            )
+            if segment_path.stat().st_size > OPENAI_MAX_FILE_BYTES:
+                raise TranscriptionError(
+                    f"OpenAI transcription chunk '{segment_path.name}' exceeds the 25 MB upload limit after splitting."
+                )
+            segment_jobs.append(
+                {
+                    "segment_path": str(segment_path),
+                    "speaker_id": str(segment["speaker_id"]),
+                    "speaker_name": str(segment["speaker_name"]),
+                    "start_s": max(float(segment["start_s"]), float(chunk["own_start_s"])),
+                    "end_s": min(float(segment["end_s"]), float(chunk["own_end_s"])),
+                }
+            )
 
     @staticmethod
     def _diarization_result_from_openai(result: OpenAIDiarizationResult) -> DiarizationResult:
