@@ -37,7 +37,7 @@ from backend.pipeline.transcription import (
     FasterWhisperTranscriber,
     OpenAITranscriber,
     TranscriptionError,
-    VoxtralTranscriber,
+    WhisperCppTranscriber,
     transcribe_segments,
 )
 from backend.pipeline.vad import detect_speech_regions
@@ -892,9 +892,9 @@ class PipelineOrchestrator:
                 "model": (
                     api_config.transcription_model
                     if transcription_api
-                    else transcription_runtime_payload.get("model_path", SETTINGS.voxtral_model_path)
+                    else transcription_runtime_payload.get("model_path", SETTINGS.transcription_model_path)
                     if transcription_runtime_payload is not None
-                    else local_transcription_model.config.get("model_path", SETTINGS.voxtral_model_path)
+                    else local_transcription_model.config.get("model_path", SETTINGS.transcription_model_path)
                 ),
                 "model_id": None if transcription_api else local_transcription_model.model_id,
                 "backend": "openai" if transcription_api else local_transcription_model.runtime,
@@ -938,15 +938,15 @@ class PipelineOrchestrator:
         @return Result produced by the operation.
         """
         if model_record.runtime == "whisper.cpp":
-            return VoxtralTranscriber(
+            return WhisperCppTranscriber(
                 model_record.config.get("binary_path", ""),
                 model_record.config.get("model_path", ""),
                 job_id=job_id,
                 compute_device=SETTINGS.compute_device,
                 cuda_device_id=SETTINGS.cuda_device_id,
-                gpu_layers=SETTINGS.voxtral_gpu_layers,
-                threads=SETTINGS.voxtral_threads,
-                processors=SETTINGS.voxtral_processors,
+                gpu_layers=SETTINGS.transcription_gpu_layers,
+                threads=SETTINGS.transcription_threads,
+                processors=SETTINGS.transcription_processors,
             )
         if model_record.runtime == "faster-whisper":
             return FasterWhisperTranscriber(

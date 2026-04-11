@@ -26,7 +26,7 @@ The items below were verified against the current source tree and test suite.
   - model manager, template inventory, and voice profile inventory
 - Per-stage local/OpenAI routing:
   - diarization: local pyannote or OpenAI diarized transcription
-  - transcription: local whisper.cpp/Voxtral runtime or OpenAI transcription
+  - transcription: local whisper.cpp runtime or OpenAI transcription
   - formatter: local Ollama model, legacy command backend, or OpenAI Responses API
 - Local diarization backends:
   - `auto` which resolves to `pyannote`
@@ -146,15 +146,16 @@ Artifact keys are exposed through the job API and are part of the runtime contra
   - `AUTOMOM_DIARIZATION_MAX_SPEAKERS`
   - `AUTOMOM_DIARIZATION_SUBPROCESS`
 - Transcription:
-  - `AUTOMOM_VOXTRAL_BIN`
-  - `AUTOMOM_VOXTRAL_MODEL`
-  - `AUTOMOM_VOXTRAL_THREADS`
-  - `AUTOMOM_VOXTRAL_PROCESSORS`
-  - `AUTOMOM_VOXTRAL_GPU_LAYERS`
+  - `AUTOMOM_TRANSCRIPTION_BIN`
+  - `AUTOMOM_TRANSCRIPTION_MODEL`
+  - `AUTOMOM_TRANSCRIPTION_THREADS`
+  - `AUTOMOM_TRANSCRIPTION_PROCESSORS`
+  - `AUTOMOM_TRANSCRIPTION_GPU_LAYERS`
   - `AUTOMOM_TRANSCRIPTION_MERGE_GAP_S`
   - `AUTOMOM_TRANSCRIPTION_MAX_CHUNK_S`
   - `AUTOMOM_TRANSCRIPTION_MAX_SEGMENTS`
   - `AUTOMOM_TRANSCRIPTION_KEEP_SEGMENT_AUDIO`
+  - Legacy `AUTOMOM_VOXTRAL_*` aliases are still accepted for existing deployments.
 - Formatter:
   - `AUTOMOM_FORMATTER_BACKEND=ollama|command`
   - `AUTOMOM_FORMATTER_COMMAND`

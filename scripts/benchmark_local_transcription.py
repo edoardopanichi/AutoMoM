@@ -22,7 +22,7 @@ from backend.pipeline.audio import extract_segment
 from backend.pipeline.diarization import DiarizationSegment
 from backend.pipeline.orchestrator import ORCHESTRATOR
 from backend.pipeline.template_manager import TemplateManager
-from backend.pipeline.transcription import VoxtralTranscriber, transcribe_segments
+from backend.pipeline.transcription import WhisperCppTranscriber, transcribe_segments
 
 
 DEFAULT_FIXTURES = [
@@ -36,11 +36,16 @@ DEFAULT_FIXTURES = [
 ENV_TO_SETTINGS = {
     "AUTOMOM_COMPUTE_DEVICE": ("compute_device", str),
     "AUTOMOM_CUDA_DEVICE_ID": ("cuda_device_id", int),
-    "AUTOMOM_VOXTRAL_BIN": ("voxtral_binary", str),
-    "AUTOMOM_VOXTRAL_MODEL": ("voxtral_model_path", str),
-    "AUTOMOM_VOXTRAL_THREADS": ("voxtral_threads", int),
-    "AUTOMOM_VOXTRAL_PROCESSORS": ("voxtral_processors", int),
-    "AUTOMOM_VOXTRAL_GPU_LAYERS": ("voxtral_gpu_layers", int),
+    "AUTOMOM_TRANSCRIPTION_BIN": ("transcription_binary", str),
+    "AUTOMOM_VOXTRAL_BIN": ("transcription_binary", str),
+    "AUTOMOM_TRANSCRIPTION_MODEL": ("transcription_model_path", str),
+    "AUTOMOM_VOXTRAL_MODEL": ("transcription_model_path", str),
+    "AUTOMOM_TRANSCRIPTION_THREADS": ("transcription_threads", int),
+    "AUTOMOM_VOXTRAL_THREADS": ("transcription_threads", int),
+    "AUTOMOM_TRANSCRIPTION_PROCESSORS": ("transcription_processors", int),
+    "AUTOMOM_VOXTRAL_PROCESSORS": ("transcription_processors", int),
+    "AUTOMOM_TRANSCRIPTION_GPU_LAYERS": ("transcription_gpu_layers", int),
+    "AUTOMOM_VOXTRAL_GPU_LAYERS": ("transcription_gpu_layers", int),
     "AUTOMOM_TRANSCRIPTION_MERGE_GAP_S": ("transcription_merge_gap_s", float),
     "AUTOMOM_TRANSCRIPTION_MAX_CHUNK_S": ("transcription_max_chunk_s", float),
     "AUTOMOM_TRANSCRIPTION_KEEP_SEGMENT_AUDIO": (
@@ -244,14 +249,14 @@ def _run_stage6_benchmark(job_dir: Path) -> dict[str, Any]:
             }
         )
 
-    transcriber = VoxtralTranscriber(
-        SETTINGS.voxtral_binary,
-        SETTINGS.voxtral_model_path,
+    transcriber = WhisperCppTranscriber(
+        SETTINGS.transcription_binary,
+        SETTINGS.transcription_model_path,
         compute_device=SETTINGS.compute_device,
         cuda_device_id=SETTINGS.cuda_device_id,
-        gpu_layers=SETTINGS.voxtral_gpu_layers,
-        threads=SETTINGS.voxtral_threads,
-        processors=SETTINGS.voxtral_processors,
+        gpu_layers=SETTINGS.transcription_gpu_layers,
+        threads=SETTINGS.transcription_threads,
+        processors=SETTINGS.transcription_processors,
     )
     started = time.monotonic()
     transcript_segments = transcribe_segments(transcriber, segment_jobs)

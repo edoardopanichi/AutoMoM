@@ -282,6 +282,39 @@ function renderTranscriptionModels() {
 }
 
 /**
+ * @brief Format Formatter Model Label.
+ * @param {*} model Local formatter model record.
+ */
+function formatFormatterModelLabel(model) {
+  if (model.runtime === "ollama") {
+    return `${model.config?.tag || model.name} via Ollama`;
+  }
+  if (model.runtime === "command") {
+    return `${model.config?.model_path || model.name} via command`;
+  }
+  return `${model.name} (${model.runtime})`;
+}
+
+/**
+ * @brief Format Local Model Details.
+ * @param {*} model Local model record.
+ */
+function formatLocalModelDetails(model) {
+  if (model.validation_error) {
+    return `Validation: ${model.validation_error}`;
+  }
+  if (model.stage === "formatter" && model.runtime === "ollama") {
+    return `Model: ${model.config?.tag || "-"} | Runtime: Ollama`;
+  }
+  if (model.stage === "formatter" && model.runtime === "command") {
+    return `Model path: ${model.config?.model_path || "-"} | Runtime: command`;
+  }
+  return Object.entries(model.config || {})
+    .map(([key, value]) => `${key}=${value}`)
+    .join(" | ") || "Ready";
+}
+
+/**
  * @brief Render Formatter Models.
  */
 function renderFormatterModels() {
@@ -291,7 +324,9 @@ function renderFormatterModels() {
   state.formatterModels.forEach((model) => {
     const option = document.createElement("option");
     option.value = model.model_id;
-    option.textContent = model.installed ? `${model.name} (${model.runtime})` : `${model.name} (${model.runtime}, unavailable)`;
+    option.textContent = model.installed
+      ? formatFormatterModelLabel(model)
+      : `${formatFormatterModelLabel(model)} - unavailable`;
     option.disabled = !model.installed;
     select.appendChild(option);
   });
@@ -458,9 +493,9 @@ function renderModels(models) {
       const title = document.createElement("div");
       title.className = "card-title";
       const strong = document.createElement("strong");
-      strong.textContent = model.name;
+      strong.textContent = model.stage === "formatter" ? formatFormatterModelLabel(model) : model.name;
       const small = document.createElement("small");
-      small.textContent = `[${model.runtime}]`;
+      small.textContent = model.stage === "formatter" ? `[${model.name}]` : `[${model.runtime}]`;
       title.append(strong, small);
 
       const info = document.createElement("div");
@@ -470,12 +505,7 @@ function renderModels(models) {
 
       const details = document.createElement("div");
       details.className = "card-meta";
-      const configSummary = Object.entries(model.config || {})
-        .map(([key, value]) => `${key}=${value}`)
-        .join(" | ");
-      details.textContent = model.validation_error
-        ? `Validation: ${model.validation_error}`
-        : configSummary || "Ready";
+      details.textContent = formatLocalModelDetails(model);
 
       const actionRow = document.createElement("div");
       actionRow.className = "model-action-row";

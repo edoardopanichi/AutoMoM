@@ -22,8 +22,8 @@ def test_local_catalog_seeds_from_settings(isolated_settings, tmp_path: Path) ->
 
     object.__setattr__(SETTINGS, "diarization_model_path", str(diarization_dir / "config.yaml"))
     object.__setattr__(SETTINGS, "diarization_pipeline_path", str(diarization_dir / "config.yaml"))
-    object.__setattr__(SETTINGS, "voxtral_binary", str(asr_binary))
-    object.__setattr__(SETTINGS, "voxtral_model_path", str(asr_model))
+    object.__setattr__(SETTINGS, "transcription_binary", str(asr_binary))
+    object.__setattr__(SETTINGS, "transcription_model_path", str(asr_model))
     object.__setattr__(SETTINGS, "formatter_backend", "ollama")
     object.__setattr__(SETTINGS, "formatter_ollama_model", "qwen2.5:3b-instruct-q5_K_M")
 
@@ -130,8 +130,8 @@ def test_local_catalog_repairs_seeded_default_paths(isolated_settings, tmp_path:
     missing_root = tmp_path / "removed"
 
     object.__setattr__(SETTINGS, "diarization_pipeline_path", str(real_pyannote))
-    object.__setattr__(SETTINGS, "voxtral_binary", str(real_binary))
-    object.__setattr__(SETTINGS, "voxtral_model_path", str(real_model))
+    object.__setattr__(SETTINGS, "transcription_binary", str(real_binary))
+    object.__setattr__(SETTINGS, "transcription_model_path", str(real_model))
 
     catalog = LocalModelCatalog()
     monkeypatch.setattr(catalog, "_ollama_has_model", lambda _tag: False)

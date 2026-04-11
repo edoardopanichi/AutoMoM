@@ -8,15 +8,15 @@ import pytest
 from backend.pipeline.transcription import (
     ASRBinaryCapabilities,
     TranscriptionError,
-    VoxtralTranscriber,
+    WhisperCppTranscriber,
     _gpu_verified_active,
     clean_transcript_text,
     transcribe_segments,
 )
 
 
-def test_voxtral_invocation_wrapper_uses_subprocess(monkeypatch, tmp_path: Path) -> None:
-    """! @brief Test voxtral invocation wrapper uses subprocess.
+def test_whisper_cpp_invocation_wrapper_uses_subprocess(monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test whisper.cpp invocation wrapper uses subprocess.
     @param monkeypatch Value for monkeypatch.
     @param tmp_path Value for tmp path.
     """
@@ -48,7 +48,7 @@ def test_voxtral_invocation_wrapper_uses_subprocess(monkeypatch, tmp_path: Path)
     monkeypatch.setattr("backend.pipeline.transcription._binary_supports_any_flag", lambda *_: True)
     monkeypatch.setattr("backend.pipeline.transcription.run_cancellable_subprocess", fake_run)
 
-    transcriber = VoxtralTranscriber(str(binary), str(model), threads=8, processors=2)
+    transcriber = WhisperCppTranscriber(str(binary), str(model), threads=8, processors=2)
     text = transcriber.transcribe(segment)
 
     assert text == "hello world"
@@ -91,14 +91,14 @@ def test_transcribe_segments_reports_progress(tmp_path: Path) -> None:
     assert progress == [(1, 1)]
 
 
-def test_voxtral_raises_when_runtime_unavailable(tmp_path: Path) -> None:
-    """! @brief Test voxtral raises when runtime unavailable.
+def test_whisper_cpp_raises_when_runtime_unavailable(tmp_path: Path) -> None:
+    """! @brief Test whisper.cpp raises when runtime unavailable.
     @param tmp_path Value for tmp path.
     """
     segment = tmp_path / "segment.wav"
     segment.write_text("wav", encoding="utf-8")
 
-    transcriber = VoxtralTranscriber(binary_path="", model_path="")
+    transcriber = WhisperCppTranscriber(binary_path="", model_path="")
     with pytest.raises(TranscriptionError):
         transcriber.transcribe(segment)
 
@@ -181,8 +181,8 @@ def test_transcribe_segments_merges_consecutive_same_speaker_without_gap_limit(t
     assert result[1]["speaker_name"] == "Bob"
 
 
-def test_voxtral_gpu_retry_falls_back_to_cpu(monkeypatch, tmp_path: Path) -> None:
-    """! @brief Test voxtral gpu retry falls back to cpu.
+def test_whisper_cpp_gpu_retry_falls_back_to_cpu(monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test whisper.cpp gpu retry falls back to cpu.
     @param monkeypatch Value for monkeypatch.
     @param tmp_path Value for tmp path.
     """
@@ -215,7 +215,7 @@ def test_voxtral_gpu_retry_falls_back_to_cpu(monkeypatch, tmp_path: Path) -> Non
 
     monkeypatch.setattr("backend.pipeline.transcription.run_cancellable_subprocess", fake_run)
 
-    transcriber = VoxtralTranscriber(str(binary), str(model), compute_device="auto", gpu_layers=99)
+    transcriber = WhisperCppTranscriber(str(binary), str(model), compute_device="auto", gpu_layers=99)
     text = transcriber.transcribe(segment)
 
     assert text == "ok text"
@@ -224,8 +224,8 @@ def test_voxtral_gpu_retry_falls_back_to_cpu(monkeypatch, tmp_path: Path) -> Non
     assert transcriber.runtime_report()["gpu_verified_active"] is False
 
 
-def test_voxtral_gpu_retry_handles_rc0_with_stderr_error(monkeypatch, tmp_path: Path) -> None:
-    """! @brief Test voxtral gpu retry handles rc0 with stderr error.
+def test_whisper_cpp_gpu_retry_handles_rc0_with_stderr_error(monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test whisper.cpp gpu retry handles rc0 with stderr error.
     @param monkeypatch Value for monkeypatch.
     @param tmp_path Value for tmp path.
     """
@@ -258,7 +258,7 @@ def test_voxtral_gpu_retry_handles_rc0_with_stderr_error(monkeypatch, tmp_path: 
 
     monkeypatch.setattr("backend.pipeline.transcription.run_cancellable_subprocess", fake_run)
 
-    transcriber = VoxtralTranscriber(str(binary), str(model), compute_device="auto", gpu_layers=99)
+    transcriber = WhisperCppTranscriber(str(binary), str(model), compute_device="auto", gpu_layers=99)
     text = transcriber.transcribe(segment)
 
     assert text == "hello"
@@ -266,8 +266,8 @@ def test_voxtral_gpu_retry_handles_rc0_with_stderr_error(monkeypatch, tmp_path: 
     assert transcriber.compute_mode() == "cpu(gpu_retry_disabled)"
 
 
-def test_voxtral_does_not_add_gpu_layers_when_binary_does_not_support_them(monkeypatch, tmp_path: Path) -> None:
-    """! @brief Test voxtral does not add gpu layers when binary does not support them.
+def test_whisper_cpp_does_not_add_gpu_layers_when_binary_does_not_support_them(monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test whisper.cpp does not add gpu layers when binary does not support them.
     @param monkeypatch Value for monkeypatch.
     @param tmp_path Value for tmp path.
     """
@@ -301,7 +301,7 @@ def test_voxtral_does_not_add_gpu_layers_when_binary_does_not_support_them(monke
 
     monkeypatch.setattr("backend.pipeline.transcription.run_cancellable_subprocess", fake_run)
 
-    transcriber = VoxtralTranscriber(str(binary), str(model), compute_device="auto", cuda_device_id=1, gpu_layers=99)
+    transcriber = WhisperCppTranscriber(str(binary), str(model), compute_device="auto", cuda_device_id=1, gpu_layers=99)
     text = transcriber.transcribe(segment)
 
     assert text == "hello"
@@ -310,8 +310,8 @@ def test_voxtral_does_not_add_gpu_layers_when_binary_does_not_support_them(monke
     assert "-dev" in calls[0]
 
 
-def test_voxtral_runtime_summary_reports_cpu_when_gpu_backend_unavailable(monkeypatch, tmp_path: Path) -> None:
-    """! @brief Test voxtral runtime summary reports cpu when gpu backend unavailable.
+def test_whisper_cpp_runtime_summary_reports_cpu_when_gpu_backend_unavailable(monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test whisper.cpp runtime summary reports cpu when gpu backend unavailable.
     @param monkeypatch Value for monkeypatch.
     @param tmp_path Value for tmp path.
     """
@@ -336,14 +336,14 @@ def test_voxtral_runtime_summary_reports_cpu_when_gpu_backend_unavailable(monkey
         ),
     )
 
-    transcriber = VoxtralTranscriber(str(binary), str(model), compute_device="auto")
+    transcriber = WhisperCppTranscriber(str(binary), str(model), compute_device="auto")
     assert transcriber.transcribe(segment) == "hello"
     assert transcriber.compute_mode() == "cpu(gpu_backend_unavailable)"
     assert transcriber.runtime_summary() == "compute=cpu (GPU backend unavailable in ASR binary)"
 
 
-def test_voxtral_runtime_summary_reports_verified_cuda(monkeypatch, tmp_path: Path) -> None:
-    """! @brief Test voxtral runtime summary reports verified cuda.
+def test_whisper_cpp_runtime_summary_reports_verified_cuda(monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test whisper.cpp runtime summary reports verified cuda.
     @param monkeypatch Value for monkeypatch.
     @param tmp_path Value for tmp path.
     """
@@ -368,7 +368,7 @@ def test_voxtral_runtime_summary_reports_verified_cuda(monkeypatch, tmp_path: Pa
         ),
     )
 
-    transcriber = VoxtralTranscriber(str(binary), str(model), compute_device="auto")
+    transcriber = WhisperCppTranscriber(str(binary), str(model), compute_device="auto")
     assert transcriber.transcribe(segment) == "hello"
     assert transcriber.compute_mode() == "cuda"
     assert transcriber.runtime_summary() == "compute=cuda (verified active)"
@@ -393,7 +393,7 @@ def test_binary_selection_prefers_configured_gpu_capable_binary(monkeypatch, tmp
         lambda path: ASRBinaryCapabilities(path, True, tuple(), ("cuda",) if path == str(configured) else ("cpu",), path == str(configured)),
     )
 
-    resolved = VoxtralTranscriber._resolve_preferred_binary_path(str(configured))
+    resolved = WhisperCppTranscriber._resolve_preferred_binary_path(str(configured))
 
     assert resolved == str(configured)
 
@@ -424,7 +424,7 @@ def test_binary_selection_prefers_repo_cuda_when_configured_binary_is_cpu_only(m
 
     monkeypatch.setattr("backend.pipeline.transcription._probe_asr_binary", fake_probe)
 
-    resolved = VoxtralTranscriber._resolve_preferred_binary_path(str(configured))
+    resolved = WhisperCppTranscriber._resolve_preferred_binary_path(str(configured))
 
     assert resolved == str(repo_cuda)
 
@@ -447,6 +447,6 @@ def test_binary_selection_falls_back_to_configured_cpu_binary_when_no_gpu_binary
         lambda path: ASRBinaryCapabilities(path, True, tuple(), ("cpu",), False),
     )
 
-    resolved = VoxtralTranscriber._resolve_preferred_binary_path(str(configured))
+    resolved = WhisperCppTranscriber._resolve_preferred_binary_path(str(configured))
 
     assert resolved == str(configured)

@@ -55,15 +55,15 @@ def test_async_download_status_progress(isolated_settings, tmp_path: Path) -> No
     source_bytes = b"x" * (3 * 1024 * 1024)
     source_path.write_bytes(source_bytes)
 
-    model_path = SETTINGS.models_dir / "voxtral" / "model.gguf"
+    model_path = SETTINGS.models_dir / "transcription" / "model.gguf"
     checksum = hashlib.sha256(source_bytes).hexdigest()
 
     manager = ModelManager()
-    manager._consent = {"voxtral": True}
+    manager._consent = {"transcription": True}
     manager._specs = {
-        "voxtral": ModelSpec(
-            model_id="voxtral",
-            name="Voxtral",
+        "transcription": ModelSpec(
+            model_id="transcription",
+            name="Transcription",
             size_mb=3,
             source="local",
             required_disk_mb=3,
@@ -73,12 +73,12 @@ def test_async_download_status_progress(isolated_settings, tmp_path: Path) -> No
         )
     }
 
-    start_state = manager.start_download("voxtral")
+    start_state = manager.start_download("transcription")
     assert start_state["status"] in {"running", "completed"}
 
     final_state = start_state
     for _ in range(200):
-        final_state = manager.download_status("voxtral")
+        final_state = manager.download_status("transcription")
         if final_state["status"] == "completed":
             break
         time.sleep(0.01)
@@ -219,13 +219,13 @@ def test_validate_for_job_start_can_skip_unused_local_models(isolated_settings, 
             required_disk_mb=1,
             file_path=tmp_path / "missing_diarization.bin",
         ),
-        "voxtral": ModelSpec(
-            model_id="voxtral",
-            name="Voxtral",
+        "transcription": ModelSpec(
+            model_id="transcription",
+            name="Transcription",
             size_mb=1,
             source="local",
             required_disk_mb=1,
-            file_path=tmp_path / "voxtral.bin",
+            file_path=tmp_path / "transcription.bin",
         ),
         "formatter": ModelSpec(
             model_id="formatter",
@@ -236,10 +236,10 @@ def test_validate_for_job_start_can_skip_unused_local_models(isolated_settings, 
             file_path=tmp_path / "formatter.bin",
         ),
     }
-    manager._specs["voxtral"].file_path.write_bytes(b"x")
+    manager._specs["transcription"].file_path.write_bytes(b"x")
     monkeypatch.setattr(manager, "_is_model_installed", lambda spec: spec.file_path.exists())
 
-    ok, message = manager.validate_for_job_start({"voxtral"})
+    ok, message = manager.validate_for_job_start({"transcription"})
 
     assert ok is True
     assert message is None

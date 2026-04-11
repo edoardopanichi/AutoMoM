@@ -9,7 +9,7 @@ Pipeline:
 3. Show how many speakers are detected.
 4. Let the user listen to short snippets per speaker and assign names.
 5. Support **local voice profiles** so known speakers can be auto-identified in future meetings.
-6. Transcribe diarized segments locally using **voxtral.c**.
+6. Transcribe diarized segments locally using **whisper.cpp**.
 7. Reorganize and summarize the transcript into an English MoM using a local text model and a user-selected template.
 8. Show a stage-based progress bar throughout the run.
 9. Export **Markdown** (only) with the full transcript available behind a toggle/section.
@@ -94,17 +94,17 @@ Non-realtime by design. Single-user initially. Runs on a normal laptop even with
    - Voice profiles directory
 
 ### 4.2 Data flow
-Upload → Normalize → (VAD) → Diarize → Speaker naming/ID → Segment extraction → Transcribe with voxtral.c → Assemble transcript → Summarize/structure with formatter model → Render Markdown → Export.
+Upload → Normalize → (VAD) → Diarize → Speaker naming/ID → Segment extraction → Transcribe with whisper.cpp → Assemble transcript → Summarize/structure with formatter model → Render Markdown → Export.
 
 ---
 
 ## 5. Technology choices
 ### 5.1 Recommended languages
 - **Python**: orchestration, diarization integration, audio processing wrappers, templating, tests.
-- **C/C++**: compilation and execution of **voxtral.c**.
+- **C/C++**: compilation and execution of **whisper.cpp**.
 - **TypeScript**: web UI (React recommended).
 
-Rationale: Python ecosystem for diarization/audio; voxtral.c is C-based; TypeScript for a maintainable web UI.
+Rationale: Python ecosystem for diarization/audio; whisper.cpp is C++-based; TypeScript for a maintainable web UI.
 
 ### 5.2 Backend framework
 - **FastAPI** for HTTP API.
@@ -139,7 +139,7 @@ Outputs:
   - optional confidence scores
 
 ### 6.2 Transcription model
-- **voxtral.c** for local ASR using Mistral’s Voxtral weights.
+- **whisper.cpp** for local ASR using compatible local ASR weights.
 
 Outputs:
 - `segments_transcript.json`:
@@ -281,7 +281,7 @@ Progress stages:
 ### 10.1 Checks
 On program start and before running a job:
 - Verify diarization model present
-- Verify voxtral.c weights present
+- Verify whisper.cpp weights present
 - Verify formatter model present
 
 ### 10.2 Permission-gated downloads
@@ -338,8 +338,8 @@ For each speaker cluster:
 - Cut diarized segments to WAV files for ASR.
 - Apply padding rules (e.g., ±0.2 s) to reduce word truncation.
 
-### 11.7 Stage G: Transcription via voxtral.c
-- Run voxtral.c on each segment.
+### 11.7 Stage G: Transcription via whisper.cpp
+- Run whisper.cpp on each segment.
 - Collect text and timestamps.
 - Merge contiguous segments of same speaker where gaps are small.
 
@@ -388,7 +388,7 @@ Outputs:
 - Snippet selection and extraction
 - Voice profile embedding generation and matching
 - Segment stitching/merging logic
-- voxtral.c invocation wrapper (mocked in unit tests)
+- whisper.cpp invocation wrapper (mocked in unit tests)
 - Template rendering
 - Formatter prompt assembly
 - Permission-gated model download flows
@@ -419,7 +419,7 @@ Outputs:
   - React app
   - Playwright tests
 - `native/`
-  - voxtral.c build scripts and binaries
+  - whisper.cpp build scripts and binaries
 - `scripts/`
   - installer scripts
 
@@ -435,7 +435,7 @@ Outputs:
 
 ### 16.2 System dependencies
 - `ffmpeg`
-- build tools for voxtral.c (platform-specific)
+- build tools for whisper.cpp (platform-specific)
 
 ### 16.3 First-run experience
 - Launch AutoMoM (with one command line command only!)
@@ -453,4 +453,3 @@ Outputs:
 ## 18. Documentation
 - Write a clear README to explain how to use the program and the main features and dependencies
 - Write an AGENT.md for agents to understand the code and work on it
-

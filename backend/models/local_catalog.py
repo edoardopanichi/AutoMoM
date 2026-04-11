@@ -278,8 +278,8 @@ class LocalModelCatalog:
                 installed=False,
                 languages=["multilingual"],
                 config={
-                    "binary_path": SETTINGS.voxtral_binary,
-                    "model_path": SETTINGS.voxtral_model_path,
+                    "binary_path": SETTINGS.transcription_binary,
+                    "model_path": SETTINGS.transcription_model_path,
                 },
             ),
             LocalModelRecord(
@@ -338,10 +338,10 @@ class LocalModelCatalog:
                 if self._should_repair_path(updated_config.get("pipeline_path", ""), candidate):
                     updated_config["pipeline_path"] = candidate
             elif record.model_id == "whispercpp-local" and record.runtime == "whisper.cpp":
-                if self._should_repair_path(updated_config.get("binary_path", ""), SETTINGS.voxtral_binary):
-                    updated_config["binary_path"] = SETTINGS.voxtral_binary
-                if self._should_repair_path(updated_config.get("model_path", ""), SETTINGS.voxtral_model_path):
-                    updated_config["model_path"] = SETTINGS.voxtral_model_path
+                if self._should_repair_path(updated_config.get("binary_path", ""), SETTINGS.transcription_binary):
+                    updated_config["binary_path"] = SETTINGS.transcription_binary
+                if self._should_repair_path(updated_config.get("model_path", ""), SETTINGS.transcription_model_path):
+                    updated_config["model_path"] = SETTINGS.transcription_model_path
             if updated_config != record.config:
                 record = record.model_copy(update={"config": updated_config})
                 repaired = True

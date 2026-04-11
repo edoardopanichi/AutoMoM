@@ -90,7 +90,7 @@ class ASRRuntimeReport:
         return asdict(self)
 
 
-class VoxtralTranscriber:
+class WhisperCppTranscriber:
     def __init__(
         self,
         binary_path: str | None,
@@ -103,7 +103,7 @@ class VoxtralTranscriber:
         threads: int = 4,
         processors: int = 1,
     ) -> None:
-        """! @brief Initialize the VoxtralTranscriber instance.
+        """! @brief Initialize the WhisperCppTranscriber instance.
         @param binary_path Value for binary path.
         @param model_path Value for model path.
         @param job_id Identifier of the job being processed.
@@ -173,8 +173,8 @@ class VoxtralTranscriber:
                 self._record_runtime_result(retry_process, requested_gpu=False)
         if invocation_failed:
             hint = (
-                "Ensure AUTOMOM_VOXTRAL_BIN points to a working whisper.cpp CLI binary "
-                "and AUTOMOM_VOXTRAL_MODEL points to a compatible model file."
+                "Ensure AUTOMOM_TRANSCRIPTION_BIN points to a working whisper.cpp CLI binary "
+                "and AUTOMOM_TRANSCRIPTION_MODEL points to a compatible model file."
             )
             error_text = (process.stderr or process.stdout or "").strip()
             self._runtime_report.last_error = error_text
@@ -316,12 +316,12 @@ class VoxtralTranscriber:
         if not self._resolved_binary_path:
             missing_parts.append(
                 "ASR binary is not configured or not found. "
-                "Set AUTOMOM_VOXTRAL_BIN to a valid whisper.cpp CLI executable."
+                "Set AUTOMOM_TRANSCRIPTION_BIN to a valid whisper.cpp CLI executable."
             )
         if not self.model_path or not Path(self.model_path).exists():
             missing_parts.append(
                 "ASR model file is missing. "
-                "Set AUTOMOM_VOXTRAL_MODEL to an existing local model file."
+                "Set AUTOMOM_TRANSCRIPTION_MODEL to an existing local model file."
             )
         if not missing_parts:
             missing_parts.append("ASR runtime is unavailable.")
