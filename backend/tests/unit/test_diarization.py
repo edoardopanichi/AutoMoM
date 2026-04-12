@@ -8,6 +8,7 @@ import pytest
 import soundfile as sf
 
 import backend.pipeline.diarization as diarization_module
+from backend.app.config import SETTINGS
 from backend.pipeline.diarization import diarize, merge_transcript_segments
 from backend.pipeline.vad import SpeechRegion
 
@@ -107,6 +108,12 @@ def test_plan_chunked_diarization_uses_ceil_20_min_windows() -> None:
     assert chunks[-1]["own_end_s"] == 57 * 60.0
 
 
+def test_default_pyannote_chunk_size_matches_stable_long_audio_run() -> None:
+    """! @brief Test default pyannote chunk size matches stable long audio run.
+    """
+    assert SETTINGS.diarization_pyannote_chunk_s == 20 * 60.0
+
+
 def test_plan_chunked_diarization_honors_configured_chunk_size() -> None:
     """! @brief Test plan chunked diarization honors configured chunk size.
     """
@@ -118,6 +125,23 @@ def test_plan_chunked_diarization_honors_configured_chunk_size() -> None:
 
     assert len(chunks) == 12
     assert max(float(item["own_end_s"]) - float(item["own_start_s"]) for item in chunks) <= 5 * 60.0
+
+
+def test_pyannote_small_chunk_runtime_error_retries_stable_default() -> None:
+    """! @brief Test pyannote small chunk runtime error retries stable default.
+    """
+    assert diarization_module._should_retry_with_default_pyannote_chunk(
+        "pyannote_runtime_error:ValueError:chunk_9_of_12",
+        5 * 60.0,
+    )
+    assert not diarization_module._should_retry_with_default_pyannote_chunk(
+        "pyannote_runtime_error:OutOfMemoryError:chunk_9_of_12",
+        5 * 60.0,
+    )
+    assert not diarization_module._should_retry_with_default_pyannote_chunk(
+        "pyannote_runtime_error:ValueError:chunk_3_of_3",
+        20 * 60.0,
+    )
 
 
 def test_pyannote_memory_error_message_is_actionable(tmp_path: Path) -> None:

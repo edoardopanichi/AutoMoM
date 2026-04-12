@@ -325,7 +325,7 @@ def _diarize_with_pyannote_impl(
         info = sf.info(str(audio_path))
         total_duration_s = float(info.frames) / max(1, int(info.samplerate))
         if total_duration_s > CHUNKED_LOCAL_DIARIZATION_THRESHOLD_S:
-            return _diarize_with_pyannote_in_chunks(
+            chunked_result, chunked_error = _diarize_with_pyannote_in_chunks(
                 audio_path=audio_path,
                 speech_regions=speech_regions,
                 total_duration_s=total_duration_s,
@@ -344,6 +344,36 @@ def _diarize_with_pyannote_impl(
                 progress_callback=progress_callback,
                 isolate_pipeline=isolate_pipeline,
             )
+            if _should_retry_with_default_pyannote_chunk(chunked_error, max_chunk_s):
+                if progress_callback is not None:
+                    progress_callback(
+                        {
+                            "phase": "chunk_plan",
+                            "detail": "Retrying diarization with 20-minute chunks after chunk runtime error",
+                            "processed_s": 0.0,
+                            "total_s": total_duration_s,
+                        }
+                    )
+                return _diarize_with_pyannote_in_chunks(
+                    audio_path=audio_path,
+                    speech_regions=speech_regions,
+                    total_duration_s=total_duration_s,
+                    min_speakers=min_speakers,
+                    max_speakers=max_speakers,
+                    pipeline_ref=pipeline_ref,
+                    embedding_model=resolve_profile_embedding_model_ref(
+                        model_path=model_path,
+                        pipeline_path=pipeline_path,
+                        embedding_model=embedding_model,
+                    ),
+                    compute_device=compute_device,
+                    cuda_device_id=cuda_device_id,
+                    token=token,
+                    max_chunk_s=TARGET_LOCAL_DIARIZATION_CHUNK_S,
+                    progress_callback=progress_callback,
+                    isolate_pipeline=isolate_pipeline,
+                )
+            return chunked_result, chunked_error
 
         pipeline = _pipeline_for_run(pipeline_ref, token, isolate_pipeline=isolate_pipeline)
         target_device = resolve_torch_device(compute_device, cuda_device_id)
@@ -644,26 +674,29 @@ def _diarize_with_pyannote_in_chunks(
             start_s=float(chunk["audio_start_s"]),
             end_s=float(chunk["audio_end_s"]),
         )
-        diarization, active_device = _run_pyannote_pipeline(
-            pipeline,
-            input_payload,
-            pipeline_kwargs,
-            torch,
-            target_device=target_device,
-        )
-        annotation = diarization.speaker_diarization if hasattr(diarization, "speaker_diarization") else diarization
-        raw_segments: list[DiarizationSegment] = []
-        for turn, _, speaker in annotation.itertracks(yield_label=True):
-            global_start = float(chunk["audio_start_s"]) + float(turn.start)
-            global_end = float(chunk["audio_start_s"]) + float(turn.end)
-            raw_segments.append(
-                DiarizationSegment(
-                    speaker_id=str(speaker),
-                    start_s=global_start,
-                    end_s=global_end,
-                    confidence=None,
-                )
+        try:
+            diarization, active_device = _run_pyannote_pipeline(
+                pipeline,
+                input_payload,
+                pipeline_kwargs,
+                torch,
+                target_device=target_device,
             )
+            annotation = diarization.speaker_diarization if hasattr(diarization, "speaker_diarization") else diarization
+            raw_segments: list[DiarizationSegment] = []
+            for turn, _, speaker in annotation.itertracks(yield_label=True):
+                global_start = float(chunk["audio_start_s"]) + float(turn.start)
+                global_end = float(chunk["audio_start_s"]) + float(turn.end)
+                raw_segments.append(
+                    DiarizationSegment(
+                        speaker_id=str(speaker),
+                        start_s=global_start,
+                        end_s=global_end,
+                        confidence=None,
+                    )
+                )
+        except Exception as exc:
+            return None, _pyannote_chunk_runtime_error(exc, index, len(chunk_plan), chunk)
 
         owned_segments = _filter_segments_to_owned_window(
             raw_segments,
@@ -806,6 +839,43 @@ def _plan_chunked_diarization(
             }
         )
     return chunks
+
+
+def _should_retry_with_default_pyannote_chunk(error: str | None, max_chunk_s: float) -> bool:
+    """! @brief Return true when a smaller configured pyannote chunk should retry at the stable default.
+    @param error Value for error.
+    @param max_chunk_s Configured chunk size.
+    @return True when retry should be attempted.
+    """
+    if float(max_chunk_s or TARGET_LOCAL_DIARIZATION_CHUNK_S) >= TARGET_LOCAL_DIARIZATION_CHUNK_S:
+        return False
+    reason = (error or "").lower()
+    if not reason.startswith("pyannote_runtime_error:"):
+        return False
+    return not _is_oom_error_reason(reason)
+
+
+def _pyannote_chunk_runtime_error(
+    exc: Exception,
+    chunk_index: int,
+    chunk_count: int,
+    chunk: dict[str, object],
+) -> str:
+    """! @brief Build a pyannote chunk runtime error reason.
+    @param exc Exception raised by pyannote.
+    @param chunk_index One-based chunk index.
+    @param chunk_count Total chunk count.
+    @param chunk Chunk plan entry.
+    @return Error reason string.
+    """
+    start_s = float(chunk["audio_start_s"])
+    end_s = float(chunk["audio_end_s"])
+    detail = str(exc).strip().replace("\n", " ")
+    suffix = f":{detail}" if detail else ""
+    return (
+        f"pyannote_runtime_error:{exc.__class__.__name__}:"
+        f"chunk_{chunk_index}_of_{chunk_count}:audio_{start_s:.2f}_{end_s:.2f}{suffix}"
+    )
 
 
 def _silence_boundary_points(speech_regions: list[SpeechRegion], total_duration_s: float) -> list[float]:
@@ -1145,6 +1215,21 @@ def _invoke_pyannote_pipeline(pipeline, input_payload: dict[str, object], pipeli
         return pipeline(input_payload)
 
 
+def _is_oom_error_reason(reason: str) -> bool:
+    """! @brief Return true when an error reason describes an out-of-memory failure.
+    @param reason Error reason text.
+    @return True when the reason is an OOM condition.
+    """
+    normalized = reason.lower()
+    return (
+        "outofmemory" in normalized
+        or "out_of_memory" in normalized
+        or "out of memory" in normalized
+        or "cuda out of memory" in normalized
+        or "memoryerror" in normalized
+    )
+
+
 def _is_cuda_oom(exc: Exception) -> bool:
     """! @brief Is cuda oom.
     @param exc Value for exc.
@@ -1152,7 +1237,7 @@ def _is_cuda_oom(exc: Exception) -> bool:
     """
     name = exc.__class__.__name__.lower()
     message = str(exc).lower()
-    return "outofmemory" in name or "out of memory" in message or "cuda out of memory" in message
+    return _is_oom_error_reason(f"{name}:{message}")
 
 
 def _diarize_with_embeddings(
