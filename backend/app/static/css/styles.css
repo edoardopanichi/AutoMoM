@@ -161,6 +161,26 @@ body::before {
   z-index: 1;
 }
 
+.hero-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin-bottom: 0.25rem;
+  color: var(--surface-ink);
+  font-size: 0.88rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.hero-brand-logo {
+  width: 4.8rem;
+  height: 2.2rem;
+  border-radius: 8px;
+  object-fit: cover;
+  box-shadow: 0 10px 24px rgba(43, 29, 20, 0.14);
+}
+
 .eyebrow,
 .panel-kicker,
 .section-label,

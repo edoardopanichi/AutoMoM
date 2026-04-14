@@ -69,7 +69,9 @@ app.add_middleware(
 )
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+LOGOS_DIR = Path(__file__).resolve().parents[2] / "logos"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.mount("/logos", StaticFiles(directory=LOGOS_DIR), name="logos")
 
 
 @app.get("/")
