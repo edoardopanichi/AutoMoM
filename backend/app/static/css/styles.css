@@ -17,12 +17,64 @@
   --ok: #226b4a;
   --warn: #8f5c00;
   --danger: #92261a;
+  --page-warm-top: rgba(247, 221, 192, 0.58);
+  --page-logo-glow: rgba(176, 78, 59, 0.04);
+  --page-bg-start: #fffdf9;
+  --page-bg-mid: #f9f2e9;
+  --page-bg-end: #f4eadb;
+  --orb-a-color: rgba(204, 119, 82, 0.2);
+  --orb-b-color: rgba(33, 119, 127, 0.16);
+  --orb-c-color: rgba(210, 156, 63, 0.12);
   --shadow: 0 20px 60px rgba(43, 29, 20, 0.11);
   --shadow-tight: 0 12px 30px rgba(43, 29, 20, 0.08);
   --radius-xl: 28px;
   --radius-lg: 20px;
   --radius-md: 14px;
   --radius-sm: 10px;
+}
+
+body[data-active-tab="progress"] {
+  --page-warm-top: rgba(245, 212, 183, 0.66);
+  --page-logo-glow: rgba(176, 78, 59, 0.08);
+  --page-bg-start: #fdf8f2;
+  --page-bg-mid: #f6ecdf;
+  --page-bg-end: #f0e3d3;
+  --orb-a-color: rgba(204, 115, 81, 0.26);
+  --orb-b-color: rgba(33, 119, 127, 0.15);
+  --orb-c-color: rgba(208, 146, 68, 0.14);
+}
+
+body[data-active-tab="result"] {
+  --page-warm-top: rgba(243, 202, 174, 0.74);
+  --page-logo-glow: rgba(176, 78, 59, 0.12);
+  --page-bg-start: #fbf5ef;
+  --page-bg-mid: #f4e8db;
+  --page-bg-end: #eedfce;
+  --orb-a-color: rgba(203, 109, 79, 0.33);
+  --orb-b-color: rgba(33, 119, 127, 0.14);
+  --orb-c-color: rgba(204, 132, 76, 0.15);
+}
+
+body[data-active-tab="jobs"] {
+  --page-warm-top: rgba(242, 194, 163, 0.81);
+  --page-logo-glow: rgba(176, 78, 59, 0.15);
+  --page-bg-start: #faf3ed;
+  --page-bg-mid: #f3e5d7;
+  --page-bg-end: #eddccc;
+  --orb-a-color: rgba(202, 103, 77, 0.39);
+  --orb-b-color: rgba(33, 119, 127, 0.13);
+  --orb-c-color: rgba(201, 120, 82, 0.16);
+}
+
+body[data-active-tab="settings"] {
+  --page-warm-top: rgba(241, 186, 144, 0.88);
+  --page-logo-glow: rgba(176, 78, 59, 0.18);
+  --page-bg-start: #f8f1ea;
+  --page-bg-mid: #f2e2d3;
+  --page-bg-end: #ebd9ca;
+  --orb-a-color: rgba(201, 98, 75, 0.45);
+  --orb-b-color: rgba(33, 119, 127, 0.12);
+  --orb-c-color: rgba(198, 111, 87, 0.18);
 }
 
 *,
@@ -41,10 +93,11 @@ body {
   color: var(--ink);
   font-family: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
   background:
-    radial-gradient(circle at top left, rgba(237, 193, 146, 0.85), transparent 28%),
-    radial-gradient(circle at 92% 20%, rgba(176, 78, 59, 0.12), transparent 22%),
-    linear-gradient(180deg, #f8f3ec 0%, #f1e7d8 56%, #eadfce 100%);
+    radial-gradient(circle at top left, var(--page-warm-top), transparent 28%),
+    radial-gradient(circle at 92% 20%, var(--page-logo-glow), transparent 22%),
+    linear-gradient(180deg, var(--page-bg-start) 0%, var(--page-bg-mid) 56%, var(--page-bg-end) 100%);
   position: relative;
+  transition: background 240ms ease;
 }
 
 body::before {
@@ -89,7 +142,7 @@ body::before {
   left: -6rem;
   width: 24rem;
   height: 24rem;
-  background: rgba(204, 119, 82, 0.42);
+  background: var(--orb-a-color);
 }
 
 .bg-orb-b {
@@ -97,7 +150,7 @@ body::before {
   top: 18rem;
   width: 22rem;
   height: 22rem;
-  background: rgba(33, 119, 127, 0.2);
+  background: var(--orb-b-color);
 }
 
 .bg-orb-c {
@@ -105,7 +158,7 @@ body::before {
   bottom: -7rem;
   width: 18rem;
   height: 18rem;
-  background: rgba(210, 156, 63, 0.22);
+  background: var(--orb-c-color);
 }
 
 .layout {

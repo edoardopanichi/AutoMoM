@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" href="/logos/autoMoM_logo_v4.png" />
     <link rel="stylesheet" href="/static/css/styles.css" />
   </head>
-  <body>
+  <body data-active-tab="new-job">
     <div class="page-grain"></div>
     <div class="bg-orb bg-orb-a"></div>
     <div class="bg-orb bg-orb-b"></div>
@@ -47,9 +47,9 @@
       <div class="nav-shell">
         <nav class="tabs" aria-label="Primary">
           <button class="tab active" data-tab="new-job">New Job</button>
-          <button class="tab" data-tab="jobs">Jobs</button>
           <button class="tab" data-tab="progress">Progress</button>
           <button class="tab" data-tab="result">Result</button>
+          <button class="tab" data-tab="jobs">Past Jobs</button>
           <button class="tab" data-tab="settings">Settings</button>
         </nav>
         <p class="nav-note">Capture, inspect, and export from one browser tab without leaving the local app.</p>
@@ -259,18 +259,6 @@
         <div id="start-error" class="alert"></div>
       </section>
 
-      <section id="jobs" class="panel">
-        <div class="panel-kicker">Job History</div>
-        <div class="panel-heading">
-          <div>
-            <h2>Recent jobs</h2>
-            <p>Reopen active runs, review completed minutes, or remove terminal jobs from local storage.</p>
-          </div>
-          <button type="button" id="refresh-jobs" class="small-btn">Refresh Jobs</button>
-        </div>
-        <div id="job-list" class="job-list"></div>
-      </section>
-
       <section id="progress" class="panel">
         <div class="panel-kicker">Operations</div>
         <div class="panel-header panel-header-rich">
@@ -344,6 +332,18 @@
             <pre id="full-transcript-preview" class="preview"></pre>
           </section>
         </div>
+      </section>
+
+      <section id="jobs" class="panel">
+        <div class="panel-kicker">Job History</div>
+        <div class="panel-heading">
+          <div>
+            <h2>Recent jobs</h2>
+            <p>Reopen active runs, review completed minutes, or remove terminal jobs from local storage.</p>
+          </div>
+          <button type="button" id="refresh-jobs" class="small-btn">Refresh Jobs</button>
+        </div>
+        <div id="job-list" class="job-list"></div>
       </section>
 
       <section id="settings" class="panel">
