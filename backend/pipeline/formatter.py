@@ -4,7 +4,6 @@ import json
 import re
 import socket
 import shlex
-import subprocess
 import urllib.error
 import urllib.request
 from collections import Counter
@@ -26,12 +25,23 @@ DATE_PATTERN = re.compile(
 ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 HEADING_RE = re.compile(r"(?m)^(#{2,4}\s+.+)$")
 FORMATTER_LONG_INPUT_TOKEN_LIMIT = 12000
-FORMATTER_CHUNK_TOKEN_TARGET = 3000
+FORMATTER_CHUNK_DURATION_S = 20 * 60
+FORMATTER_CHUNK_TOKEN_TARGET = 6500
+FORMATTER_SUMMARY_CONTEXT_TOKEN_LIMIT = 6500
 FORMATTER_MAX_ATTEMPTS = 3
 DEFAULT_SYSTEM_PROMPT = (
     "Write concise, professional markdown minutes of meeting in English. "
     "Return only the final markdown document."
 )
+CHUNK_SUMMARY_HEADINGS = [
+    "### Chunk Summary",
+    "### Formal Decisions and Outcomes",
+    "### Adopted Actions, Conditions, and TODOs",
+    "### Speaker Requests or Concerns Not Adopted",
+    "### Open or Pending Items",
+    "### Risks and Concerns",
+    "### Superseded or Tentative States",
+]
 
 
 @dataclass(frozen=True)
@@ -51,6 +61,14 @@ class FormatterRunResult:
     user_prompt: str
     validation: dict[str, object]
     reduced_notes: list[dict[str, object]]
+
+
+@dataclass(frozen=True)
+class LongInputSummary:
+    """! @brief Rolling summary payload used for long formatter inputs."""
+
+    final_prompt: str
+    summaries: list[dict[str, object]]
 
 
 class Formatter:
@@ -267,21 +285,28 @@ class Formatter:
         """
         bundle = TEMPLATE_MANAGER.build_formatter_request(template_id, transcript, speakers, title)
         estimated_tokens = _estimate_tokens(f"{bundle.system_prompt}\n\n{bundle.user_prompt}")
-        reduced_notes = _reduce_transcript_notes(transcript, token_target=FORMATTER_CHUNK_TOKEN_TARGET)
-        # Strict section validation gets brittle on very large transcripts, so reduce the transcript
-        # into structured notes before prompting once the estimated payload crosses the long-input cap.
-        reduction_used = bool(bundle.strict_sections and estimated_tokens > FORMATTER_LONG_INPUT_TOKEN_LIMIT)
-        active_bundle = (
-            TEMPLATE_MANAGER.build_formatter_request(
-                template_id,
-                _render_reduced_notes_as_transcript(reduced_notes),
-                speakers,
-                title,
-                transcript_label="Structured notes",
+        # Long strict-template inputs are summarized by the model before final rendering.
+        # The summaries preserve the distinction between formal decisions, adopted actions,
+        # public requests, and tentative states so the final pass does not treat discussion
+        # as a resolved action item.
+        long_input_used = bool(bundle.strict_sections and estimated_tokens > FORMATTER_LONG_INPUT_TOKEN_LIMIT)
+        reduced_notes: list[dict[str, object]] = []
+        active_bundle = bundle
+        if long_input_used:
+            long_summary = self._build_long_input_summary(
+                template_id=template_id,
+                transcript=transcript,
+                speakers=speakers,
+                title=title,
+                base_bundle=bundle,
             )
-            if reduction_used
-            else bundle
-        )
+            active_bundle = FormatterPromptBundle(
+                system_prompt=bundle.system_prompt,
+                user_prompt=long_summary.final_prompt,
+                template=bundle.template,
+                strict_sections=bundle.strict_sections,
+            )
+            reduced_notes = long_summary.summaries
 
         attempts: list[FormatterAttempt] = []
         markdown = ""
@@ -333,7 +358,9 @@ class Formatter:
             "attempts": [attempt.__dict__ for attempt in attempts],
             "strict_template": bool(active_bundle.strict_sections),
             "estimated_tokens": estimated_tokens,
-            "reduction_used": reduction_used,
+            "reduction_used": long_input_used,
+            "long_input_strategy": "rolling_chunk_summary" if long_input_used else "direct",
+            "long_input_chunk_count": len(reduced_notes),
         }
         return FormatterRunResult(
             markdown=markdown,
@@ -341,7 +368,7 @@ class Formatter:
             system_prompt=active_bundle.system_prompt,
             user_prompt=active_bundle.user_prompt,
             validation=validation_payload,
-            reduced_notes=reduced_notes if reduction_used else [],
+            reduced_notes=reduced_notes if long_input_used else [],
         )
 
     @staticmethod
@@ -402,6 +429,75 @@ class Formatter:
             "transcript_markdown": transcript_md,
         }
 
+    def _build_long_input_summary(
+        self,
+        *,
+        template_id: str,
+        transcript: list[dict[str, object]],
+        speakers: list[str],
+        title: str,
+        base_bundle: FormatterPromptBundle,
+    ) -> LongInputSummary:
+        """! @brief Summarize a long transcript before the final template render.
+        @param template_id Identifier of the template.
+        @param transcript Transcript segments used by the operation.
+        @param speakers Speaker names available for the meeting.
+        @param title Meeting title associated with the request.
+        @param base_bundle Template prompt bundle used for final rendering.
+        @return Rolling chunk summary and final formatter prompt.
+        """
+        chunks = _chunk_transcript_by_time_and_tokens(
+            transcript,
+            duration_s=FORMATTER_CHUNK_DURATION_S,
+            token_target=FORMATTER_CHUNK_TOKEN_TARGET,
+        )
+        if not chunks:
+            return LongInputSummary(final_prompt=base_bundle.user_prompt, summaries=[])
+
+        summary_rows: list[dict[str, object]] = []
+        accumulated_summary = ""
+        for index, chunk in enumerate(chunks, start=1):
+            chunk_prompt = _build_chunk_summary_prompt(
+                template_id=template_id,
+                template_sections=base_bundle.strict_sections,
+                title=title,
+                speakers=speakers,
+                chunk_index=index,
+                chunk_count=len(chunks),
+                chunk=chunk,
+                previous_summary=_tail_by_estimated_tokens(
+                    accumulated_summary,
+                    FORMATTER_SUMMARY_CONTEXT_TOKEN_LIMIT,
+                ),
+            )
+            result = self.run_model(chunk_prompt, system_prompt=_chunk_summary_system_prompt())
+            if result is None:
+                raise RuntimeError(_formatter_failure_message(self.last_mode, self.ollama_model, self.ollama_host))
+            summary_text = str(
+                result.get("_raw_markdown_text") or result.get("_raw_model_text") or self.last_raw_output or ""
+            ).strip()
+            if not summary_text:
+                raise RuntimeError("Formatter long-input chunk summarization produced empty output.")
+            start_s, end_s = _chunk_time_bounds(chunk)
+            summary_rows.append(
+                {
+                    "chunk_index": index,
+                    "chunk_count": len(chunks),
+                    "start_s": start_s,
+                    "end_s": end_s,
+                    "estimated_tokens": _estimate_tokens(_render_transcript_lines(chunk, include_timestamps=True)),
+                    "summary": summary_text,
+                }
+            )
+            accumulated_summary = _render_combined_chunk_summaries(summary_rows)
+
+        final_prompt = _build_long_input_final_prompt(
+            title=title,
+            speakers=speakers,
+            combined_summary=accumulated_summary,
+        )
+        return LongInputSummary(final_prompt=final_prompt, summaries=summary_rows)
+
 
 def validate_markdown_output(markdown: str, sections: list[TemplateSection]) -> dict[str, object]:
     """! @brief Validate markdown output.
@@ -460,32 +556,6 @@ def _markdown_heading_blocks(markdown: str) -> list[tuple[str, str]]:
     return blocks
 
 
-def _render_reduced_notes_as_transcript(notes: list[dict[str, object]]) -> list[dict[str, object]]:
-    """! @brief Render reduced notes as transcript.
-    @param notes Value for notes.
-    @return List produced by the operation.
-    """
-    rendered: list[dict[str, object]] = []
-    for idx, note in enumerate(notes, start=1):
-        lines = [
-            f"Participants: {', '.join(note['participants']) if note['participants'] else 'None'}",
-            f"Overview: {' | '.join(note['overview']) if note['overview'] else 'None'}",
-            f"TODOs: {' | '.join(note['todos']) if note['todos'] else 'None'}",
-            f"Conclusions: {' | '.join(note['conclusions']) if note['conclusions'] else 'None'}",
-            f"Open points: {' | '.join(note['open_points']) if note['open_points'] else 'None'}",
-            f"Risks: {' | '.join(note['risks']) if note['risks'] else 'None'}",
-        ]
-        rendered.append(
-            {
-                "speaker_name": f"Chunk {idx}",
-                "text": "\n".join(lines),
-                "start_s": float(idx),
-                "end_s": float(idx),
-            }
-        )
-    return rendered
-
-
 def _estimate_tokens(text: str) -> int:
     """! @brief Estimate tokens.
     @param text Value for text.
@@ -494,21 +564,35 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
 
 
-def _chunk_transcript(transcript: list[dict[str, object]], token_target: int) -> list[list[dict[str, object]]]:
-    """! @brief Chunk transcript.
+def _chunk_transcript_by_time_and_tokens(
+    transcript: list[dict[str, object]],
+    *,
+    duration_s: float,
+    token_target: int,
+) -> list[list[dict[str, object]]]:
+    """! @brief Split transcript into chunks bounded by duration and approximate tokens.
     @param transcript Transcript segments used by the operation.
-    @param token_target Value for token target.
-    @return List produced by the operation.
+    @param duration_s Maximum chunk duration in seconds.
+    @param token_target Maximum approximate token count per chunk.
+    @return Transcript chunks in chronological order.
     """
     chunks: list[list[dict[str, object]]] = []
     current: list[dict[str, object]] = []
     current_tokens = 0
+    current_start_s: float | None = None
     for segment in transcript:
         seg_tokens = _estimate_tokens(str(segment.get("text") or "")) + 16
-        if current and current_tokens + seg_tokens > token_target:
+        segment_start_s = _safe_float(segment.get("start_s"), default=0.0)
+        segment_end_s = _safe_float(segment.get("end_s"), default=segment_start_s)
+        if current_start_s is None:
+            current_start_s = segment_start_s
+        exceeds_tokens = current_tokens + seg_tokens > token_target
+        exceeds_duration = segment_end_s - current_start_s > duration_s
+        if current and (exceeds_tokens or exceeds_duration):
             chunks.append(current)
             current = []
             current_tokens = 0
+            current_start_s = segment_start_s
         current.append(segment)
         current_tokens += seg_tokens
     if current:
@@ -516,26 +600,157 @@ def _chunk_transcript(transcript: list[dict[str, object]], token_target: int) ->
     return chunks
 
 
-def _reduce_transcript_notes(transcript: list[dict[str, object]], token_target: int) -> list[dict[str, object]]:
-    """! @brief Reduce transcript notes.
-    @param transcript Transcript segments used by the operation.
-    @param token_target Value for token target.
-    @return List produced by the operation.
+def _safe_float(value: object, *, default: float) -> float:
+    """! @brief Convert a value to float with a fallback.
+    @param value Value to convert.
+    @param default Fallback value when conversion fails.
+    @return Converted float or fallback.
     """
-    notes: list[dict[str, object]] = []
-    for chunk in _chunk_transcript(transcript, token_target):
-        statements = [str(seg["text"]).strip() for seg in chunk if str(seg.get("text") or "").strip()]
-        notes.append(
-            {
-                "participants": sorted({str(seg["speaker_name"]) for seg in chunk if str(seg.get("speaker_name") or "").strip()}),
-                "overview": _discussion_bullets(chunk, top_n=4),
-                "todos": [f"{item['owner']}: {item['task']} ({item['due_date']})" for item in _extract_actions(statements)[:6]],
-                "conclusions": _keyword_extract(statements, ["decide", "approved", "agreed", "conclusion", "resolved"])[:6],
-                "open_points": _keyword_extract(statements, ["open", "pending", "question", "follow up", "blocker"])[:6],
-                "risks": _keyword_extract(statements, ["risk", "concern", "delay", "issue"])[:6],
-            }
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _chunk_time_bounds(chunk: list[dict[str, object]]) -> tuple[float, float]:
+    """! @brief Return start and end seconds for a transcript chunk.
+    @param chunk Transcript chunk.
+    @return Tuple of start and end seconds.
+    """
+    if not chunk:
+        return 0.0, 0.0
+    start_s = _safe_float(chunk[0].get("start_s"), default=0.0)
+    end_s = _safe_float(chunk[-1].get("end_s"), default=start_s)
+    return start_s, end_s
+
+
+def _render_transcript_lines(transcript: list[dict[str, object]], *, include_timestamps: bool) -> str:
+    """! @brief Render transcript segments as prompt text.
+    @param transcript Transcript segments used by the operation.
+    @param include_timestamps Whether to include start timestamps.
+    @return Text representation for prompting.
+    """
+    lines: list[str] = []
+    for segment in transcript:
+        speaker = str(segment.get("speaker_name") or segment.get("speaker") or "Speaker")
+        text = str(segment.get("text") or "").strip()
+        if not text:
+            continue
+        if include_timestamps:
+            start_s = _safe_float(segment.get("start_s"), default=0.0)
+            lines.append(f"[{start_s:08.2f}s] {speaker}: {text}")
+        else:
+            lines.append(f"{speaker}: {text}")
+    return "\n".join(lines)
+
+
+def _chunk_summary_system_prompt() -> str:
+    """! @brief Build the system prompt for long-input chunk summaries.
+    @return Chunk summary system prompt.
+    """
+    headings = "\n".join(CHUNK_SUMMARY_HEADINGS)
+    return (
+        "Summarize one chronological meeting transcript chunk in English for later Minutes of Meeting generation. "
+        "Return markdown only with exactly these headings:\n"
+        f"{headings}\n\n"
+        "General rules:\n"
+        "- Preserve facts that may belong in any final MoM template section.\n"
+        "- Separate formal decisions from discussion, requests, objections, and tentative ideas.\n"
+        "- A speaker asking, urging, recommending, objecting, or requesting something is not an adopted action.\n"
+        "- Treat an action, condition, or TODO as adopted only when supported by a motion, vote, chair ruling, "
+        "staff requirement, applicant commitment, or explicit procedural requirement.\n"
+        "- A later formal resolution, motion, vote, or chair ruling overrides earlier tentative discussion.\n"
+        "- Put public concerns and non-adopted requests under requests, open items, or risks, not adopted actions.\n"
+        "- Use 'None' for empty sections."
+    )
+
+
+def _build_chunk_summary_prompt(
+    *,
+    template_id: str,
+    template_sections: list[TemplateSection],
+    title: str,
+    speakers: list[str],
+    chunk_index: int,
+    chunk_count: int,
+    chunk: list[dict[str, object]],
+    previous_summary: str,
+) -> str:
+    """! @brief Build prompt for one rolling transcript chunk summary.
+    @param template_id Identifier of the template.
+    @param template_sections Sections required by the final template.
+    @param title Meeting title.
+    @param speakers Speaker names available for the meeting.
+    @param chunk_index One-based chunk index.
+    @param chunk_count Total chunk count.
+    @param chunk Transcript chunk.
+    @param previous_summary Summary from earlier chunks.
+    @return Prompt text for the chunk summary call.
+    """
+    section_list = "\n".join(f"- {section.heading}" for section in template_sections) or "- Template has no strict sections."
+    start_s, end_s = _chunk_time_bounds(chunk)
+    previous = previous_summary.strip() or "None"
+    return (
+        f"Meeting title: {title}\n"
+        f"Template id: {template_id}\n"
+        f"Final template sections:\n{section_list}\n"
+        f"Known speakers: {', '.join(speakers) if speakers else 'None'}\n"
+        f"Chunk: {chunk_index} of {chunk_count}\n"
+        f"Chunk time range: {start_s:.2f}s to {end_s:.2f}s\n\n"
+        "Previous accumulated summary from earlier chunks:\n"
+        f"{previous}\n\n"
+        "Current transcript chunk:\n"
+        f"{_render_transcript_lines(chunk, include_timestamps=True)}\n"
+    )
+
+
+def _render_combined_chunk_summaries(summaries: list[dict[str, object]]) -> str:
+    """! @brief Render chunk summaries into one final-context document.
+    @param summaries Summary rows produced by long-input processing.
+    @return Combined summary text.
+    """
+    blocks: list[str] = []
+    for row in summaries:
+        blocks.append(
+            f"## Chunk {row['chunk_index']} of {row['chunk_count']} "
+            f"({float(row['start_s']):.2f}s-{float(row['end_s']):.2f}s)\n"
+            f"{str(row['summary']).strip()}"
         )
-    return notes
+    return "\n\n".join(blocks).strip()
+
+
+def _tail_by_estimated_tokens(text: str, token_limit: int) -> str:
+    """! @brief Keep the tail of a text within an approximate token budget.
+    @param text Text to truncate.
+    @param token_limit Approximate token limit.
+    @return Original text or tail-preserved truncation marker.
+    """
+    if _estimate_tokens(text) <= token_limit:
+        return text
+    char_limit = max(1, token_limit) * 4
+    return "[Earlier summary omitted for context budget]\n\n" + text[-char_limit:]
+
+
+def _build_long_input_final_prompt(*, title: str, speakers: list[str], combined_summary: str) -> str:
+    """! @brief Build final formatter prompt from rolling chunk summaries.
+    @param title Meeting title.
+    @param speakers Speaker names available for the meeting.
+    @param combined_summary Rolling chunk summaries.
+    @return Final formatter prompt.
+    """
+    return (
+        f"Title: {title}\n"
+        f"Speakers: {', '.join(speakers) if speakers else 'None'}\n\n"
+        "Structured rolling chunk summaries:\n"
+        f"{combined_summary}\n\n"
+        "Use the summaries to write the final Minutes of Meeting for the selected template.\n"
+        "Important synthesis rules:\n"
+        "- Generate all required template sections in one coherent document.\n"
+        "- Use adopted-action evidence for TODOs and conclusions.\n"
+        "- Treat speaker requests, objections, and concerns as context, risks, or open points unless later adopted.\n"
+        "- If a later formal decision resolves an earlier tentative item, report the final decision and avoid stale pending language.\n"
+        "- Do not invent template sections or commentary outside the requested document.\n"
+    )
 
 
 def _discussion_bullets(transcript: list[dict[str, object]], top_n: int = 8) -> list[str]:

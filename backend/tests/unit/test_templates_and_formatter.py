@@ -4,10 +4,11 @@ import json
 import urllib.error
 from pathlib import Path
 
+import backend.pipeline.formatter as formatter_module
 from backend.app.config import SETTINGS
 from backend.app.schemas import TemplateDefinition
 from backend.pipeline.formatter import Formatter, _extract_model_text, _strip_runtime_logs, validate_markdown_output
-from backend.pipeline.template_manager import TemplateManager
+from backend.pipeline.template_manager import TEMPLATE_MANAGER, TemplateManager
 
 
 class _FakeHTTPResponse:
@@ -90,6 +91,90 @@ def test_formatter_heuristic_transcript_markdown_has_no_timestamps() -> None:
     transcript_md = str(structured["transcript_markdown"])
     assert "- **Alice**: We aligned on scope." in transcript_md
     assert "- **Bob**: I will share the plan." in transcript_md
+
+
+def test_formatter_long_input_uses_rolling_chunk_summaries(isolated_settings, monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test long formatter inputs use model-generated rolling summaries.
+    @param isolated_settings Value for isolated settings.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Value for tmp path.
+    """
+    TEMPLATE_MANAGER.save(TemplateManager().load("default"))
+    monkeypatch.setattr(formatter_module, "FORMATTER_LONG_INPUT_TOKEN_LIMIT", 20)
+    monkeypatch.setattr(formatter_module, "FORMATTER_CHUNK_DURATION_S", 60)
+
+    class FakeFormatter(Formatter):
+        def __init__(self) -> None:
+            """! @brief Initialize the FakeFormatter instance."""
+            super().__init__(ollama_model="fake-model")
+            self.prompts: list[str] = []
+
+        def run_model(self, prompt: str, *, system_prompt: str = "") -> dict[str, object] | None:
+            """! @brief Return deterministic chunk summaries and final markdown.
+            @param prompt Value for prompt.
+            @param system_prompt Value for system prompt.
+            @return Fake formatter response.
+            """
+            self.prompts.append(prompt)
+            if "Structured rolling chunk summaries:" in prompt:
+                markdown = (
+                    "### Title: Long Meeting\n"
+                    "#### Participants:\nAlice\n"
+                    "#### Concise Overview:\nFormal decisions were retained from chunk summaries.\n"
+                    "#### TODO's:\nNone\n"
+                    "#### CONCLUSIONS:\n- Motion passed.\n"
+                    "#### DECISION/OPEN POINTS:\nNone\n"
+                    "#### RISKS:\nNone\n"
+                )
+                self.last_mode = "model_markdown"
+                self.last_raw_output = markdown
+                return {"_raw_markdown_text": markdown}
+            summary = (
+                "### Chunk Summary\n"
+                "- Discussion captured.\n"
+                "### Formal Decisions and Outcomes\n"
+                "- Motion passed.\n"
+                "### Adopted Actions, Conditions, and TODOs\n"
+                "None\n"
+                "### Speaker Requests or Concerns Not Adopted\n"
+                "- A speaker requested a change, but no adoption is recorded.\n"
+                "### Open or Pending Items\n"
+                "None\n"
+                "### Risks and Concerns\n"
+                "None\n"
+                "### Superseded or Tentative States\n"
+                "None\n"
+            )
+            self.last_mode = "model_markdown"
+            self.last_raw_output = summary
+            return {"_raw_markdown_text": summary}
+
+    transcript = [
+        {
+            "speaker_name": "Alice",
+            "start_s": float(index * 70),
+            "end_s": float(index * 70 + 20),
+            "text": "We discussed the proposal and later recorded the formal motion.",
+        }
+        for index in range(3)
+    ]
+    formatter = FakeFormatter()
+    result = formatter.write_model_output_to_mom(
+        transcript=transcript,
+        speakers=["Alice"],
+        title="Long Meeting",
+        template_id="default",
+        output_path=tmp_path / "mom.md",
+    )
+
+    assert result.validation["valid"] is True
+    assert result.validation["long_input_strategy"] == "rolling_chunk_summary"
+    assert result.validation["long_input_chunk_count"] == 3
+    assert len(result.reduced_notes) == 3
+    assert "summary" in result.reduced_notes[0]
+    assert "overview" not in result.reduced_notes[0]
+    assert "Previous accumulated summary from earlier chunks:" in formatter.prompts[1]
+    assert "Structured rolling chunk summaries:" in result.user_prompt
 
 
 def test_formatter_uses_ollama_response(monkeypatch) -> None:

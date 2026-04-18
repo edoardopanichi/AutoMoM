@@ -60,7 +60,9 @@ The items below were verified against the current source tree and test suite.
   - per-job local formatter override with stage default persistence
   - template heading/order validation
   - retry loop with corrective feedback when structured output is invalid
-  - long-input reduction into structured notes when strict templates exceed the token budget
+  - long-input rolling chunk summaries when strict templates exceed the token budget
+  - long-input summaries separate formal decisions, adopted actions, public requests, open items, risks, and tentative states
+  - one-shot final MoM rendering from the rolling summaries so all template sections share the same context
   - raw stdout/stderr/prompt/validation artifacts persisted per job
 - Model management:
   - local model presence checks before job start
@@ -126,7 +128,7 @@ Each job writes to `data/jobs/<job_id>/`. Depending on execution path, the job m
 - `formatter_stderr.txt`
 - `formatter_raw_output.txt`
 - `formatter_validation.json`
-- `formatter_reduced_notes.json`
+- `formatter_reduced_notes.json` for long-input rolling chunk summaries
 - `export/mom.md`
 
 Artifact keys are exposed through the job API and are part of the runtime contract between the backend and frontend.
@@ -215,6 +217,26 @@ Artifact keys are exposed through the job API and are part of the runtime contra
 - OpenAI audio uploads are limited to 25 MB per request in the current implementation.
 - The backend prefers the original uploaded file for OpenAI audio when it is in a supported format and under the limit; otherwise it falls back to the normalized WAV if that file also fits.
 - If OpenAI diarization already returned text-bearing segments, the pipeline reuses that transcript instead of uploading per-speaker chunks for a second cloud transcription pass.
+
+## Formatter Pipeline
+
+The formatter has two paths:
+
+- Short or medium transcripts use the selected template directly. AutoMoM builds one prompt from the template, title, speakers, and transcript, then validates the returned Markdown against the template heading order.
+- Long strict-template transcripts use a rolling chunk-summary pipeline before final rendering. The formatter splits the transcript into roughly 20-minute chunks, also respecting an approximate token cap. Each chunk is summarized by the selected formatter model with the previous accumulated summary as context.
+
+The long-input chunk summaries are intentionally structured around meeting semantics rather than a fixed final template:
+
+- formal decisions and outcomes
+- adopted actions, conditions, and TODOs
+- speaker requests or concerns that were not adopted
+- open or pending items
+- risks and concerns
+- superseded or tentative states
+
+This keeps the general MoM problem explicit: discussion, public objections, and tentative proposals should not become adopted actions unless the transcript later shows a motion, vote, chair ruling, staff requirement, applicant commitment, or explicit procedural requirement. After all chunks are summarized, the formatter performs one final model call that fills the selected template in a single pass from the combined summaries. The existing template validation and corrective retry loop still applies to the final Markdown.
+
+For long-input jobs, `formatter_reduced_notes.json` stores the rolling chunk summaries and `formatter_validation.json` records `long_input_strategy=rolling_chunk_summary` plus the chunk count.
 
 ## Development
 
