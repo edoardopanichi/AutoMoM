@@ -121,6 +121,10 @@ class Settings:
     ollama_host: str = os.getenv("AUTOMOM_OLLAMA_HOST", "http://127.0.0.1:11434")
     formatter_ollama_model: str = os.getenv(
         "AUTOMOM_FORMATTER_OLLAMA_MODEL", "qwen2.5:3b-instruct-q5_K_M")
+    formatter_ollama_think: str = os.getenv("AUTOMOM_FORMATTER_OLLAMA_THINK", "false").strip().lower()
+    formatter_ollama_num_ctx: int = int(os.getenv("AUTOMOM_FORMATTER_OLLAMA_NUM_CTX", "8192"))
+    formatter_ollama_num_predict: int = int(os.getenv("AUTOMOM_FORMATTER_OLLAMA_NUM_PREDICT", "1600"))
+    formatter_ollama_temperature: float = float(os.getenv("AUTOMOM_FORMATTER_OLLAMA_TEMPERATURE", "0.1"))
     formatter_timeout_s: int = int(os.getenv("AUTOMOM_FORMATTER_TIMEOUT_S", "300"))
     diarization_max_chunk_s: float = float(os.getenv("AUTOMOM_DIARIZATION_MAX_CHUNK_S", "18.0"))
     transcription_max_segments: int = int(os.getenv("AUTOMOM_TRANSCRIPTION_MAX_SEGMENTS", "0"))

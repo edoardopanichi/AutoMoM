@@ -133,6 +133,7 @@ class Formatter:
             "system": system_prompt,
             "stream": False,
         }
+        _apply_ollama_formatter_options(payload)
         request = urllib.request.Request(
             url=f"{self.ollama_host}/api/generate",
             data=json.dumps(payload).encode("utf-8"),
@@ -820,6 +821,41 @@ def _looks_like_markdown_document(text: str) -> bool:
         return False
     heading_count = len(re.findall(r"(?m)^##?\s+\S+", text))
     return heading_count >= 2
+
+
+def _parse_ollama_think(value: str) -> bool | str | None:
+    """! @brief Parse Ollama thinking control from settings.
+    @param value Raw settings value.
+    @return Boolean, supported effort string, or None to omit the field.
+    """
+    normalized = value.strip().lower()
+    if normalized in {"", "omit", "none", "default"}:
+        return None
+    if normalized in {"false", "0", "no", "off"}:
+        return False
+    if normalized in {"true", "1", "yes", "on"}:
+        return True
+    return normalized
+
+
+def _apply_ollama_formatter_options(payload: dict[str, object]) -> None:
+    """! @brief Add AutoMoM's formatter-specific Ollama generation controls.
+    @param payload Request payload to mutate before sending to Ollama.
+    @return None.
+    """
+    think = _parse_ollama_think(SETTINGS.formatter_ollama_think)
+    if think is not None:
+        payload["think"] = think
+
+    options: dict[str, object] = {}
+    if SETTINGS.formatter_ollama_num_ctx > 0:
+        options["num_ctx"] = SETTINGS.formatter_ollama_num_ctx
+    if SETTINGS.formatter_ollama_num_predict > 0:
+        options["num_predict"] = SETTINGS.formatter_ollama_num_predict
+    if SETTINGS.formatter_ollama_temperature >= 0:
+        options["temperature"] = SETTINGS.formatter_ollama_temperature
+    if options:
+        payload["options"] = options
 
 
 def _extract_model_text(stdout: str, stderr: str, *, prompt: str = "") -> str:

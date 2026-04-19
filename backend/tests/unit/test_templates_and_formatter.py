@@ -190,6 +190,10 @@ def test_formatter_uses_ollama_response(monkeypatch) -> None:
         assert request.full_url.endswith("/api/generate")
         payload = json.loads(request.data.decode("utf-8"))
         assert payload["system"]
+        assert payload["think"] is False
+        assert payload["options"]["num_ctx"] == 8192
+        assert payload["options"]["num_predict"] == 1600
+        assert payload["options"]["temperature"] == 0.1
         return _FakeHTTPResponse({"response": "## Minutes\n- Item\n## Decisions\n- Keep\n"})
 
     monkeypatch.setattr("backend.pipeline.formatter.urllib.request.urlopen", fake_urlopen)

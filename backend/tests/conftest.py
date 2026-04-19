@@ -34,6 +34,10 @@ def isolated_settings(tmp_path: Path):
         "formatter_command": SETTINGS.formatter_command,
         "formatter_model_path": SETTINGS.formatter_model_path,
         "formatter_ollama_model": SETTINGS.formatter_ollama_model,
+        "formatter_ollama_think": SETTINGS.formatter_ollama_think,
+        "formatter_ollama_num_ctx": SETTINGS.formatter_ollama_num_ctx,
+        "formatter_ollama_num_predict": SETTINGS.formatter_ollama_num_predict,
+        "formatter_ollama_temperature": SETTINGS.formatter_ollama_temperature,
         "ollama_host": SETTINGS.ollama_host,
     }
 

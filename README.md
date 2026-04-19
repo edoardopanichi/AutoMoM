@@ -163,6 +163,10 @@ Artifact keys are exposed through the job API and are part of the runtime contra
   - `AUTOMOM_FORMATTER_COMMAND`
   - `AUTOMOM_OLLAMA_HOST`
   - `AUTOMOM_FORMATTER_OLLAMA_MODEL`
+  - `AUTOMOM_FORMATTER_OLLAMA_THINK=false|true|low|medium|high|omit` (default: `false`)
+  - `AUTOMOM_FORMATTER_OLLAMA_NUM_CTX` (default: `8192`)
+  - `AUTOMOM_FORMATTER_OLLAMA_NUM_PREDICT` (default: `1600`)
+  - `AUTOMOM_FORMATTER_OLLAMA_TEMPERATURE` (default: `0.1`)
   - `AUTOMOM_FORMATTER_TIMEOUT_S`
 - Audio normalization:
   - `AUTOMOM_AUDIO_DENOISE=1|0`
