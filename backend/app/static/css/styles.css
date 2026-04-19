@@ -1073,7 +1073,7 @@ textarea {
 }
 
 .speaker-card {
-  border-radius: 18px;
+  border-radius: 8px;
   padding: 1rem;
 }
 
@@ -1104,6 +1104,12 @@ textarea {
   color: var(--warn);
 }
 
+.speaker-match-badge.grouped {
+  background: rgba(40, 79, 116, 0.1);
+  border: 1px solid rgba(40, 79, 116, 0.18);
+  color: var(--ink);
+}
+
 .speaker-name {
   margin-top: 0.8rem;
 }
@@ -1129,15 +1135,45 @@ textarea {
 }
 
 .speaker-snippets {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 0.6rem;
   margin-top: 0.8rem;
 }
 
 .speaker-snippets audio {
-  width: min(260px, 100%);
-  flex: 1 1 220px;
+  width: 100%;
+}
+
+.speaker-snippet-row {
+  display: grid;
+  gap: 0.55rem;
+  border: 1px solid rgba(21, 28, 35, 0.12);
+  border-radius: 8px;
+  padding: 0.7rem;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.speaker-snippet-row.snippet-excluded {
+  opacity: 0.62;
+}
+
+.speaker-snippet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.75rem;
+  font-size: 0.84rem;
+  font-weight: 650;
+}
+
+.speaker-snippet-actions label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.speaker-split-name {
+  margin-top: 0;
 }
 
 .export-actions {

@@ -181,6 +181,7 @@ class SpeakerSnippet(BaseModel):
     snippet_path: str
     start_s: float
     end_s: float
+    snippet_id: str = ""
 
 
 class SpeakerProfileMatch(BaseModel):
@@ -195,6 +196,8 @@ class SpeakerProfileMatch(BaseModel):
 
 class SpeakerState(BaseModel):
     speaker_id: str
+    speaker_ids: list[str] = Field(default_factory=list)
+    review_group_id: str | None = None
     suggested_name: str | None = None
     matched_profile: SpeakerProfileMatch | None = None
     snippets: list[SpeakerSnippet] = Field(default_factory=list)
@@ -209,10 +212,21 @@ class SpeakerMappingItem(BaseModel):
     speaker_id: str
     name: str
     save_voice_profile: bool = False
+    speaker_ids: list[str] = Field(default_factory=list)
+    assigned_snippet_ids: list[str] = Field(default_factory=list)
+    exclude_from_mom: bool = False
+
+
+class SpeakerSnippetAction(BaseModel):
+    snippet_id: str
+    source_speaker_id: str
+    action: Literal["keep", "exclude", "split"] = "keep"
+    target_speaker_id: str | None = None
 
 
 class SubmitSpeakerMappingRequest(BaseModel):
     mappings: list[SpeakerMappingItem]
+    snippet_actions: list[SpeakerSnippetAction] = Field(default_factory=list)
 
 
 class JobState(BaseModel):

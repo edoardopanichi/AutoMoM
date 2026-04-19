@@ -200,9 +200,11 @@ def _run_stage6_benchmark(job_dir: Path) -> dict[str, Any]:
     diarization_segments = json.loads(diarization_path.read_text(encoding="utf-8"))
     mapping_path = job_dir / "speaker_mapping.json"
     if mapping_path.exists():
+        mapping_payload = json.loads(mapping_path.read_text(encoding="utf-8"))
+        mapping_rows = mapping_payload.get("expanded_mappings", mapping_payload.get("mappings", [])) if isinstance(mapping_payload, dict) else mapping_payload
         speaker_map = {
             item["speaker_id"]: item["name"].strip() or item["speaker_id"]
-            for item in json.loads(mapping_path.read_text(encoding="utf-8"))
+            for item in mapping_rows
         }
     else:
         speaker_map = {

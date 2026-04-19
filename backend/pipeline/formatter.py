@@ -700,6 +700,7 @@ def _build_chunk_summary_prompt(
         f"Template id: {template_id}\n"
         f"Final template sections:\n{section_list}\n"
         f"Known speakers: {', '.join(speakers) if speakers else 'None'}\n"
+        "Unattributed speaker lines are context only. Do not list them as participants or cite them as people.\n"
         f"Chunk: {chunk_index} of {chunk_count}\n"
         f"Chunk time range: {start_s:.2f}s to {end_s:.2f}s\n\n"
         "Previous accumulated summary from earlier chunks:\n"
@@ -782,6 +783,8 @@ def _discussion_bullets(transcript: list[dict[str, object]], top_n: int = 8) -> 
         speaker = str(seg["speaker_name"])
         text = str(seg["text"]).strip()
         if not text:
+            continue
+        if speaker == "Unattributed speaker":
             continue
         if text.startswith("[Offline fallback transcript"):
             continue

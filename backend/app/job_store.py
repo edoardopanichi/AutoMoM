@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.app.config import SETTINGS
-from backend.app.schemas import JobSpeakerInfo, JobState, SpeakerMappingItem
+from backend.app.schemas import JobSpeakerInfo, JobState, SpeakerMappingItem, SpeakerSnippetAction
 
 
 @dataclass
@@ -41,6 +41,7 @@ class JobRuntime:
     state: JobState
     speaker_mapping_event: threading.Event = field(default_factory=threading.Event)
     speaker_mapping_payload: list[SpeakerMappingItem] | None = None
+    speaker_snippet_actions_payload: list[SpeakerSnippetAction] = field(default_factory=list)
     cancel_event: threading.Event = field(default_factory=threading.Event)
     active_processes: set[subprocess.Popen[str]] = field(default_factory=set)
 
@@ -283,7 +284,12 @@ class JobStore:
             runtime.speaker_mapping_event.clear()
             self._persist_state(job_id)
 
-    def submit_speaker_mapping(self, job_id: str, mappings: list[SpeakerMappingItem]) -> None:
+    def submit_speaker_mapping(
+        self,
+        job_id: str,
+        mappings: list[SpeakerMappingItem],
+        snippet_actions: list[SpeakerSnippetAction] | None = None,
+    ) -> None:
         """! @brief Submit speaker mapping.
         @param job_id Identifier of the job being processed.
         @param mappings Value for mappings.
@@ -293,6 +299,7 @@ class JobStore:
             if runtime.state.status != "waiting_speaker_input":
                 raise ValueError("Job is not waiting for speaker input")
             runtime.speaker_mapping_payload = mappings
+            runtime.speaker_snippet_actions_payload = list(snippet_actions or [])
             runtime.state.stage_percent = 100.0
             runtime.state.status = "running"
             runtime.state.stage_detail = None

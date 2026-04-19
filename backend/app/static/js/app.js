@@ -1218,9 +1218,11 @@ function speakerFormFingerprint(jobState) {
   }
   const speakers = speakerInfo.speakers.map((speaker) => ({
     speaker_id: speaker.speaker_id,
+    speaker_ids: speaker.speaker_ids || [],
+    review_group_id: speaker.review_group_id || "",
     suggested_name: speaker.suggested_name || "",
     matched_profile: speaker.matched_profile || null,
-    snippets: (speaker.snippets || []).map((snippet) => snippet.snippet_path),
+    snippets: (speaker.snippets || []).map((snippet) => snippet.snippet_id || snippet.snippet_path),
   }));
   return JSON.stringify({
     job_id: jobState.job_id,
@@ -1253,13 +1255,23 @@ function renderSpeakerForm(jobState) {
   speakerInfo.speakers.forEach((speaker) => {
     const card = document.createElement("div");
     card.className = "speaker-card";
+    const speakerIds = speaker.speaker_ids && speaker.speaker_ids.length ? speaker.speaker_ids : [speaker.speaker_id];
+    card.dataset.speakerId = speaker.speaker_id;
+    card.dataset.speakerIds = JSON.stringify(speakerIds);
 
     const header = document.createElement("div");
     header.className = "speaker-card-header";
 
     const title = document.createElement("h4");
-    title.textContent = speaker.speaker_id;
+    title.textContent = speakerIds.length > 1 ? `${speaker.speaker_id} group` : speaker.speaker_id;
     header.appendChild(title);
+
+    if (speakerIds.length > 1) {
+      const groupBadge = document.createElement("span");
+      groupBadge.className = "speaker-match-badge grouped";
+      groupBadge.textContent = `${speakerIds.length} diarized speakers`;
+      header.appendChild(groupBadge);
+    }
 
     if (speaker.matched_profile) {
       const badge = document.createElement("span");
@@ -1296,8 +1308,6 @@ function renderSpeakerForm(jobState) {
     const snippets = document.createElement("div");
     snippets.className = "speaker-snippets";
     speaker.snippets.forEach((snippet) => {
-      const audio = document.createElement("audio");
-      audio.controls = true;
       const snippetName = String(snippet.snippet_path || "")
         .replace(/\\/g, "/")
         .split("/")
@@ -1305,8 +1315,50 @@ function renderSpeakerForm(jobState) {
       if (!snippetName) {
         return;
       }
+      const snippetId = snippet.snippet_id || snippetName.replace(/\.[^.]+$/, "");
+      const row = document.createElement("div");
+      row.className = "speaker-snippet-row";
+      row.dataset.snippetId = snippetId;
+      row.dataset.sourceSpeakerId = snippet.speaker_id || speaker.speaker_id;
+
+      const audio = document.createElement("audio");
+      audio.controls = true;
       audio.src = `/api/jobs/${jobState.job_id}/snippets/${encodeURIComponent(snippetName)}`;
-      snippets.appendChild(audio);
+
+      const actions = document.createElement("div");
+      actions.className = "speaker-snippet-actions";
+      [
+        ["keep", "Belongs here"],
+        ["split", "Move to new speaker"],
+        ["exclude", "Unclear clip"],
+      ].forEach(([value, label]) => {
+        const option = document.createElement("label");
+        const radio = document.createElement("input");
+        radio.type = "radio";
+        radio.name = `snippet-action-${snippetId}`;
+        radio.value = value;
+        radio.checked = value === "keep";
+        radio.className = "speaker-snippet-action";
+        option.append(radio, label);
+        actions.appendChild(option);
+      });
+
+      const splitInput = document.createElement("input");
+      splitInput.type = "text";
+      splitInput.className = "speaker-split-name hidden";
+      splitInput.placeholder = "Name for this new speaker";
+      splitInput.dataset.snippetId = snippetId;
+      splitInput.dataset.syntheticSpeakerId = `SPLIT_${snippetId}`;
+
+      actions.addEventListener("change", () => {
+        const selected = actions.querySelector("input:checked");
+        const splitSelected = selected && selected.value === "split";
+        splitInput.classList.toggle("hidden", !splitSelected);
+        row.classList.toggle("snippet-excluded", selected && selected.value === "exclude");
+      });
+
+      row.append(audio, actions, splitInput);
+      snippets.appendChild(row);
     });
 
     const hint = document.createElement("div");
@@ -1325,18 +1377,58 @@ function renderSpeakerForm(jobState) {
  */
 async function submitSpeakerMapping() {
   if (!state.currentJobId) return;
-  const mappings = qsa(".speaker-name").map((input) => {
-    const speakerId = input.dataset.speakerId;
+  const mappings = qsa(".speaker-card").map((card) => {
+    const input = card.querySelector(".speaker-name");
+    const speakerId = card.dataset.speakerId;
+    const speakerIds = JSON.parse(card.dataset.speakerIds || `["${speakerId}"]`);
     const save = qsa(".speaker-save-profile").find((item) => item.dataset.speakerId === speakerId);
+    const snippetRows = Array.from(card.querySelectorAll(".speaker-snippet-row"));
+    const assignedSnippetIds = snippetRows
+      .filter((row) => {
+        const selected = row.querySelector(".speaker-snippet-action:checked");
+        return selected && selected.value === "keep";
+      })
+      .map((row) => row.dataset.snippetId)
+      .filter(Boolean);
+    const typedName = input.value.trim();
+    const hasRealName = Boolean(typedName && !speakerIds.includes(typedName) && typedName !== speakerId);
+    const allClipsRejected = snippetRows.length > 0 && assignedSnippetIds.length === 0;
     return {
       speaker_id: speakerId,
-      name: input.value.trim() || speakerId,
+      name: typedName || speakerId,
       save_voice_profile: Boolean(save && save.checked),
+      speaker_ids: speakerIds,
+      assigned_snippet_ids: assignedSnippetIds,
+      exclude_from_mom: allClipsRejected && !hasRealName,
     };
+  });
+  const snippetActions = [];
+  qsa(".speaker-snippet-row").forEach((row) => {
+    const selected = row.querySelector(".speaker-snippet-action:checked");
+    if (!selected) return;
+    const action = selected.value;
+    const payload = {
+      snippet_id: row.dataset.snippetId,
+      source_speaker_id: row.dataset.sourceSpeakerId,
+      action,
+    };
+    if (action === "split") {
+      const splitInput = row.querySelector(".speaker-split-name");
+      payload.target_speaker_id = splitInput.dataset.syntheticSpeakerId;
+      mappings.push({
+        speaker_id: payload.target_speaker_id,
+        name: splitInput.value.trim() || payload.target_speaker_id,
+        save_voice_profile: false,
+        speaker_ids: [payload.target_speaker_id],
+        assigned_snippet_ids: [row.dataset.snippetId],
+        exclude_from_mom: false,
+      });
+    }
+    snippetActions.push(payload);
   });
 
   const grouped = new Map();
-  mappings.forEach((item) => {
+  mappings.filter((item) => !item.exclude_from_mom).forEach((item) => {
     const key = item.name.trim().toLowerCase();
     if (!key) return;
     const existing = grouped.get(key) || [];
@@ -1357,7 +1449,7 @@ async function submitSpeakerMapping() {
   await fetchJSON(`/api/jobs/${state.currentJobId}/speaker-mapping`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mappings }),
+    body: JSON.stringify({ mappings, snippet_actions: snippetActions }),
   });
   switchTab("progress");
 }

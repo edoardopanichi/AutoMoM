@@ -246,6 +246,48 @@ class VoiceProfileManager:
         ambiguous = [item for item in scored[1:] if abs(best.score - item.score) <= AMBIGUITY_MARGIN]
         return MatchResponse(best_match=best, ambiguous_matches=ambiguous)
 
+    def rank_matches(
+        self,
+        embedding: np.ndarray,
+        *,
+        diarization_model_id: str,
+        embedding_model_ref: str,
+        profiles: Sequence[VoiceProfile] | None = None,
+    ) -> list[MatchResult]:
+        """! @brief Rank saved voice profiles without applying profile thresholds.
+        @param embedding Probe embedding.
+        @param diarization_model_id Value for diarization model id.
+        @param embedding_model_ref Value for embedding model ref.
+        @param profiles Optional profile collection.
+        @return Ranked profile matches.
+        """
+        target_key = self._model_key(diarization_model_id, embedding_model_ref)
+        normalized = self._normalize(embedding)
+        per_profile: dict[str, MatchResult] = {}
+
+        candidates = profiles if profiles is not None else self.list_profiles()
+        for profile in candidates:
+            best_for_profile: MatchResult | None = None
+            for sample in profile.samples:
+                for item in sample.embeddings:
+                    if item.model_key != target_key:
+                        continue
+                    profile_embedding = np.asarray(item.vector, dtype=np.float32)
+                    score = float(np.dot(normalized, self._normalize(profile_embedding)))
+                    candidate = MatchResult(
+                        profile_id=profile.profile_id,
+                        sample_id=sample.sample_id,
+                        name=profile.name,
+                        score=score,
+                        model_key=item.model_key,
+                    )
+                    if best_for_profile is None or candidate.score > best_for_profile.score:
+                        best_for_profile = candidate
+            if best_for_profile is not None:
+                per_profile[profile.profile_id] = best_for_profile
+
+        return sorted(per_profile.values(), key=lambda item: item.score, reverse=True)
+
     def start_refresh_task(
         self,
         *,

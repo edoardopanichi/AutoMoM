@@ -218,6 +218,8 @@ class TemplateManager:
             "Global requirements:\n"
             "- Final output must be in English.\n"
             "- Capture decisions, action items, and open questions when present.\n"
+            "- Treat 'Unattributed speaker' transcript lines as context only: do not list them as participants "
+            "and do not cite them as named people in decisions or action items.\n"
             "- Do not add commentary outside the document.\n"
         )
         user_prompt = (

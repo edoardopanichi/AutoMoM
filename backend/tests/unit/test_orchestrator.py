@@ -5,10 +5,26 @@ from pathlib import Path
 from datetime import datetime
 
 from backend.app.job_store import JOB_STORE, OpenAIJobConfig
-from backend.app.schemas import JobSpeakerInfo, SpeakerMappingItem, SpeakerState, VoiceProfile, VoiceProfileEmbedding, VoiceProfileSample
+from backend.app.schemas import (
+    JobSpeakerInfo,
+    SpeakerMappingItem,
+    SpeakerSnippetAction,
+    SpeakerState,
+    VoiceProfile,
+    VoiceProfileEmbedding,
+    VoiceProfileSample,
+)
 from backend.pipeline.diarization import DiarizationResult, DiarizationSegment
 from backend.pipeline.openai_client import OpenAIDiarizationResult, OpenAIDiarizedSegment
 from backend.pipeline.orchestrator import PipelineOrchestrator
+
+
+class _Snippet:
+    def __init__(self, speaker_id: str, path: Path, start_s: float, end_s: float) -> None:
+        self.speaker_id = speaker_id
+        self.path = path
+        self.start_s = start_s
+        self.end_s = end_s
 
 
 def test_collapse_labeled_segments_merges_ids_with_same_label() -> None:
@@ -440,3 +456,245 @@ def test_build_speaker_info_includes_profile_match_metadata(monkeypatch, tmp_pat
     assert info.speakers[0].matched_profile.sample_id == "s1"
     assert info.speakers[0].matched_profile.status == "matched"
     assert "Auto-identified SPEAKER_0 as Alice" in logs[0]
+
+
+def test_build_speaker_info_uses_clean_clip_evidence(monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test build speaker info uses clean clip evidence instead of one aggregate only.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Filesystem path provided by pytest.
+    """
+    orchestrator = PipelineOrchestrator()
+    monkeypatch.setattr("backend.pipeline.orchestrator.VOICE_PROFILE_MANAGER.list_profiles", lambda: [object()])
+    monkeypatch.setattr(
+        "backend.pipeline.orchestrator.resolve_local_diarization_model",
+        lambda model_id: type(
+            "DiarizationModel",
+            (),
+            {"model_id": "pyannote-community-1", "embedding_model_ref": "local-embed-v1"},
+        )(),
+    )
+
+    def fake_embedding(*args, **kwargs):
+        start_s = kwargs["segments"][0][0]
+        return [1.0, 0.0] if start_s == 10.0 else [0.0, 1.0]
+
+    def fake_match(embedding, **kwargs):
+        if embedding == [1.0, 0.0]:
+            best = type(
+                "Best",
+                (),
+                {
+                    "profile_id": "p1",
+                    "sample_id": "s1",
+                    "name": "Alice",
+                    "score": 0.94,
+                    "model_key": "local_pyannote::pyannote-community-1::local-embed-v1",
+                },
+            )()
+            return type("Match", (), {"best_match": best, "ambiguous_matches": []})()
+        return type("Match", (), {"best_match": None, "ambiguous_matches": []})()
+
+    monkeypatch.setattr("backend.pipeline.orchestrator.VOICE_PROFILE_MANAGER.compute_embedding", fake_embedding)
+    monkeypatch.setattr("backend.pipeline.orchestrator.VOICE_PROFILE_MANAGER.match", fake_match)
+    monkeypatch.setattr("backend.pipeline.orchestrator.VOICE_PROFILE_MANAGER.rank_matches", lambda *args, **kwargs: [])
+    monkeypatch.setattr("backend.pipeline.orchestrator.JOB_STORE.append_log", lambda *args, **kwargs: None)
+    runtime = type("Runtime", (), {"api_config": None, "local_diarization_model_id": "pyannote-community-1"})()
+
+    info = orchestrator._build_speaker_info(
+        runtime,
+        "job-1",
+        tmp_path / "audio.wav",
+        {"SPEAKER_0": [(0.0, 4.0), (10.0, 13.0)]},
+        [
+            _Snippet("SPEAKER_0", tmp_path / "SPEAKER_0_1.wav", 0.0, 4.0),
+            _Snippet("SPEAKER_0", tmp_path / "SPEAKER_0_2.wav", 10.0, 13.0),
+        ],
+    )
+
+    assert info.speakers[0].suggested_name == "Alice"
+    assert info.speakers[0].matched_profile is not None
+    assert info.speakers[0].matched_profile.score == 0.94
+
+
+def test_build_speaker_info_groups_duplicate_profile_matches(monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test duplicate profile matches return one review group.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Filesystem path provided by pytest.
+    """
+    orchestrator = PipelineOrchestrator()
+    monkeypatch.setattr("backend.pipeline.orchestrator.VOICE_PROFILE_MANAGER.list_profiles", lambda: [object()])
+    monkeypatch.setattr(
+        "backend.pipeline.orchestrator.resolve_local_diarization_model",
+        lambda model_id: type(
+            "DiarizationModel",
+            (),
+            {"model_id": "pyannote-community-1", "embedding_model_ref": "local-embed-v1"},
+        )(),
+    )
+    monkeypatch.setattr("backend.pipeline.orchestrator.VOICE_PROFILE_MANAGER.compute_embedding", lambda *args, **kwargs: [1.0, 0.0])
+
+    def fake_match(*args, **kwargs):
+        best = type(
+            "Best",
+            (),
+            {"profile_id": "p1", "sample_id": "s1", "name": "Alice", "score": 0.93, "model_key": "key"},
+        )()
+        return type("Match", (), {"best_match": best, "ambiguous_matches": []})()
+
+    monkeypatch.setattr("backend.pipeline.orchestrator.VOICE_PROFILE_MANAGER.match", fake_match)
+    monkeypatch.setattr("backend.pipeline.orchestrator.JOB_STORE.append_log", lambda *args, **kwargs: None)
+    runtime = type("Runtime", (), {"api_config": None, "local_diarization_model_id": "pyannote-community-1"})()
+
+    info = orchestrator._build_speaker_info(
+        runtime,
+        "job-1",
+        tmp_path / "audio.wav",
+        {"SPEAKER_0": [(0.0, 3.0)], "SPEAKER_1": [(5.0, 8.0)]},
+        [
+            _Snippet("SPEAKER_0", tmp_path / "SPEAKER_0_1.wav", 0.0, 3.0),
+            _Snippet("SPEAKER_1", tmp_path / "SPEAKER_1_1.wav", 5.0, 8.0),
+        ],
+    )
+
+    assert info.detected_speakers == 2
+    assert len(info.speakers) == 1
+    assert info.speakers[0].speaker_ids == ["SPEAKER_0", "SPEAKER_1"]
+    assert info.speakers[0].suggested_name == "Alice"
+
+
+def test_build_speaker_info_accepts_clear_relative_profile_winner(monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test lower absolute scores can match when the winner is clearly separated.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Filesystem path provided by pytest.
+    """
+    orchestrator = PipelineOrchestrator()
+    monkeypatch.setattr("backend.pipeline.orchestrator.VOICE_PROFILE_MANAGER.list_profiles", lambda: [object()])
+    monkeypatch.setattr(
+        "backend.pipeline.orchestrator.resolve_local_diarization_model",
+        lambda model_id: type(
+            "DiarizationModel",
+            (),
+            {"model_id": "pyannote-community-1", "embedding_model_ref": "local-embed-v1"},
+        )(),
+    )
+    monkeypatch.setattr("backend.pipeline.orchestrator.VOICE_PROFILE_MANAGER.compute_embedding", lambda *args, **kwargs: [1.0])
+    monkeypatch.setattr(
+        "backend.pipeline.orchestrator.VOICE_PROFILE_MANAGER.match",
+        lambda *args, **kwargs: type("Match", (), {"best_match": None, "ambiguous_matches": []})(),
+    )
+    monkeypatch.setattr(
+        "backend.pipeline.orchestrator.VOICE_PROFILE_MANAGER.rank_matches",
+        lambda *args, **kwargs: [
+            type(
+                "Best",
+                (),
+                {"profile_id": "p1", "sample_id": "s1", "name": "Alice", "score": 0.58, "model_key": "key"},
+            )(),
+            type(
+                "RunnerUp",
+                (),
+                {"profile_id": "p2", "sample_id": "s2", "name": "Bob", "score": 0.34, "model_key": "key"},
+            )(),
+        ],
+    )
+    monkeypatch.setattr("backend.pipeline.orchestrator.JOB_STORE.append_log", lambda *args, **kwargs: None)
+    runtime = type("Runtime", (), {"api_config": None, "local_diarization_model_id": "pyannote-community-1"})()
+
+    info = orchestrator._build_speaker_info(
+        runtime,
+        "job-1",
+        tmp_path / "audio.wav",
+        {"SPEAKER_0": [(0.0, 3.0)]},
+        [_Snippet("SPEAKER_0", tmp_path / "SPEAKER_0_1.wav", 0.0, 3.0)],
+    )
+
+    assert info.speakers[0].suggested_name == "Alice"
+    assert info.speakers[0].matched_profile is not None
+    assert info.speakers[0].matched_profile.score == 0.58
+
+
+def test_grouped_mappings_expand_to_underlying_speakers() -> None:
+    """! @brief Test grouped mappings expand to one mapping per speaker id.
+    """
+    expanded = PipelineOrchestrator._expand_speaker_mappings(
+        [
+            SpeakerMappingItem(
+                speaker_id="SPEAKER_0",
+                speaker_ids=["SPEAKER_0", "SPEAKER_2"],
+                name="Alice",
+                save_voice_profile=True,
+                assigned_snippet_ids=["SPEAKER_0_1"],
+            )
+        ]
+    )
+
+    assert [item.speaker_id for item in expanded] == ["SPEAKER_0", "SPEAKER_2"]
+    assert all(item.name == "Alice" for item in expanded)
+    assert all(item.save_voice_profile for item in expanded)
+
+
+def test_apply_snippet_splits_remaps_exact_snippet_range(tmp_path: Path) -> None:
+    """! @brief Test snippet split remaps only the selected range.
+    @param tmp_path Filesystem path provided by pytest.
+    """
+    segments = [DiarizationSegment("SPEAKER_0", 0.0, 10.0)]
+    snippets = [_Snippet("SPEAKER_0", tmp_path / "SPEAKER_0_1.wav", 3.0, 6.0)]
+
+    updated = PipelineOrchestrator._apply_snippet_splits(
+        segments,
+        snippets,
+        [
+            SpeakerSnippetAction(
+                snippet_id="SPEAKER_0_1",
+                source_speaker_id="SPEAKER_0",
+                action="split",
+                target_speaker_id="SPLIT_SPEAKER_0_1",
+            )
+        ],
+    )
+
+    assert [(item.speaker_id, item.start_s, item.end_s) for item in updated] == [
+        ("SPEAKER_0", 0.0, 3.0),
+        ("SPLIT_SPEAKER_0_1", 3.0, 6.0),
+        ("SPEAKER_0", 6.0, 10.0),
+    ]
+
+
+def test_profile_clip_ranges_exclude_unclear_snippets(tmp_path: Path) -> None:
+    """! @brief Test unclear snippets are not used for profile saving.
+    @param tmp_path Filesystem path provided by pytest.
+    """
+    snippets = [
+        _Snippet("SPEAKER_0", tmp_path / "SPEAKER_0_1.wav", 0.0, 4.0),
+        _Snippet("SPEAKER_0", tmp_path / "SPEAKER_0_2.wav", 5.0, 9.0),
+    ]
+
+    ranges = PipelineOrchestrator._profile_clip_ranges_for_mapping(
+        SpeakerMappingItem(speaker_id="SPEAKER_0", name="Alice", save_voice_profile=True),
+        snippets,
+        [
+            SpeakerSnippetAction(
+                snippet_id="SPEAKER_0_1",
+                source_speaker_id="SPEAKER_0",
+                action="exclude",
+            )
+        ],
+        {"SPEAKER_0": [(0.0, 4.0), (5.0, 9.0)]},
+    )
+
+    assert ranges == [(5.0, 9.0)]
+
+
+def test_unnamed_speakers_are_filtered_from_formatter_speakers() -> None:
+    """! @brief Test unnamed speakers remain transcript context but not MoM participants.
+    """
+    prepared = PipelineOrchestrator._transcript_for_formatter(
+        [
+            {"speaker_id": "SPEAKER_0", "speaker_name": "Alice", "text": "hello"},
+            {"speaker_id": "SPEAKER_1", "speaker_name": "SPEAKER_1", "text": "unclear"},
+        ],
+        {"SPEAKER_1"},
+    )
+
+    assert prepared[1]["speaker_name"] == "Unattributed speaker"
+    assert PipelineOrchestrator._named_speakers_for_formatter(prepared) == ["Alice"]

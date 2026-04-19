@@ -12,7 +12,14 @@ from typing import Any
 
 from backend.app.config import SETTINGS
 from backend.app.job_store import JOB_STORE, OpenAIJobConfig, ensure_job_artifact_dir, write_json
-from backend.app.schemas import JobSpeakerInfo, SpeakerProfileMatch, SpeakerSnippet, SpeakerState
+from backend.app.schemas import (
+    JobSpeakerInfo,
+    SpeakerMappingItem,
+    SpeakerProfileMatch,
+    SpeakerSnippet,
+    SpeakerSnippetAction,
+    SpeakerState,
+)
 from backend.models.diarization_registry import resolve_local_diarization_model
 from backend.models.local_catalog import LOCAL_MODEL_CATALOG
 from backend.pipeline.audio import extract_segment, normalize_audio, validate_audio_input
@@ -55,6 +62,9 @@ STAGES = [
     "MoM formatting",
     "Export",
 ]
+
+PROFILE_EVIDENCE_FALLBACK_THRESHOLD = 0.55
+PROFILE_EVIDENCE_FALLBACK_MARGIN = 0.18
 
 
 class CancelledError(RuntimeError):
@@ -334,16 +344,34 @@ class PipelineOrchestrator:
             mapping_items = JOB_STORE.wait_for_mapping(job_id)
             if mapping_items is None:
                 raise CancelledError("Job cancelled during speaker naming")
-            speaker_map = {item.speaker_id: item.name.strip() or item.speaker_id for item in mapping_items}
+            snippet_actions = list(runtime.speaker_snippet_actions_payload)
+            diarization_result.segments = self._apply_snippet_splits(
+                diarization_result.segments,
+                snippets,
+                snippet_actions,
+            )
+            diarization_result.speaker_count = len({item.speaker_id for item in diarization_result.segments})
+            segments_by_speaker = self._group_segments_by_speaker(diarization_result.segments)
+            expanded_mapping_items = self._expand_speaker_mappings(mapping_items)
+            speaker_map = self._speaker_map_from_mappings(expanded_mapping_items)
+            excluded_speaker_ids = {
+                item.speaker_id
+                for item in expanded_mapping_items
+                if item.exclude_from_mom
+            }
             write_json(
                 job_dir / "speaker_mapping.json",
-                [item.model_dump() for item in mapping_items],
+                {
+                    "mappings": [item.model_dump() for item in mapping_items],
+                    "expanded_mappings": [item.model_dump() for item in expanded_mapping_items],
+                    "snippet_actions": [item.model_dump() for item in snippet_actions],
+                },
             )
             JOB_STORE.set_artifact(job_id, "speaker_mapping", job_dir / "speaker_mapping.json")
             JOB_STORE.set_stage_percent(job_id, 100.0, overall_percent=self._overall(4, 100.0))
 
             for mapping in mapping_items:
-                if not mapping.save_voice_profile:
+                if not mapping.save_voice_profile or mapping.exclude_from_mom:
                     continue
                 if diarization_model is None:
                     JOB_STORE.append_log(
@@ -351,7 +379,12 @@ class PipelineOrchestrator:
                         f"Skipped voice profile save for {mapping.name}: local diarization embeddings are unavailable for API diarization",
                     )
                     continue
-                segments = self._select_profile_segments(segments_by_speaker.get(mapping.speaker_id, []), max_segments=2)
+                segments = self._profile_clip_ranges_for_mapping(
+                    mapping,
+                    snippets,
+                    snippet_actions,
+                    segments_by_speaker,
+                )
                 profile = VOICE_PROFILE_MANAGER.save_profile_sample(
                     name=mapping.name,
                     source_audio_path=normalized_audio_path,
@@ -550,8 +583,13 @@ class PipelineOrchestrator:
                 self._begin_stage_timing(6)
             )
             JOB_STORE.append_log(job_id, "Stage 7/9: assembling transcript")
+            formatter_transcript_segments = self._transcript_for_formatter(
+                transcript_segments,
+                excluded_speaker_ids,
+            )
+            named_speakers = self._named_speakers_for_formatter(formatter_transcript_segments)
             transcript_payload = {
-                "speakers": sorted(set(item["speaker_name"] for item in transcript_segments)),
+                "speakers": named_speakers,
                 "segments": transcript_segments,
             }
             write_json(job_dir / "transcript.json", transcript_payload)
@@ -602,7 +640,7 @@ class PipelineOrchestrator:
             speakers = transcript_payload["speakers"]
             mom_path = job_dir / "mom.md"
             formatter_result = formatter.write_model_output_to_mom(
-                transcript=transcript_segments,
+                transcript=formatter_transcript_segments,
                 speakers=speakers,
                 title=title,
                 template_id=runtime.template_id,
@@ -635,7 +673,7 @@ class PipelineOrchestrator:
                 self._render_full_meeting_transcript(
                     title=title,
                     speakers=speakers,
-                    transcript_segments=transcript_segments,
+                    transcript_segments=formatter_transcript_segments,
                 ),
                 encoding="utf-8",
             )
@@ -691,7 +729,7 @@ class PipelineOrchestrator:
                 run_started_monotonic=run_started_monotonic,
                 stage_timings=stage_timings,
                 diarization_result=diarization_result,
-                mapping_items=mapping_items,
+                mapping_items=expanded_mapping_items,
                 transcript_segments=transcript_segments,
                 audio_metadata_payload=audio_metadata_payload,
                 transcription_runtime_payload=transcription_runtime_payload,
@@ -1396,16 +1434,7 @@ class PipelineOrchestrator:
         @param snippets Value for snippets.
         @return Result produced by the operation.
         """
-        snippet_by_speaker: dict[str, list[SpeakerSnippet]] = {}
-        for snippet in snippets:
-            snippet_by_speaker.setdefault(snippet.speaker_id, []).append(
-                SpeakerSnippet(
-                    speaker_id=snippet.speaker_id,
-                    snippet_path=str(snippet.path),
-                    start_s=snippet.start_s,
-                    end_s=snippet.end_s,
-                )
-            )
+        snippet_by_speaker = self._group_snippets_by_speaker(snippets)
 
         if runtime.api_config is not None and runtime.api_config.diarization_execution == "api":
             return JobSpeakerInfo(
@@ -1413,6 +1442,8 @@ class PipelineOrchestrator:
                 speakers=[
                     SpeakerState(
                         speaker_id=speaker_id,
+                        speaker_ids=[speaker_id],
+                        review_group_id=speaker_id,
                         snippets=snippet_by_speaker.get(speaker_id, []),
                     )
                     for speaker_id in sorted(segments_by_speaker)
@@ -1426,6 +1457,8 @@ class PipelineOrchestrator:
                 speakers=[
                     SpeakerState(
                         speaker_id=speaker_id,
+                        speaker_ids=[speaker_id],
+                        review_group_id=speaker_id,
                         snippets=snippet_by_speaker.get(speaker_id, []),
                     )
                     for speaker_id in sorted(segments_by_speaker)
@@ -1434,66 +1467,373 @@ class PipelineOrchestrator:
         diarization_model = resolve_local_diarization_model(runtime.local_diarization_model_id)
         speakers: list[SpeakerState] = []
         for speaker_id in sorted(segments_by_speaker):
-            speaker_segments = self._select_profile_segments(segments_by_speaker[speaker_id])
-            embedding = VOICE_PROFILE_MANAGER.compute_embedding(
-                normalized_audio_path,
-                diarization_model_id=diarization_model.model_id,
-                embedding_model_ref=diarization_model.embedding_model_ref,
-                compute_device=SETTINGS.compute_device,
-                cuda_device_id=SETTINGS.cuda_device_id,
-                segments=speaker_segments,
-            )
-            match = VOICE_PROFILE_MANAGER.match(
-                embedding,
+            suggested_name, matched_profile = self._match_speaker_from_evidence(
+                job_id=job_id,
+                speaker_id=speaker_id,
+                normalized_audio_path=normalized_audio_path,
+                speaker_segments=segments_by_speaker[speaker_id],
+                speaker_snippets=snippet_by_speaker.get(speaker_id, []),
                 diarization_model_id=diarization_model.model_id,
                 embedding_model_ref=diarization_model.embedding_model_ref,
                 profiles=profiles,
             )
-            suggested_name = None
-            matched_profile = None
-            if match.best_match and not match.ambiguous_matches:
-                suggested_name = match.best_match.name
-                matched_profile = SpeakerProfileMatch(
-                    profile_id=match.best_match.profile_id,
-                    sample_id=getattr(match.best_match, "sample_id", None),
-                    name=match.best_match.name,
-                    score=match.best_match.score,
-                    model_key=getattr(match.best_match, "model_key", None),
-                    status="matched",
-                )
-                JOB_STORE.append_log(
-                    job_id,
-                    f"Auto-identified {speaker_id} as {suggested_name} (score={match.best_match.score:.2f})",
-                )
-            elif match.best_match:
-                matched_profile = SpeakerProfileMatch(
-                    profile_id=match.best_match.profile_id,
-                    sample_id=getattr(match.best_match, "sample_id", None),
-                    name=match.best_match.name,
-                    score=match.best_match.score,
-                    model_key=getattr(match.best_match, "model_key", None),
-                    status="ambiguous",
-                    ambiguous_names=[item.name for item in match.ambiguous_matches],
-                )
-                JOB_STORE.append_log(
-                    job_id,
-                    (
-                        f"Profile candidates for {speaker_id}: "
-                        f"{match.best_match.name} ({match.best_match.score:.2f}), "
-                        + ", ".join(f"{item.name} ({item.score:.2f})" for item in match.ambiguous_matches)
-                    ),
-                )
 
             speakers.append(
                 SpeakerState(
                     speaker_id=speaker_id,
+                    speaker_ids=[speaker_id],
+                    review_group_id=speaker_id,
                     suggested_name=suggested_name,
                     matched_profile=matched_profile,
                     snippets=snippet_by_speaker.get(speaker_id, []),
                 )
             )
 
-        return JobSpeakerInfo(detected_speakers=len(speakers), speakers=speakers)
+        return JobSpeakerInfo(
+            detected_speakers=len(segments_by_speaker),
+            speakers=self._group_duplicate_profile_matches(job_id, speakers),
+        )
+
+    @staticmethod
+    def _expand_speaker_mappings(mapping_items: list[SpeakerMappingItem]) -> list[SpeakerMappingItem]:
+        """! @brief Expand grouped speaker mapping rows into one row per underlying speaker id.
+        @param mapping_items Submitted mapping rows.
+        @return Expanded mappings.
+        """
+        expanded: list[SpeakerMappingItem] = []
+        seen: set[str] = set()
+        for item in mapping_items:
+            speaker_ids = item.speaker_ids or [item.speaker_id]
+            for speaker_id in speaker_ids:
+                if speaker_id in seen:
+                    continue
+                seen.add(speaker_id)
+                expanded.append(
+                    SpeakerMappingItem(
+                        speaker_id=speaker_id,
+                        name=item.name,
+                        save_voice_profile=item.save_voice_profile,
+                        speaker_ids=[speaker_id],
+                        assigned_snippet_ids=item.assigned_snippet_ids,
+                        exclude_from_mom=item.exclude_from_mom,
+                    )
+                )
+        return expanded
+
+    @staticmethod
+    def _speaker_map_from_mappings(mapping_items: list[SpeakerMappingItem]) -> dict[str, str]:
+        """! @brief Build final speaker id to speaker name map.
+        @param mapping_items Expanded mapping rows.
+        @return Mapping from speaker ids to final labels.
+        """
+        speaker_map: dict[str, str] = {}
+        for item in mapping_items:
+            name = item.name.strip() or item.speaker_id
+            if item.exclude_from_mom and (not item.name.strip() or item.name.strip() == item.speaker_id):
+                name = "Unattributed speaker"
+            speaker_map[item.speaker_id] = name
+        return speaker_map
+
+    @staticmethod
+    def _apply_snippet_splits(
+        segments: list[DiarizationSegment],
+        snippets,
+        snippet_actions: list[SpeakerSnippetAction],
+    ) -> list[DiarizationSegment]:
+        """! @brief Apply exact snippet-range speaker splits requested during review.
+        @param segments Diarization segments before review.
+        @param snippets Extracted snippets.
+        @param snippet_actions Submitted snippet actions.
+        @return Updated diarization segments.
+        """
+        snippet_ranges = {Path(str(snippet.path)).stem: snippet for snippet in snippets}
+        split_actions = [
+            action
+            for action in snippet_actions
+            if action.action == "split" and action.target_speaker_id and action.snippet_id in snippet_ranges
+        ]
+        if not split_actions:
+            return segments
+
+        updated = [
+            DiarizationSegment(item.speaker_id, item.start_s, item.end_s, item.confidence)
+            for item in segments
+        ]
+        for action in split_actions:
+            snippet = snippet_ranges[action.snippet_id]
+            start_s = float(snippet.start_s)
+            end_s = float(snippet.end_s)
+            next_segments: list[DiarizationSegment] = []
+            for segment in updated:
+                if segment.speaker_id != action.source_speaker_id or segment.end_s <= start_s or segment.start_s >= end_s:
+                    next_segments.append(segment)
+                    continue
+                if segment.start_s < start_s:
+                    next_segments.append(
+                        DiarizationSegment(segment.speaker_id, segment.start_s, start_s, segment.confidence)
+                    )
+                overlap_start = max(segment.start_s, start_s)
+                overlap_end = min(segment.end_s, end_s)
+                if overlap_end > overlap_start:
+                    next_segments.append(
+                        DiarizationSegment(action.target_speaker_id or segment.speaker_id, overlap_start, overlap_end, segment.confidence)
+                    )
+                if segment.end_s > end_s:
+                    next_segments.append(
+                        DiarizationSegment(segment.speaker_id, end_s, segment.end_s, segment.confidence)
+                    )
+            updated = next_segments
+        return sorted(updated, key=lambda item: (item.start_s, item.end_s, item.speaker_id))
+
+    @staticmethod
+    def _profile_clip_ranges_for_mapping(
+        mapping: SpeakerMappingItem,
+        snippets,
+        snippet_actions: list[SpeakerSnippetAction],
+        segments_by_speaker: dict[str, list[tuple[float, float]]],
+    ) -> list[tuple[float, float]]:
+        """! @brief Select reviewed clip ranges for saving a voice profile.
+        @return Clip ranges.
+        """
+        excluded = {
+            action.snippet_id
+            for action in snippet_actions
+            if action.action in {"exclude", "split"}
+            and action.source_speaker_id in (mapping.speaker_ids or [mapping.speaker_id])
+        }
+        explicit = set(mapping.assigned_snippet_ids)
+        source_speaker_ids = set(mapping.speaker_ids or [mapping.speaker_id])
+        ranges: list[tuple[float, float]] = []
+        for snippet in snippets:
+            snippet_id = Path(str(snippet.path)).stem
+            if snippet_id in excluded:
+                continue
+            if explicit and snippet_id not in explicit:
+                continue
+            if snippet.speaker_id in source_speaker_ids or snippet_id in explicit:
+                ranges.append((float(snippet.start_s), float(snippet.end_s)))
+            if len(ranges) >= 2:
+                break
+        if ranges:
+            return ranges
+        fallback_ranges: list[tuple[float, float]] = []
+        for speaker_id in source_speaker_ids:
+            fallback_ranges.extend(segments_by_speaker.get(speaker_id, []))
+        return PipelineOrchestrator._select_profile_segments(fallback_ranges, max_segments=2)
+
+    @staticmethod
+    def _transcript_for_formatter(
+        transcript_segments: list[dict[str, object]],
+        excluded_speaker_ids: set[str],
+    ) -> list[dict[str, object]]:
+        """! @brief Prepare transcript segments for formatter prompts.
+        @return Transcript with unnamed speakers de-identified.
+        """
+        prepared: list[dict[str, object]] = []
+        for segment in transcript_segments:
+            item = segment.copy()
+            if str(item.get("speaker_id") or "") in excluded_speaker_ids:
+                item["speaker_name"] = "Unattributed speaker"
+                item["exclude_from_mom"] = True
+            prepared.append(item)
+        return prepared
+
+    @staticmethod
+    def _named_speakers_for_formatter(transcript_segments: list[dict[str, object]]) -> list[str]:
+        """! @brief Return named speakers eligible for MoM participants.
+        @return Sorted speaker list.
+        """
+        speakers: set[str] = set()
+        for segment in transcript_segments:
+            if segment.get("exclude_from_mom"):
+                continue
+            speaker = str(segment.get("speaker_name") or "").strip()
+            if not speaker or speaker.startswith("SPEAKER_") or speaker == "Unattributed speaker":
+                continue
+            speakers.add(speaker)
+        return sorted(speakers)
+
+    @staticmethod
+    def _group_snippets_by_speaker(snippets) -> dict[str, list[SpeakerSnippet]]:
+        """! @brief Group extracted snippets by diarized speaker.
+        @param snippets Extracted snippet records.
+        @return Snippets keyed by speaker id.
+        """
+        snippet_by_speaker: dict[str, list[SpeakerSnippet]] = {}
+        for snippet in snippets:
+            snippet_id = Path(str(snippet.path)).stem
+            snippet_by_speaker.setdefault(snippet.speaker_id, []).append(
+                SpeakerSnippet(
+                    speaker_id=snippet.speaker_id,
+                    snippet_path=str(snippet.path),
+                    start_s=snippet.start_s,
+                    end_s=snippet.end_s,
+                    snippet_id=snippet_id,
+                )
+            )
+        return snippet_by_speaker
+
+    def _match_speaker_from_evidence(
+        self,
+        *,
+        job_id: str,
+        speaker_id: str,
+        normalized_audio_path: Path,
+        speaker_segments: list[tuple[float, float]],
+        speaker_snippets: list[SpeakerSnippet],
+        diarization_model_id: str,
+        embedding_model_ref: str,
+        profiles,
+    ) -> tuple[str | None, SpeakerProfileMatch | None]:
+        """! @brief Match one diarized speaker against saved profiles using clip-level evidence.
+        @return Suggested name and match metadata.
+        """
+        candidates: list[tuple[float, float, str]] = [
+            (snippet.start_s, snippet.end_s, snippet.snippet_id or Path(snippet.snippet_path).stem)
+            for snippet in speaker_snippets
+        ]
+        for start_s, end_s in self._select_profile_segments(speaker_segments):
+            if any(abs(start_s - existing[0]) < 0.05 and abs(end_s - existing[1]) < 0.05 for existing in candidates):
+                continue
+            candidates.append((start_s, end_s, f"{speaker_id}:{start_s:.2f}-{end_s:.2f}"))
+
+        best_clear: tuple[float, object, str] | None = None
+        best_ambiguous: tuple[float, object, str] | None = None
+        for start_s, end_s, evidence_id in candidates:
+            embedding = VOICE_PROFILE_MANAGER.compute_embedding(
+                normalized_audio_path,
+                diarization_model_id=diarization_model_id,
+                embedding_model_ref=embedding_model_ref,
+                compute_device=SETTINGS.compute_device,
+                cuda_device_id=SETTINGS.cuda_device_id,
+                segments=[(start_s, end_s)],
+            )
+            match = VOICE_PROFILE_MANAGER.match(
+                embedding,
+                diarization_model_id=diarization_model_id,
+                embedding_model_ref=embedding_model_ref,
+                profiles=profiles,
+            )
+            if not match.best_match:
+                ranked = VOICE_PROFILE_MANAGER.rank_matches(
+                    embedding,
+                    diarization_model_id=diarization_model_id,
+                    embedding_model_ref=embedding_model_ref,
+                    profiles=profiles,
+                )
+                if not ranked:
+                    continue
+                runner_up = ranked[1].score if len(ranked) > 1 else -1.0
+                if (
+                    ranked[0].score < PROFILE_EVIDENCE_FALLBACK_THRESHOLD
+                    or (ranked[0].score - runner_up) < PROFILE_EVIDENCE_FALLBACK_MARGIN
+                ):
+                    continue
+                match = type(
+                    "EvidenceMatch",
+                    (),
+                    {
+                        "best_match": ranked[0],
+                        "ambiguous_matches": [],
+                    },
+                )()
+            score = float(match.best_match.score)
+            if match.ambiguous_matches:
+                if best_ambiguous is None or score > best_ambiguous[0]:
+                    best_ambiguous = (score, match, evidence_id)
+            elif best_clear is None or score > best_clear[0]:
+                best_clear = (score, match, evidence_id)
+
+        if best_clear is not None:
+            _, match, evidence_id = best_clear
+            best = match.best_match
+            JOB_STORE.append_log(
+                job_id,
+                f"Auto-identified {speaker_id} as {best.name} (score={best.score:.2f}, evidence={evidence_id})",
+            )
+            return (
+                best.name,
+                SpeakerProfileMatch(
+                    profile_id=best.profile_id,
+                    sample_id=getattr(best, "sample_id", None),
+                    name=best.name,
+                    score=best.score,
+                    model_key=getattr(best, "model_key", None),
+                    status="matched",
+                ),
+            )
+
+        if best_ambiguous is not None:
+            _, match, evidence_id = best_ambiguous
+            best = match.best_match
+            JOB_STORE.append_log(
+                job_id,
+                (
+                    f"Profile candidates for {speaker_id}: "
+                    f"{best.name} ({best.score:.2f}, evidence={evidence_id}), "
+                    + ", ".join(f"{item.name} ({item.score:.2f})" for item in match.ambiguous_matches)
+                ),
+            )
+            return (
+                None,
+                SpeakerProfileMatch(
+                    profile_id=best.profile_id,
+                    sample_id=getattr(best, "sample_id", None),
+                    name=best.name,
+                    score=best.score,
+                    model_key=getattr(best, "model_key", None),
+                    status="ambiguous",
+                    ambiguous_names=[item.name for item in match.ambiguous_matches],
+                ),
+            )
+
+        return None, None
+
+    @staticmethod
+    def _group_duplicate_profile_matches(job_id: str, speakers: list[SpeakerState]) -> list[SpeakerState]:
+        """! @brief Collapse multiple diarized speakers that matched the same saved profile into one review group.
+        @param job_id Identifier of the job being processed.
+        @param speakers Speaker states to group.
+        @return Grouped speaker states.
+        """
+        matched_groups: dict[str, list[SpeakerState]] = {}
+        ungrouped: list[SpeakerState] = []
+        for speaker in speakers:
+            if speaker.matched_profile is not None and speaker.matched_profile.status == "matched":
+                matched_groups.setdefault(speaker.matched_profile.profile_id, []).append(speaker)
+            else:
+                ungrouped.append(speaker)
+
+        grouped: list[SpeakerState] = []
+        for profile_id, items in matched_groups.items():
+            if len(items) == 1:
+                grouped.append(items[0])
+                continue
+            speaker_ids = [speaker.speaker_id for speaker in items]
+            snippets = sorted(
+                [snippet for speaker in items for snippet in speaker.snippets],
+                key=lambda item: (item.start_s, item.end_s, item.speaker_id),
+            )
+            best = max(
+                (speaker.matched_profile for speaker in items if speaker.matched_profile is not None),
+                key=lambda item: item.score,
+            )
+            grouped.append(
+                SpeakerState(
+                    speaker_id=speaker_ids[0],
+                    speaker_ids=speaker_ids,
+                    review_group_id=f"profile:{profile_id}",
+                    suggested_name=best.name,
+                    matched_profile=best,
+                    snippets=snippets,
+                )
+            )
+            JOB_STORE.append_log(
+                job_id,
+                f"Grouped diarized speakers {', '.join(speaker_ids)} as {best.name} for review",
+            )
+
+        return sorted([*grouped, *ungrouped], key=lambda item: item.speaker_id)
 
     @staticmethod
     def _group_segments_by_speaker(segments: list[DiarizationSegment]) -> dict[str, list[tuple[float, float]]]:
