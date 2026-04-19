@@ -1277,10 +1277,10 @@ function renderSpeakerForm(jobState) {
 
     const input = document.createElement("input");
     input.type = "text";
-    input.value =
-      existingNames.get(speaker.speaker_id) ||
-      speaker.suggested_name ||
-      speaker.speaker_id;
+    const existingName = existingNames.get(speaker.speaker_id);
+    input.value = existingName && existingName !== speaker.speaker_id
+      ? existingName
+      : speaker.suggested_name || existingName || speaker.speaker_id;
     input.dataset.speakerId = speaker.speaker_id;
     input.className = "speaker-name";
 
