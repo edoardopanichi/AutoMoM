@@ -1137,6 +1137,7 @@ textarea {
 .speaker-snippets {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  align-items: start;
   gap: 0.6rem;
   margin-top: 0.8rem;
 }
@@ -1147,6 +1148,7 @@ textarea {
 
 .speaker-snippet-row {
   display: grid;
+  align-self: start;
   gap: 0.55rem;
   border: 1px solid rgba(21, 28, 35, 0.12);
   border-radius: 8px;
@@ -1161,15 +1163,97 @@ textarea {
 .speaker-snippet-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.45rem 0.75rem;
+  align-items: flex-start;
+  align-self: start;
+  gap: 0.35rem;
   font-size: 0.84rem;
   font-weight: 650;
 }
 
-.speaker-snippet-actions label {
+.speaker-snippet-action-pill {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 0.38rem;
+  min-width: 4.2rem;
+  min-height: 2rem;
+  border: 1px solid rgba(21, 28, 35, 0.16);
+  border-radius: 8px;
+  padding: 0.3rem 0.62rem;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
+}
+
+.speaker-snippet-action-pill:hover {
+  transform: translateY(-1px);
+  border-color: rgba(21, 28, 35, 0.26);
+  color: var(--ink);
+}
+
+.speaker-snippet-action-pill:has(input:checked) {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+}
+
+.speaker-snippet-action-pill input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.speaker-snippet-info {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  background: rgba(21, 28, 35, 0.12);
+  color: currentColor;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.speaker-snippet-action-pill:has(input:checked) .speaker-snippet-info {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.speaker-snippet-action-help {
+  display: none;
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 0.45rem);
+  z-index: 3;
+  width: max-content;
+  max-width: min(16rem, 78vw);
+  transform: translate(-50%, 0.25rem);
+  border: 1px solid rgba(21, 28, 35, 0.14);
+  border-radius: 8px;
+  padding: 0.45rem 0.55rem;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 14px 32px rgba(21, 28, 35, 0.14);
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.35;
+  pointer-events: none;
+}
+
+.speaker-snippet-info:hover .speaker-snippet-action-help,
+.speaker-snippet-info:focus .speaker-snippet-action-help {
+  display: block;
+  transform: translate(-50%, 0);
 }
 
 .speaker-split-name {

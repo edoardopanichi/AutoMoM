@@ -1328,18 +1328,32 @@ function renderSpeakerForm(jobState) {
       const actions = document.createElement("div");
       actions.className = "speaker-snippet-actions";
       [
-        ["keep", "Belongs here"],
-        ["split", "Move to new speaker"],
-        ["exclude", "Unclear clip"],
-      ].forEach(([value, label]) => {
+        ["keep", "Keep", "Use this clip as evidence for this speaker."],
+        ["split", "Move", "This clip belongs to another speaker; create a separate name field."],
+        ["exclude", "Skip", "This clip is too unclear to use for naming or profile saving."],
+      ].forEach(([value, label, help]) => {
         const option = document.createElement("label");
+        option.className = "speaker-snippet-action-pill";
+        option.setAttribute("aria-label", label);
         const radio = document.createElement("input");
         radio.type = "radio";
         radio.name = `snippet-action-${snippetId}`;
         radio.value = value;
         radio.checked = value === "keep";
         radio.className = "speaker-snippet-action";
-        option.append(radio, label);
+        const text = document.createElement("span");
+        text.textContent = label;
+        const info = document.createElement("span");
+        info.className = "speaker-snippet-info";
+        info.tabIndex = 0;
+        info.setAttribute("role", "button");
+        info.setAttribute("aria-label", help);
+        info.textContent = "i";
+        const hint = document.createElement("span");
+        hint.className = "speaker-snippet-action-help";
+        hint.textContent = help;
+        info.appendChild(hint);
+        option.append(radio, text, info);
         actions.appendChild(option);
       });
 
