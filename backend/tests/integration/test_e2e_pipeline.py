@@ -203,8 +203,9 @@ def test_end_to_end_job_with_golden_outputs(isolated_settings, monkeypatch, tmp_
 
     assert mom_path.read_text(encoding="utf-8").rstrip() == raw_formatter_output.rstrip()
     assert full_transcript_path.name == "full_meeting_transcript.md"
-    assert full_transcript_path.read_text(encoding="utf-8") == formatter_user_prompt_path.read_text(encoding="utf-8")
-    assert "Alice: We decided to prioritize customer onboarding." in full_transcript_path.read_text(encoding="utf-8")
+    assert full_transcript_path.read_text(encoding="utf-8") != formatter_user_prompt_path.read_text(encoding="utf-8")
+    assert "**Alice**: We decided to prioritize customer onboarding." in full_transcript_path.read_text(encoding="utf-8")
+    assert "Transcript:" in formatter_user_prompt_path.read_text(encoding="utf-8")
     runtime_payload = json.loads(runtime_path.read_text(encoding="utf-8"))
     summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
     assert runtime_payload["thread_count"] == 2

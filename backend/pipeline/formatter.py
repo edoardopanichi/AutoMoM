@@ -35,6 +35,7 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 CHUNK_SUMMARY_HEADINGS = [
     "### Chunk Summary",
+    "### Key Takeaways and Conclusion Candidates",
     "### Formal Decisions and Outcomes",
     "### Adopted Actions, Conditions, and TODOs",
     "### Speaker Requests or Concerns Not Adopted",
@@ -656,6 +657,8 @@ def _chunk_summary_system_prompt() -> str:
         f"{headings}\n\n"
         "General rules:\n"
         "- Preserve facts that may belong in any final MoM template section.\n"
+        "- Capture concrete technical takeaways, demonstrated methods, lessons learned, and final states under "
+        "Key Takeaways and Conclusion Candidates even when they are not formal decisions.\n"
         "- Separate formal decisions from discussion, requests, objections, and tentative ideas.\n"
         "- A speaker asking, urging, recommending, objecting, or requesting something is not an adopted action.\n"
         "- Treat an action, condition, or TODO as adopted only when supported by a motion, vote, chair ruling, "
@@ -747,7 +750,8 @@ def _build_long_input_final_prompt(*, title: str, speakers: list[str], combined_
         "Use the summaries to write the final Minutes of Meeting for the selected template.\n"
         "Important synthesis rules:\n"
         "- Generate all required template sections in one coherent document.\n"
-        "- Use adopted-action evidence for TODOs and conclusions.\n"
+        "- Use adopted-action evidence for TODOs.\n"
+        "- Use key takeaways, demonstrated methods, resolved final states, and highly supported inferences for conclusions.\n"
         "- Treat speaker requests, objections, and concerns as context, risks, or open points unless later adopted.\n"
         "- If a later formal decision resolves an earlier tentative item, report the final decision and avoid stale pending language.\n"
         "- Do not invent template sections or commentary outside the requested document.\n"

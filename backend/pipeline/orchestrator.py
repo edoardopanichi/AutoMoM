@@ -631,7 +631,14 @@ class PipelineOrchestrator:
             write_json(job_dir / "mom_structured.json", formatter_result.structured)
             (job_dir / "formatter_system_prompt.txt").write_text(formatter_result.system_prompt, encoding="utf-8")
             (job_dir / "formatter_user_prompt.txt").write_text(formatter_result.user_prompt, encoding="utf-8")
-            (job_dir / "full_meeting_transcript.md").write_text(formatter_result.user_prompt, encoding="utf-8")
+            (job_dir / "full_meeting_transcript.md").write_text(
+                self._render_full_meeting_transcript(
+                    title=title,
+                    speakers=speakers,
+                    transcript_segments=transcript_segments,
+                ),
+                encoding="utf-8",
+            )
             write_json(job_dir / "formatter_validation.json", formatter_result.validation)
             JOB_STORE.set_artifact(job_id, "formatter_system_prompt", job_dir / "formatter_system_prompt.txt")
             JOB_STORE.set_artifact(job_id, "formatter_user_prompt", job_dir / "formatter_user_prompt.txt")
@@ -963,6 +970,49 @@ class PipelineOrchestrator:
                 compute_type=model_record.config.get("compute_type", "auto"),
             )
         raise TranscriptionError(f"Unsupported local transcription runtime: {model_record.runtime}")
+
+    @staticmethod
+    def _render_full_meeting_transcript(
+        *,
+        title: str,
+        speakers: list[str],
+        transcript_segments: list[dict[str, object]],
+    ) -> str:
+        """! @brief Render the downloadable full meeting transcript artifact."""
+        lines = [
+            f"# {title}",
+            "",
+            "## Participants",
+            ", ".join(speakers) if speakers else "None",
+            "",
+            "## Transcript",
+        ]
+        for segment in transcript_segments:
+            speaker = str(segment.get("speaker_name") or segment.get("speaker_id") or "Speaker")
+            text = str(segment.get("text") or "").strip()
+            if not text:
+                continue
+            start_s = PipelineOrchestrator._safe_seconds(segment.get("start_s"))
+            end_s = PipelineOrchestrator._safe_seconds(segment.get("end_s"))
+            timestamp = f"[{PipelineOrchestrator._format_timestamp(start_s)}-{PipelineOrchestrator._format_timestamp(end_s)}]"
+            lines.append(f"- {timestamp} **{speaker}**: {text}")
+        return "\n".join(lines).rstrip() + "\n"
+
+    @staticmethod
+    def _safe_seconds(value: object) -> float:
+        """! @brief Convert a timestamp-like value to seconds."""
+        try:
+            return max(0.0, float(value))
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def _format_timestamp(seconds: float) -> str:
+        """! @brief Format seconds as an HH:MM:SS transcript timestamp."""
+        total_seconds = int(round(max(0.0, seconds)))
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, secs = divmod(remainder, 60)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
     def _diarize_with_openai(
         self,
