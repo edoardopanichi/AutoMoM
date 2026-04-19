@@ -497,6 +497,7 @@ class Formatter:
             title=title,
             speakers=speakers,
             combined_summary=accumulated_summary,
+            include_synthesis_rules=len(chunks) > 1,
         )
         return LongInputSummary(final_prompt=final_prompt, summaries=summary_rows)
 
@@ -735,19 +736,30 @@ def _tail_by_estimated_tokens(text: str, token_limit: int) -> str:
     return "[Earlier summary omitted for context budget]\n\n" + text[-char_limit:]
 
 
-def _build_long_input_final_prompt(*, title: str, speakers: list[str], combined_summary: str) -> str:
+def _build_long_input_final_prompt(
+    *,
+    title: str,
+    speakers: list[str],
+    combined_summary: str,
+    include_synthesis_rules: bool,
+) -> str:
     """! @brief Build final formatter prompt from rolling chunk summaries.
     @param title Meeting title.
     @param speakers Speaker names available for the meeting.
     @param combined_summary Rolling chunk summaries.
     @return Final formatter prompt.
     """
-    return (
+    prompt = (
         f"Title: {title}\n"
         f"Speakers: {', '.join(speakers) if speakers else 'None'}\n\n"
         "Structured rolling chunk summaries:\n"
         f"{combined_summary}\n\n"
         "Use the summaries to write the final Minutes of Meeting for the selected template.\n"
+    )
+    if not include_synthesis_rules:
+        return prompt
+    return (
+        prompt +
         "Important synthesis rules:\n"
         "- Generate all required template sections in one coherent document.\n"
         "- Use adopted-action evidence for TODOs.\n"

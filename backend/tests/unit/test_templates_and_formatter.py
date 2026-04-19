@@ -132,6 +132,8 @@ def test_formatter_long_input_uses_rolling_chunk_summaries(isolated_settings, mo
             summary = (
                 "### Chunk Summary\n"
                 "- Discussion captured.\n"
+                "### Key Takeaways and Conclusion Candidates\n"
+                "- The proposal reached a stable final state.\n"
                 "### Formal Decisions and Outcomes\n"
                 "- Motion passed.\n"
                 "### Adopted Actions, Conditions, and TODOs\n"
@@ -175,6 +177,78 @@ def test_formatter_long_input_uses_rolling_chunk_summaries(isolated_settings, mo
     assert "overview" not in result.reduced_notes[0]
     assert "Previous accumulated summary from earlier chunks:" in formatter.prompts[1]
     assert "Structured rolling chunk summaries:" in result.user_prompt
+    assert "Important synthesis rules:" in result.user_prompt
+
+
+def test_formatter_single_chunk_long_input_omits_multi_chunk_synthesis_rules(
+    isolated_settings,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """! @brief Test single reduced chunks do not get multi-chunk synthesis rules."""
+    TEMPLATE_MANAGER.save(TemplateManager().load("default"))
+    monkeypatch.setattr(formatter_module, "FORMATTER_LONG_INPUT_TOKEN_LIMIT", 20)
+    monkeypatch.setattr(formatter_module, "FORMATTER_CHUNK_DURATION_S", 60 * 60)
+
+    class FakeFormatter(Formatter):
+        def __init__(self) -> None:
+            super().__init__(ollama_model="fake-model")
+
+        def run_model(self, prompt: str, *, system_prompt: str = "") -> dict[str, object] | None:
+            if "Structured rolling chunk summaries:" in prompt:
+                markdown = (
+                    "### Title: Long Single Chunk\n"
+                    "#### Participants:\nAlice\n"
+                    "#### Concise Overview:\nA single reduced chunk was rendered.\n"
+                    "#### TODO's:\nNone\n"
+                    "#### CONCLUSIONS:\n- The workflow was demonstrated.\n"
+                    "#### DECISION/OPEN POINTS:\nNone\n"
+                    "#### RISKS:\nNone\n"
+                )
+                self.last_mode = "model_markdown"
+                self.last_raw_output = markdown
+                return {"_raw_markdown_text": markdown}
+            summary = (
+                "### Chunk Summary\n"
+                "- A long single chunk was summarized.\n"
+                "### Key Takeaways and Conclusion Candidates\n"
+                "- The workflow was demonstrated.\n"
+                "### Formal Decisions and Outcomes\n"
+                "None\n"
+                "### Adopted Actions, Conditions, and TODOs\n"
+                "None\n"
+                "### Speaker Requests or Concerns Not Adopted\n"
+                "None\n"
+                "### Open or Pending Items\n"
+                "None\n"
+                "### Risks and Concerns\n"
+                "None\n"
+                "### Superseded or Tentative States\n"
+                "None\n"
+            )
+            self.last_mode = "model_markdown"
+            self.last_raw_output = summary
+            return {"_raw_markdown_text": summary}
+
+    formatter = FakeFormatter()
+    result = formatter.write_model_output_to_mom(
+        transcript=[
+            {
+                "speaker_name": "Alice",
+                "start_s": 0.0,
+                "end_s": 20.0,
+                "text": "We demonstrated the complete workflow. " * 20,
+            }
+        ],
+        speakers=["Alice"],
+        title="Long Single Chunk",
+        template_id="default",
+        output_path=tmp_path / "mom.md",
+    )
+
+    assert result.validation["long_input_chunk_count"] == 1
+    assert "Structured rolling chunk summaries:" in result.user_prompt
+    assert "Important synthesis rules:" not in result.user_prompt
 
 
 def test_formatter_uses_ollama_response(monkeypatch) -> None:
