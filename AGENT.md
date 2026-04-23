@@ -1,173 +1,117 @@
-# AGENT.md
+# AGENT.md - AutoMoM
 
-## Purpose
+## Project Snapshot
 
-AutoMoM is a local-first meeting-audio pipeline that produces English Minutes of Meeting (MoM) in Markdown. It is a FastAPI backend with a static frontend, a multi-stage orchestration pipeline, optional OpenAI execution for selected stages, and persistent runtime artifacts under `data/`.
+AutoMoM is a local-first FastAPI app with a static browser UI that turns meeting audio into English Minutes of Meeting (MoM). Diarization, transcription, and formatting can run locally or through OpenAI independently per job.
 
-## Runtime Architecture
+Use this file for operational guidance. Use `README.md` only when you need the complete API/config/artifact inventory, and use `auto_MoM_specification.md` only when changing product behavior or checking original intent.
 
-- FastAPI entrypoint: `backend/app/main.py`
-- Configuration and required model specs: `backend/app/config.py`
-- Runtime schema contract: `backend/app/schemas.py`
-- In-memory job state plus on-disk persistence: `backend/app/job_store.py`
-- Pipeline orchestration: `backend/pipeline/orchestrator.py`
-- Stage modules:
-  - `backend/pipeline/audio.py`
-  - `backend/pipeline/vad.py`
-  - `backend/pipeline/diarization.py`
-  - `backend/pipeline/snippets.py`
-  - `backend/pipeline/transcription.py`
-  - `backend/pipeline/formatter.py`
-- Support modules:
-  - `backend/pipeline/compute.py`
-  - `backend/pipeline/openai_client.py`
-  - `backend/pipeline/subprocess_utils.py`
-  - `backend/pipeline/template_manager.py`
-  - `backend/pipeline/diarization_worker.py`
-- Model/runtime management:
-  - `backend/models/manager.py`
-  - `backend/models/diarization_registry.py`
-- Voice profile management:
-  - `backend/profiles/manager.py`
+## Common Commands
 
-## Verified Job Flow
+- Start app: `./scripts/run_automom.sh` or `make dev`
+- Run all tests: `pytest backend/tests -q` or `make test`
+- Run one test file: `pytest backend/tests/unit/test_orchestrator.py -q`
+- Run one test by name: `pytest backend/tests -q -k "name_fragment"`
+- Install dev tooling: `pip install -r requirements.txt -r requirements-dev.txt`
 
-The orchestrator currently runs these nine stages:
+## Repo Map
 
-1. Validate/Normalize
-2. VAD
-3. Diarization
-4. Snippet extraction
-5. Speaker naming
-6. Transcription
-7. Transcript assembly
-8. MoM formatting
-9. Export
+- `backend/app/main.py` - FastAPI routes, validation, static frontend mount
+- `backend/app/config.py` - environment settings and built-in model specs
+- `backend/app/job_store.py` - in-memory job runtime plus persisted job state
+- `backend/app/schemas.py` - API and persisted payload schemas
+- `backend/pipeline/orchestrator.py` - nine-stage job flow and artifact writes
+- `backend/pipeline/` - audio, VAD, diarization, snippets, transcription, formatter helpers
+- `backend/models/local_catalog.py` - user-registered local model catalog and defaults
+- `backend/profiles/manager.py` - voice profiles, embeddings, matching, refresh tasks
+- `backend/app/static/` - single-page frontend
+- `backend/tests/` - unit and integration coverage
+- `data/templates/` - checked-in template examples; other `data/` subdirs are runtime state
 
-Important execution behavior:
+## Task Workflow
 
-- The pipeline is local-first.
-- Diarization, transcription, and formatter execution can each be `local` or `api` on a per-job basis.
-- Local diarization currently exposes one registry entry in the API: `pyannote-community-1`.
-- `AUTOMOM_DIARIZATION_BACKEND=auto` resolves to the pyannote path, not to a best-effort fallback chain.
-- Long local pyannote diarization is chunked above 20 minutes, with overlap and speaker stitching by embeddings.
-- OpenAI diarization can short-circuit later cloud transcription by reusing the diarized transcript segments directly.
-- Local transcription uses whisper.cpp-style binaries and contains GPU probing plus CPU fallback logic.
-- Formatter supports three effective modes:
-  - OpenAI Responses API
-  - Ollama `/api/generate`
-  - legacy command backend
+1. Identify the owning module from the map above and read the smallest relevant files first.
+2. If changing job behavior, trace `backend/pipeline/orchestrator.py` from the affected stage to the artifact/API/frontend consumer.
+3. If changing request or response shape, update `backend/app/schemas.py`, route logic, frontend assumptions, and tests in the same change.
+4. If changing artifacts, update artifact writes, download/preview endpoints, frontend links, and `README.md`.
+5. Add or update focused tests near the changed behavior. Prefer unit tests unless the change crosses API, pipeline, and artifact boundaries.
+6. Run the narrowest useful pytest command, then run `pytest backend/tests -q` for cross-cutting pipeline/API changes.
 
-## Artifact Contract
+## Decision Tables
 
-Per-job artifacts are written under `data/jobs/<job_id>/`. The backend and frontend both rely on artifact keys remaining stable.
+### Where to make a change
 
-Common artifact keys:
+| Change needed | Start here | Also check |
+| --- | --- | --- |
+| Job stage order, progress, cancellation, artifacts | `backend/pipeline/orchestrator.py` | `backend/tests/unit/test_orchestrator.py`, integration tests |
+| API validation or endpoint payload | `backend/app/main.py`, `backend/app/schemas.py` | `backend/app/static/js/app.js` |
+| Local model registration/defaults/discovery | `backend/models/local_catalog.py` | model routes, settings UI |
+| Built-in required model specs or env defaults | `backend/app/config.py` | model manager tests, README config |
+| Speaker profile matching or refresh | `backend/profiles/manager.py` | snippets, diarization model ids |
+| Formatter output quality or validation | `backend/pipeline/formatter.py` | template manager, formatter artifacts |
+| Browser workflow or visual state | `backend/app/static/js/app.js` | matching API route payloads |
 
-- `audio_normalized`
-- `vad_regions`
-- `diarization`
-- `diarization_chunks`
-- `diarization_stitching`
-- `snippets`
-- `speaker_mapping`
-- `segments_transcript`
-- `transcript`
-- `transcription_runtime`
-- `mom_markdown`
-- `mom_structured`
-- `formatter_system_prompt`
-- `formatter_user_prompt`
-- `formatter_stdout`
-- `formatter_stderr`
-- `formatter_raw_output`
-- `formatter_validation`
-- `formatter_reduced_notes`
-- `export_markdown`
-- `job_summary`
+### Local vs API execution
 
-If you rename, remove, or stop writing an artifact, update both the API behavior and the frontend assumptions.
+| Situation | Do this |
+| --- | --- |
+| A stage runs locally | Require and resolve only that stage's local model selection. |
+| Any stage uses OpenAI | Require an OpenAI API key and create `OpenAIJobConfig`. |
+| OpenAI diarization returns text segments | Reuse those segments; do not upload the same audio again for cloud transcription unless behavior intentionally changes. |
+| Local diarization/profile code needs embeddings | Key profile data by local diarization model id plus embedding model ref. |
+| Formatter has an OpenAI API key | Use the Responses API path before local Ollama/command fallback. |
 
-## API Surface
+## Stable Contracts
 
-Main endpoint groups in `backend/app/main.py`:
+- The orchestrator has nine user-visible stages: Validate/Normalize, VAD, Diarization, Snippet extraction, Speaker naming, Transcription, Transcript assembly, MoM formatting, Export.
+- Keep stage names, progress semantics, and cancellation checks stable unless the UI and tests are updated together.
+- Per-job files live under `data/jobs/<job_id>/`. Do not commit generated jobs, uploads, local models, profiles, or `.env` files.
+- Artifact keys are API/UI contracts. Before renaming or removing one, search for `set_artifact`, `artifact_paths`, and frontend URL builders.
+- Common artifact keys include `audio_normalized`, `vad_regions`, `diarization`, `diarization_chunks`, `diarization_stitching`, `snippets`, `speaker_mapping`, `segments_transcript`, `transcript`, `transcription_runtime`, `full_meeting_transcript`, `mom_markdown`, `mom_structured`, `formatter_system_prompt`, `formatter_user_prompt`, `formatter_stdout`, `formatter_stderr`, `formatter_raw_output`, `formatter_validation`, `formatter_reduced_notes`, `openai_audio_chunks`, `export_markdown`, and `job_summary`.
+- The frontend expects tabs named `new-job`, `progress`, `result`, and `settings`, plus SSE events from `/api/jobs/{job_id}/events`.
 
-- Root and health
-- System startup readiness
-- Model status, download flow, and formatter model selection
-- Local diarization model listing
-- Template CRUD
-- Voice profile CRUD and refresh tasks
-- Job creation, list, detail, cancel, speaker mapping
-- SSE job events
-- Artifact, snippet, and MoM download/preview endpoints
+## Code Patterns
 
-Security-sensitive behavior to preserve:
+Use Doxygen-style docstrings for Python functions and methods:
 
-- snippet download sanitizes file names against traversal
-- OpenAI API key is required only when at least one stage uses API execution
-- job creation validates the template and only requires local models for stages that actually run locally
+```python
+def set_artifact(self, job_id: str, key: str, path: Path) -> None:
+    """! @brief Set artifact.
+    @param job_id Identifier of the job being processed.
+    @param key Artifact key exposed through job state.
+    @param path Filesystem path for the artifact.
+    """
+```
 
-## Frontend Contract
+Resolve per-stage execution before creating a job:
 
-Static frontend lives in `backend/app/static`:
+```python
+required_local_selections = {
+    stage: model_id
+    for stage, model_id in selected_local_models.items()
+    if execution_values[f"{stage}_execution"] == "local"
+}
+```
 
-- `backend/app/static/index.html`
-- `backend/app/static/css/styles.css`
-- `backend/app/static/js/app.js`
+Write artifacts through the job store so API state, SSE updates, and download endpoints can see them:
 
-Frontend expectations that matter when changing backend behavior:
+```python
+write_json(job_dir / "transcript.json", transcript_payload)
+JOB_STORE.set_artifact(job_id, "transcript", job_dir / "transcript.json")
+```
 
-- tabs are `new-job`, `progress`, `result`, `settings`
-- SSE payloads come from `/api/jobs/{job_id}/events`
-- speaker snippet playback uses `/api/jobs/{job_id}/snippets/{snippet_name}`
-- settings panels expect model/template/profile collections
-- form submission depends on stage execution selectors, local model selectors, and optional OpenAI API key visibility
+## Gotchas
 
-## Voice Profiles
+- Do not add warning-only rules. When documenting a prohibition, include the replacement pattern.
+- Do not instantiate new ad hoc local model stores. Use `LOCAL_MODEL_CATALOG` for user-registered model runtimes and defaults.
+- Do not bypass `JOB_STORE` when a generated file should appear in job state. Write the file, then call `JOB_STORE.set_artifact`.
+- Do not require OpenAI credentials for fully local jobs. Require them only when at least one execution selector is `api`.
+- Do not treat README endpoint/config lists as automatically current. If code changes them, update the README in the same change.
+- Keep inline comments for fragile logic such as diarization chunk stitching, GPU fallback, formatter retry/validation, and long-input reduction; skip comments that restate obvious code.
 
-- Profiles are stored as JSON manifests plus sample audio under `data/profiles/`
-- Matching is local-only and keyed by diarization model id plus embedding model ref
-- Refresh tasks only generate missing local embedding entries for saved samples
-- OpenAI diarization does not currently create reusable local embedding vectors
+## Documentation Rules
 
-## Model Management
-
-- Non-formatter local models are represented by `ModelSpec`
-- Download URLs and checksums are optional and come from environment variables
-- Formatter installation state is checked through Ollama tags, not a local file
-- Formatter model selection is persisted in `data/models/formatter/selected_model.txt`
-- Full local diarization/profile functionality requires the Python runtime to include `torch` and `pyannote.audio`
-
-## Tests And Scripts
-
-- Test root: `backend/tests/`
-- Unit and integration tests currently pass with `pytest backend/tests -q`
-- Benchmark and validation scripts live in `scripts/`
-- `scripts/benchmark_local_transcription.py` exercises both end-to-end jobs and isolated stage-6 benchmarking
-- `scripts/run_long_audio_test.py` is a long-audio validation helper with automatic speaker submission
-
-## Documentation And Comment Policy
-
-This repository now follows these rules:
-
-- Every Python function and method must have a Doxygen-style docstring.
-- Every JavaScript function in the frontend must have a JSDoc/Doxygen-style comment.
-- Complex, fragile, or high-impact logic must also have inline comments explaining why it works the way it does.
-- Update `README.md` and `AGENT.md` whenever behavior, artifacts, public endpoints, scripts, or configuration materially change.
-- Do not leave speculative documentation in place. If code and docs disagree, fix the docs in the same change.
-
-## Change Guidance
-
-When editing complex areas, be conservative:
-
-- `backend/pipeline/orchestrator.py`
-  - preserve stage names, progress semantics, and artifact writes unless intentionally changing the contract
-- `backend/pipeline/diarization.py`
-  - preserve chunk ownership, overlap, and stitching behavior unless tests and docs are updated together
-- `backend/pipeline/transcription.py`
-  - preserve runtime reporting, binary probing, and GPU fallback semantics
-- `backend/pipeline/formatter.py`
-  - preserve validation, retry, and reduced-notes behavior unless the template contract changes intentionally
-- `backend/app/main.py`
-  - preserve endpoint payload shapes unless the frontend and docs are updated in the same change
+- Python functions and methods must keep Doxygen-style docstrings.
+- Frontend JavaScript functions must keep JSDoc/Doxygen-style comments.
+- Update `README.md` and this file when behavior, artifacts, public endpoints, scripts, or configuration materially change.
+- Keep this file concise. Move expanding detail to a focused reference file and link it here only when agents need to load it on demand.
