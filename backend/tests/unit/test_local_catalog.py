@@ -47,6 +47,7 @@ def test_register_ollama_model_updates_default(isolated_settings, monkeypatch) -
     record = catalog.register(
         LocalModelRegistrationRequest(
             stage="formatter",
+            location="local",
             runtime="ollama",
             name="Phi-4 Mini",
             config={"tag": "phi4-mini"},
@@ -72,6 +73,7 @@ def test_register_whisper_cpp_requires_existing_paths(isolated_settings, tmp_pat
         catalog.register(
             LocalModelRegistrationRequest(
                 stage="transcription",
+                location="local",
                 runtime="whisper.cpp",
                 name="Broken Whisper",
                 config={"binary_path": str(asr_binary), "model_path": str(tmp_path / "missing.gguf")},
@@ -159,16 +161,17 @@ def test_runtime_descriptors_are_stage_first_and_hide_command_as_advanced(isolat
     catalog = LocalModelCatalog()
 
     descriptors = catalog.runtime_descriptors()
-    by_runtime = {item.runtime: item for item in descriptors}
+    by_key = {(item.stage, item.location, item.runtime): item for item in descriptors}
 
-    assert by_runtime["pyannote"].stage == "diarization"
-    assert by_runtime["whisper.cpp"].stage == "transcription"
-    assert by_runtime["faster-whisper"].stage == "transcription"
-    assert by_runtime["ollama"].stage == "formatter"
-    assert by_runtime["ollama"].supports_install is True
-    assert by_runtime["command"].stage == "formatter"
-    assert by_runtime["command"].advanced is True
-    assert any(field.key == "tag" and field.required for field in by_runtime["ollama"].fields)
+    assert by_key[("diarization", "local", "pyannote")].stage == "diarization"
+    assert by_key[("diarization", "remote", "pyannote")].location == "remote"
+    assert by_key[("transcription", "local", "whisper.cpp")].stage == "transcription"
+    assert by_key[("transcription", "remote", "whisper.cpp")].location == "remote"
+    assert by_key[("transcription", "local", "faster-whisper")].stage == "transcription"
+    assert by_key[("formatter", "local", "ollama")].supports_install is True
+    assert by_key[("formatter", "remote", "ollama")].location == "remote"
+    assert by_key[("formatter", "local", "command")].advanced is True
+    assert any(field.key == "tag" and field.required for field in by_key[("formatter", "local", "ollama")].fields)
 
 
 def test_discover_pyannote_uses_known_model_dir(isolated_settings, tmp_path: Path) -> None:
@@ -185,7 +188,7 @@ def test_discover_pyannote_uses_known_model_dir(isolated_settings, tmp_path: Pat
     object.__setattr__(SETTINGS, "diarization_embedding_model", "local-embedding")
 
     catalog = LocalModelCatalog()
-    payload = catalog.discover("diarization", "pyannote")
+    payload = catalog.discover("diarization", "local", "pyannote")
 
     assert any(item.config["pipeline_path"] == str(pipeline) for item in payload.suggestions)
     assert any(item.config["embedding_model_ref"] == "local-embedding" for item in payload.suggestions)
@@ -206,7 +209,7 @@ def test_discover_whisper_cpp_pairs_known_binary_and_model(isolated_settings, tm
     object.__setattr__(SETTINGS, "transcription_model_path", "")
 
     catalog = LocalModelCatalog()
-    payload = catalog.discover("transcription", "whisper.cpp")
+    payload = catalog.discover("transcription", "local", "whisper.cpp")
 
     assert any(
         item.config["binary_path"] == str(binary) and item.config["model_path"] == str(model)
@@ -222,6 +225,49 @@ def test_discover_ollama_uses_local_tags(isolated_settings, monkeypatch) -> None
     catalog = LocalModelCatalog()
     monkeypatch.setattr(catalog, "_ollama_tags", lambda: ["qwen2.5:3b", "phi4-mini"])
 
-    payload = catalog.discover("formatter", "ollama")
+    payload = catalog.discover("formatter", "local", "ollama")
 
     assert [item.config["tag"] for item in payload.suggestions] == ["qwen2.5:3b", "phi4-mini"]
+
+
+def test_register_remote_whisper_cpp_validates_worker_health(isolated_settings, monkeypatch) -> None:
+    catalog = LocalModelCatalog()
+    monkeypatch.setattr(
+        catalog,
+        "_remote_worker_health",
+        lambda base_url, auth_token, timeout_s, stage: (
+            {"enabled_stages": ["transcription"], "transcription": {"runtime": "whisper.cpp", "model_name": "large-v3"}},
+            None,
+        ),
+    )
+
+    record = catalog.register(
+        LocalModelRegistrationRequest(
+            stage="transcription",
+            location="remote",
+            runtime="whisper.cpp",
+            name="Office GPU",
+            config={"base_url": "http://office-gpu:8011", "model_name": "large-v3"},
+        )
+    )
+
+    assert record.location == "remote"
+    assert record.installed is True
+
+
+def test_register_remote_ollama_uses_remote_host(isolated_settings, monkeypatch) -> None:
+    catalog = LocalModelCatalog()
+    monkeypatch.setattr(catalog, "_ollama_has_model", lambda tag, **kwargs: kwargs.get("base_url") == "http://office-gpu:11434")
+
+    record = catalog.register(
+        LocalModelRegistrationRequest(
+            stage="formatter",
+            location="remote",
+            runtime="ollama",
+            name="Remote Qwen",
+            config={"base_url": "http://office-gpu:11434", "tag": "qwen2.5:3b"},
+        )
+    )
+
+    assert record.location == "remote"
+    assert record.installed is True

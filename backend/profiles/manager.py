@@ -23,6 +23,7 @@ from backend.app.schemas import (
     VoiceProfileSample,
 )
 from backend.pipeline.diarization import compute_profile_embedding, pyannote_audio_version
+from backend.pipeline.remote_worker_client import RemoteWorkerClient
 
 
 DEFAULT_THRESHOLD = 0.82
@@ -102,6 +103,9 @@ class VoiceProfileManager:
         sample_rate: int | None = None,
         compute_device: str = "auto",
         cuda_device_id: int = 0,
+        embedding_vector: Sequence[float] | np.ndarray | None = None,
+        library_version: str | None = None,
+        engine_kind: str = "local_pyannote",
     ) -> VoiceProfile:
         """! @brief Save profile sample.
         @param name Value for name.
@@ -132,18 +136,24 @@ class VoiceProfileManager:
         sample_path = samples_dir / f"{sample_id}.wav"
         normalized_ranges = [(float(start_s), float(end_s)) for start_s, end_s in clip_ranges[:2]]
         self._write_reference_audio(sample_path, audio_data, sample_rate, normalized_ranges)
-        embedding = self.compute_embedding(
-            sample_path,
-            diarization_model_id=diarization_model_id,
-            embedding_model_ref=embedding_model_ref,
-            compute_device=compute_device,
-            cuda_device_id=cuda_device_id,
+        embedding = (
+            np.asarray(embedding_vector, dtype=np.float32)
+            if embedding_vector is not None
+            else self.compute_embedding(
+                sample_path,
+                diarization_model_id=diarization_model_id,
+                embedding_model_ref=embedding_model_ref,
+                compute_device=compute_device,
+                cuda_device_id=cuda_device_id,
+            )
         )
         embedding_entry = self._build_embedding_entry(
             diarization_model_id=diarization_model_id,
             embedding_model_ref=embedding_model_ref,
             vector=embedding,
             threshold=threshold,
+            library_version=library_version,
+            engine_kind=engine_kind,
         )
         sample = VoiceProfileSample(
             sample_id=sample_id,
@@ -297,6 +307,7 @@ class VoiceProfileManager:
         embedding_model_ref: str | None = None,
         compute_device: str = "auto",
         cuda_device_id: int = 0,
+        remote_model_config: dict[str, str] | None = None,
     ) -> ProfileRefreshTask:
         """! @brief Start refresh task.
         @param diarization_execution Value for diarization execution.
@@ -327,6 +338,7 @@ class VoiceProfileManager:
                 "embedding_model_ref": embedding_model_ref,
                 "compute_device": compute_device,
                 "cuda_device_id": cuda_device_id,
+                "remote_model_config": remote_model_config or {},
             },
             daemon=True,
         )
@@ -351,6 +363,7 @@ class VoiceProfileManager:
         embedding_model_ref: str | None,
         compute_device: str,
         cuda_device_id: int,
+        remote_model_config: dict[str, str],
     ) -> None:
         """! @brief Run refresh task.
         @param task_id Identifier of the background task.
@@ -370,6 +383,68 @@ class VoiceProfileManager:
                     "No reusable embedding vectors were generated."
                 ),
             )
+            return
+
+        if task.diarization_execution == "remote":
+            if not task.local_diarization_model_id or not embedding_model_ref:
+                self._update_refresh_task(task_id, status="failed", message="Missing remote diarization model details.")
+                return
+            client = RemoteWorkerClient(
+                base_url=remote_model_config.get("base_url", ""),
+                auth_token=remote_model_config.get("auth_token", ""),
+                timeout_s=int(remote_model_config.get("timeout_s", "900") or "900"),
+            )
+            profiles = self.list_profiles()
+            total_samples = sum(len(profile.samples) for profile in profiles)
+            self._update_refresh_task(task_id, total_samples=total_samples, processed_samples=0)
+            processed = 0
+            try:
+                for profile in profiles:
+                    changed = False
+                    updated_samples: list[VoiceProfileSample] = []
+                    for sample in profile.samples:
+                        if any(
+                            item.model_key == self._model_key(task.local_diarization_model_id, embedding_model_ref)
+                            for item in sample.embeddings
+                        ):
+                            updated_samples.append(sample)
+                        else:
+                            clip_ranges = [(item.start_s, item.end_s) for item in sample.clip_ranges]
+                            embedding = client.embed(audio_path=Path(sample.reference_audio_path), clip_ranges=clip_ranges)
+                            updated_samples.append(
+                                sample.model_copy(
+                                    update={
+                                        "embeddings": [
+                                            *sample.embeddings,
+                                            self._build_embedding_entry(
+                                                diarization_model_id=task.local_diarization_model_id,
+                                                embedding_model_ref=embedding.embedding_model_ref or embedding_model_ref,
+                                                vector=np.asarray(embedding.vector, dtype=np.float32),
+                                                threshold=embedding.threshold,
+                                                library_version=embedding.library_version,
+                                                engine_kind=embedding.engine_kind,
+                                            ),
+                                        ]
+                                    }
+                                )
+                            )
+                            changed = True
+                        processed += 1
+                        self._update_refresh_task(task_id, processed_samples=processed)
+                    if changed:
+                        self._persist_profile(
+                            VoiceProfile(
+                                profile_id=profile.profile_id,
+                                name=profile.name,
+                                created_at=profile.created_at,
+                                updated_at=datetime.now(timezone.utc),
+                                sample_count=len(updated_samples),
+                                samples=updated_samples,
+                            )
+                        )
+                self._update_refresh_task(task_id, status="completed", message="Saved profile embeddings refreshed.")
+            except Exception as exc:
+                self._update_refresh_task(task_id, status="failed", message=str(exc))
             return
 
         if not task.local_diarization_model_id or not embedding_model_ref:
@@ -450,6 +525,8 @@ class VoiceProfileManager:
         embedding_model_ref: str,
         vector: np.ndarray,
         threshold: float = DEFAULT_THRESHOLD,
+        library_version: str | None = None,
+        engine_kind: str = "local_pyannote",
     ) -> VoiceProfileEmbedding:
         """! @brief Build embedding entry.
         @param diarization_model_id Value for diarization model id.
@@ -461,10 +538,10 @@ class VoiceProfileManager:
         now = datetime.now(timezone.utc)
         return VoiceProfileEmbedding(
             embedding_id=str(uuid4()),
-            engine_kind="local_pyannote",
+            engine_kind=str(engine_kind),
             diarization_model_id=diarization_model_id,
             embedding_model_ref=embedding_model_ref,
-            library_version=pyannote_audio_version(),
+            library_version=library_version or pyannote_audio_version(),
             threshold=threshold,
             vector=self._normalize(vector).tolist(),
             created_at=now,

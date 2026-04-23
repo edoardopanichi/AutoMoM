@@ -48,6 +48,11 @@ class DiarizationResult:
     details: str | None = None
     chunk_plan: list[dict[str, object]] | None = None
     stitching_debug: dict[str, object] | None = None
+    speaker_embeddings: dict[str, list[float]] | None = None
+    profile_model_ref: str | None = None
+    embedding_model_ref: str | None = None
+    embedding_library_version: str | None = None
+    embedding_engine_kind: str = "local_pyannote"
 
     def to_json(self) -> list[dict[str, object]]:
         """! @brief To json.

@@ -12,6 +12,7 @@ from functools import lru_cache
 from backend.pipeline.compute import should_enable_native_gpu
 from backend.pipeline.diarization import merge_transcript_segments
 from backend.pipeline.openai_client import OpenAIAPIError, OpenAIClient
+from backend.pipeline.remote_worker_client import RemoteWorkerClient, RemoteWorkerError
 from backend.pipeline.subprocess_utils import run_cancellable_subprocess
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -487,6 +488,52 @@ class OpenAITranscriber:
             return self._client.transcribe_audio(segment_path, model=self._model)
         except OpenAIAPIError as exc:
             raise TranscriptionError(f"OpenAI transcription failed for '{segment_path.name}': {exc}") from exc
+
+
+class RemoteWhisperCppTranscriber:
+    def __init__(self, *, base_url: str, model_name: str, auth_token: str = "", timeout_s: int = 900) -> None:
+        self._client = RemoteWorkerClient(
+            base_url=base_url,
+            auth_token=auth_token,
+            timeout_s=timeout_s,
+        )
+        self._runtime_report = ASRRuntimeReport(
+            binary_path=f"{base_url.rstrip('/')}/transcribe",
+            model_path=model_name,
+            requested_mode="remote",
+            available_mode="remote",
+            active_mode="remote",
+            gpu_requested=False,
+            gpu_backend_available=True,
+            gpu_verified_active=False,
+            supported_flags=[],
+            linked_backends=["remote"],
+            thread_count=0,
+            processor_count=0,
+        )
+
+    def available(self) -> bool:
+        return True
+
+    def transcribe(self, segment_path: Path) -> str:
+        try:
+            payload = self._client.transcribe(audio_path=segment_path)
+        except RemoteWorkerError as exc:
+            self._runtime_report.last_error = str(exc)
+            raise TranscriptionError(str(exc)) from exc
+        runtime = payload.get("runtime", {})
+        self._runtime_report.active_mode = str(runtime.get("compute_active", "remote"))
+        self._runtime_report.last_error = ""
+        text = clean_transcript_text(str(payload.get("text", "")))
+        if not text:
+            raise TranscriptionError(f"Remote transcription produced empty output for '{segment_path.name}'.")
+        return text
+
+    def runtime_report(self) -> dict[str, object]:
+        return self._runtime_report.to_dict()
+
+    def runtime_summary(self) -> str:
+        return f"compute={self._runtime_report.active_mode} (remote worker)"
 
 
 def transcribe_segments(

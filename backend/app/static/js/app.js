@@ -214,15 +214,16 @@ async function loadStartupData() {
 function renderDiarizationModels() {
   const select = qs("#local-diarization-model");
   if (!select) return;
+  const mode = qs("#diarization-execution")?.value || "local";
   select.innerHTML = "";
-  state.diarizationModels.forEach((model) => {
+  state.diarizationModels.filter((model) => model.location === mode).forEach((model) => {
     const option = document.createElement("option");
     option.value = model.model_id;
-    option.textContent = model.name;
+    option.textContent = model.installed ? model.name : `${model.name} (${model.location}, unavailable)`;
     option.disabled = !model.installed;
     select.appendChild(option);
   });
-  select.value = state.localModelCatalog.defaults.diarization || state.diarizationModels[0]?.model_id || "";
+  select.value = state.localModelCatalog.defaults.diarization || select.options[0]?.value || "";
 }
 
 /**
@@ -231,15 +232,18 @@ function renderDiarizationModels() {
 function renderTranscriptionModels() {
   const select = qs("#local-transcription-model");
   if (!select) return;
+  const mode = qs("#transcription-execution")?.value || "local";
   select.innerHTML = "";
-  state.transcriptionModels.forEach((model) => {
+  state.transcriptionModels.filter((model) => model.location === mode).forEach((model) => {
     const option = document.createElement("option");
     option.value = model.model_id;
-    option.textContent = model.installed ? `${model.name} (${model.runtime})` : `${model.name} (${model.runtime}, unavailable)`;
+    option.textContent = model.installed
+      ? `${model.name} (${model.runtime})`
+      : `${model.name} (${model.runtime}, unavailable)`;
     option.disabled = !model.installed;
     select.appendChild(option);
   });
-  select.value = state.localModelCatalog.defaults.transcription || state.transcriptionModels[0]?.model_id || "";
+  select.value = state.localModelCatalog.defaults.transcription || select.options[0]?.value || "";
 }
 
 /**
@@ -248,7 +252,8 @@ function renderTranscriptionModels() {
  */
 function formatFormatterModelLabel(model) {
   if (model.runtime === "ollama") {
-    return `${model.config?.tag || model.name} via Ollama`;
+    const hostSuffix = model.location === "remote" ? ` @ ${model.config?.base_url || "remote"}` : "";
+    return `${model.config?.tag || model.name} via Ollama${hostSuffix}`;
   }
   if (model.runtime === "command") {
     return `${model.config?.model_path || model.name} via command`;
@@ -263,6 +268,12 @@ function formatFormatterModelLabel(model) {
 function formatLocalModelDetails(model) {
   if (model.validation_error) {
     return `Validation: ${model.validation_error}`;
+  }
+  if (model.location === "remote") {
+    return Object.entries(model.config || {})
+      .filter(([key]) => key !== "auth_token")
+      .map(([key, value]) => `${key}=${value}`)
+      .join(" | ") || "Remote worker ready";
   }
   if (model.stage === "formatter" && model.runtime === "ollama") {
     return `Model: ${model.config?.tag || "-"} | Runtime: Ollama`;
@@ -281,8 +292,9 @@ function formatLocalModelDetails(model) {
 function renderFormatterModels() {
   const select = qs("#local-formatter-model");
   if (!select) return;
+  const mode = qs("#formatter-execution")?.value || "local";
   select.innerHTML = "";
-  state.formatterModels.forEach((model) => {
+  state.formatterModels.filter((model) => model.location === mode).forEach((model) => {
     const option = document.createElement("option");
     option.value = model.model_id;
     option.textContent = model.installed
@@ -291,7 +303,7 @@ function renderFormatterModels() {
     option.disabled = !model.installed;
     select.appendChild(option);
   });
-  select.value = state.localModelCatalog.defaults.formatter || state.formatterModels[0]?.model_id || "";
+  select.value = state.localModelCatalog.defaults.formatter || select.options[0]?.value || "";
 }
 
 /**
@@ -446,9 +458,10 @@ function setExecutionMode(stage, mode) {
   });
 
   qsa(`.engine-card[data-stage="${stage}"] .engine-model-field`).forEach((field) => {
-    const isActive = field.dataset.mode === mode;
-    field.classList.toggle("hidden", !isActive);
     const select = field.querySelector("select");
+    const isCatalogField = Boolean(select?.id?.startsWith("local-"));
+    const isActive = field.dataset.mode === mode || (isCatalogField && mode === "remote" && field.dataset.mode === "local");
+    field.classList.toggle("hidden", !isActive);
     if (select) {
       // Disable the inactive selector as well as hiding it so only the chosen execution path
       // contributes values when the form is submitted.
@@ -457,6 +470,7 @@ function setExecutionMode(stage, mode) {
   });
 
   card.dataset.mode = mode;
+  renderExecutionModelLabels();
 }
 
 /**
@@ -819,6 +833,7 @@ async function refreshSettings() {
  */
 function syncLocalModelForm() {
   const stageSelect = qs("#local-model-stage");
+  const locationSelect = qs("#local-model-location");
   const form = qs("#local-model-form");
   const runtimeContainer = qs("#local-runtime-options");
   const fieldsContainer = qs("#local-model-fields");
@@ -828,12 +843,14 @@ function syncLocalModelForm() {
   if (!stageSelect || !form || !runtimeContainer || !fieldsContainer) return;
 
   const stage = stageSelect.value || "transcription";
+  const location = locationSelect?.value || "local";
   if (form.dataset.stage !== stage && suggestions) {
     suggestions.innerHTML = "";
   }
   form.dataset.stage = stage;
+  form.dataset.location = location;
   const showAdvanced = Boolean(qs("#local-model-advanced")?.checked);
-  const descriptors = state.localRuntimeDescriptors.filter((item) => item.stage === stage);
+  const descriptors = state.localRuntimeDescriptors.filter((item) => item.stage === stage && item.location === location);
   const visibleDescriptors = descriptors.filter((item) => showAdvanced || !item.advanced);
   const currentRuntime = form.dataset.runtime;
   const selected = visibleDescriptors.find((item) => item.runtime === currentRuntime) || visibleDescriptors[0] || descriptors[0];
@@ -898,6 +915,7 @@ function syncLocalModelForm() {
   });
   help.textContent = selected.description || "";
   installBtn?.classList.toggle("hidden", !selected.supports_install);
+  qs("#scan-local-models")?.classList.toggle("hidden", location !== "local");
 }
 
 /**
@@ -932,8 +950,9 @@ async function registerLocalModel() {
 function buildLocalModelPayload() {
   const form = qs("#local-model-form");
   const stage = qs("#local-model-stage").value;
+  const location = qs("#local-model-location").value;
   const runtime = form?.dataset.runtime;
-  const descriptor = getRuntimeDescriptor(stage, runtime);
+  const descriptor = getRuntimeDescriptor(stage, location, runtime);
   const name = qs("#local-model-name").value.trim();
   if (!descriptor || !name) return null;
   const config = {};
@@ -945,6 +964,7 @@ function buildLocalModelPayload() {
   }
   return {
     stage,
+    location,
     runtime,
     name,
     languages: qs("#local-model-languages").value
@@ -962,8 +982,8 @@ function buildLocalModelPayload() {
  * @param {*} stage Stage id.
  * @param {*} runtime Runtime id.
  */
-function getRuntimeDescriptor(stage, runtime) {
-  return state.localRuntimeDescriptors.find((item) => item.stage === stage && item.runtime === runtime);
+function getRuntimeDescriptor(stage, location, runtime) {
+  return state.localRuntimeDescriptors.find((item) => item.stage === stage && item.location === location && item.runtime === runtime);
 }
 
 /**
@@ -986,6 +1006,7 @@ function clearLocalModelForm() {
 async function scanLocalModels() {
   const form = qs("#local-model-form");
   const stage = qs("#local-model-stage").value;
+  const location = qs("#local-model-location").value;
   const runtime = form?.dataset.runtime;
   const status = qs("#local-model-status");
   const suggestions = qs("#local-model-suggestions");
@@ -994,7 +1015,7 @@ async function scanLocalModels() {
   suggestions.innerHTML = "";
   try {
     const payload = await fetchJSON(
-      `/api/models/local/discovery/${encodeURIComponent(stage)}/${encodeURIComponent(runtime)}`,
+      `/api/models/local/discovery/${encodeURIComponent(stage)}/${encodeURIComponent(location)}/${encodeURIComponent(runtime)}`,
     );
     renderLocalModelSuggestions(payload.suggestions || []);
     status.textContent = payload.suggestions?.length ? "Scan complete." : "No candidates found in known locations.";
@@ -1772,6 +1793,7 @@ function bindEvents() {
   qs("#save-template-inline").addEventListener("click", saveTemplateInline);
   qs("#add-template-section").addEventListener("click", () => addTemplateSectionRow());
   qs("#local-model-stage").addEventListener("change", syncLocalModelForm);
+  qs("#local-model-location").addEventListener("change", syncLocalModelForm);
   qs("#local-model-advanced").addEventListener("change", syncLocalModelForm);
   qs("#scan-local-models").addEventListener("click", scanLocalModels);
   qs("#register-local-model").addEventListener("click", registerLocalModel);

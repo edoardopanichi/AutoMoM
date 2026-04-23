@@ -143,7 +143,7 @@
                 <p class="section-label">Engine Routing</p>
                 <h3>Stage-by-stage execution</h3>
               </div>
-              <p>Each stage runs locally by default. Switch a stage to OpenAI only when you want the cloud path.</p>
+              <p>Each stage runs locally by default. Switch a stage to a LAN worker or OpenAI when you need it.</p>
             </div>
 
             <div class="engine-grid">
@@ -155,6 +155,7 @@
                   </div>
                   <div class="engine-toggle" role="group" aria-label="Diarization execution">
                     <button type="button" class="engine-option active" data-stage="diarization" data-mode="local">Local</button>
+                    <button type="button" class="engine-option" data-stage="diarization" data-mode="remote">Remote</button>
                     <button type="button" class="engine-option" data-stage="diarization" data-mode="api">OpenAI</button>
                   </div>
                 </div>
@@ -187,6 +188,7 @@
                   </div>
                   <div class="engine-toggle" role="group" aria-label="Transcription execution">
                     <button type="button" class="engine-option active" data-stage="transcription" data-mode="local">Local</button>
+                    <button type="button" class="engine-option" data-stage="transcription" data-mode="remote">Remote</button>
                     <button type="button" class="engine-option" data-stage="transcription" data-mode="api">OpenAI</button>
                   </div>
                 </div>
@@ -214,6 +216,7 @@
                   </div>
                   <div class="engine-toggle" role="group" aria-label="Minutes generation execution">
                     <button type="button" class="engine-option active" data-stage="formatter" data-mode="local">Local</button>
+                    <button type="button" class="engine-option" data-stage="formatter" data-mode="remote">Remote</button>
                     <button type="button" class="engine-option" data-stage="formatter" data-mode="api">OpenAI</button>
                   </div>
                 </div>
@@ -250,8 +253,7 @@
             </div>
 
             <p class="cloud-note">
-              Local is the default path. The model selectors are separated by stage so you can add more local options
-              later without changing this layout.
+              Local and remote both use the catalog-backed model selectors. OpenAI is only required when a stage is set to OpenAI.
             </p>
           </section>
         </form>
@@ -369,6 +371,13 @@
                     <option value="transcription">Transcription</option>
                     <option value="formatter">MoM generation</option>
                     <option value="diarization">Diarization</option>
+                  </select>
+                </label>
+                <label>
+                  <span class="model-field-label">Location <span class="required-mark">*</span></span>
+                  <select id="local-model-location">
+                    <option value="local">Local</option>
+                    <option value="remote">Remote</option>
                   </select>
                 </label>
                 <label>

@@ -17,7 +17,24 @@ def list_local_diarization_models() -> list[DiarizationLocalModel]:
     models: list[DiarizationLocalModel] = []
     for item in payload.models:
         pipeline_path = item.config.get("pipeline_path", "")
+        base_url = item.config.get("base_url", "")
         embedding_ref = item.config.get("embedding_model_ref", "")
+        profile_model_ref = item.config.get("profile_model_ref", "") or item.model_id
+        if item.location == "remote":
+            if not base_url:
+                continue
+            models.append(
+                DiarizationLocalModel(
+                    model_id=item.model_id,
+                    name=item.name,
+                    location=item.location,
+                    runtime=item.runtime,
+                    base_url=base_url,
+                    profile_model_ref=profile_model_ref,
+                    embedding_model_ref=embedding_ref,
+                )
+            )
+            continue
         if not pipeline_path:
             continue
         path = Path(pipeline_path).expanduser()
@@ -29,7 +46,10 @@ def list_local_diarization_models() -> list[DiarizationLocalModel]:
             DiarizationLocalModel(
                 model_id=item.model_id,
                 name=item.name,
+                location=item.location,
+                runtime=item.runtime,
                 pipeline_path=pipeline_path,
+                profile_model_ref=profile_model_ref,
                 embedding_model_ref=embedding_ref,
             )
         )

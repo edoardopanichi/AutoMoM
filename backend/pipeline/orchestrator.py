@@ -37,12 +37,14 @@ from backend.pipeline.openai_client import (
     OpenAIDiarizationResult,
     OpenAIDiarizedSegment,
 )
+from backend.pipeline.remote_worker_client import RemoteWorkerClient, RemoteWorkerError
 from backend.pipeline.snippets import extract_snippets, pick_snippet_ranges
 from backend.pipeline.subprocess_utils import SubprocessCancelledError
 from backend.pipeline.template_manager import TEMPLATE_MANAGER
 from backend.pipeline.transcription import (
     FasterWhisperTranscriber,
     OpenAITranscriber,
+    RemoteWhisperCppTranscriber,
     TranscriptionError,
     WhisperCppTranscriber,
     transcribe_segments,
@@ -212,57 +214,66 @@ class PipelineOrchestrator:
                 min_speakers = SETTINGS.diarization_min_speakers if SETTINGS.diarization_min_speakers > 0 else None
                 max_speakers = SETTINGS.diarization_max_speakers if SETTINGS.diarization_max_speakers > 0 else None
                 JOB_STORE.set_stage_percent(job_id, 6.0, overall_percent=self._overall(2, 6.0))
-                JOB_STORE.append_log(job_id, "Loading local diarization pipeline")
-                use_chunked_progress = bool(audio_metadata_payload) and float(audio_metadata_payload.get("duration_s", 0.0)) > CHUNKED_LOCAL_DIARIZATION_THRESHOLD_S
-                if not use_chunked_progress:
-                    diarization_progress_stop, diarization_progress_thread = self._start_stage_heartbeat(job_id, 2)
-
-                def _diarization_progress(event: dict[str, object]) -> None:
-                    """! @brief Diarization progress.
-                    @param event Value for event.
-                    """
-                    total_s = max(1.0, float(event.get("total_s", 0.0) or 0.0))
-                    processed_s = max(0.0, float(event.get("processed_s", 0.0) or 0.0))
-                    phase = str(event.get("phase") or "")
-                    detail = str(event.get("detail") or "").strip()
-                    if phase == "finalizing":
-                        stage_percent = 99.0
-                    else:
-                        stage_percent = min(99.0, (processed_s / total_s) * 99.0)
-                    if detail:
-                        JOB_STORE.set_stage_percent(
-                            job_id,
-                            stage_percent,
-                            overall_percent=self._overall(2, stage_percent),
-                            stage_detail=detail,
-                        )
-
-                try:
-                    diarization_chunk_s = (
-                        SETTINGS.diarization_pyannote_chunk_s
-                        if SETTINGS.diarization_backend in {"auto", "pyannote"}
-                        else SETTINGS.diarization_max_chunk_s
-                    )
-                    diarization_result = diarize(
-                        normalized_audio_path,
-                        speech_regions,
+                if getattr(diarization_model, "location", "local") == "remote":
+                    JOB_STORE.append_log(job_id, f"Calling remote diarization worker at {diarization_model.base_url}")
+                    diarization_result = self._diarize_with_remote_worker(
+                        diarization_model=diarization_model,
+                        normalized_audio_path=normalized_audio_path,
                         min_speakers=min_speakers,
                         max_speakers=max_speakers,
-                        max_chunk_s=diarization_chunk_s,
-                        backend=SETTINGS.diarization_backend,
-                        model_path=Path(diarization_model.pipeline_path),
-                        pipeline_path=diarization_model.pipeline_path,
-                        embedding_model=diarization_model.embedding_model_ref,
-                        compute_device=SETTINGS.compute_device,
-                        cuda_device_id=SETTINGS.cuda_device_id,
-                        job_id=job_id,
-                        progress_callback=_diarization_progress if use_chunked_progress else None,
                     )
-                finally:
-                    if diarization_progress_stop is not None:
-                        diarization_progress_stop.set()
-                    if diarization_progress_thread is not None:
-                        diarization_progress_thread.join(timeout=0.2)
+                else:
+                    JOB_STORE.append_log(job_id, "Loading local diarization pipeline")
+                    use_chunked_progress = bool(audio_metadata_payload) and float(audio_metadata_payload.get("duration_s", 0.0)) > CHUNKED_LOCAL_DIARIZATION_THRESHOLD_S
+                    if not use_chunked_progress:
+                        diarization_progress_stop, diarization_progress_thread = self._start_stage_heartbeat(job_id, 2)
+
+                    def _diarization_progress(event: dict[str, object]) -> None:
+                        """! @brief Diarization progress.
+                        @param event Value for event.
+                        """
+                        total_s = max(1.0, float(event.get("total_s", 0.0) or 0.0))
+                        processed_s = max(0.0, float(event.get("processed_s", 0.0) or 0.0))
+                        phase = str(event.get("phase") or "")
+                        detail = str(event.get("detail") or "").strip()
+                        if phase == "finalizing":
+                            stage_percent = 99.0
+                        else:
+                            stage_percent = min(99.0, (processed_s / total_s) * 99.0)
+                        if detail:
+                            JOB_STORE.set_stage_percent(
+                                job_id,
+                                stage_percent,
+                                overall_percent=self._overall(2, stage_percent),
+                                stage_detail=detail,
+                            )
+
+                    try:
+                        diarization_chunk_s = (
+                            SETTINGS.diarization_pyannote_chunk_s
+                            if SETTINGS.diarization_backend in {"auto", "pyannote"}
+                            else SETTINGS.diarization_max_chunk_s
+                        )
+                        diarization_result = diarize(
+                            normalized_audio_path,
+                            speech_regions,
+                            min_speakers=min_speakers,
+                            max_speakers=max_speakers,
+                            max_chunk_s=diarization_chunk_s,
+                            backend=SETTINGS.diarization_backend,
+                            model_path=Path(diarization_model.pipeline_path),
+                            pipeline_path=diarization_model.pipeline_path,
+                            embedding_model=diarization_model.embedding_model_ref,
+                            compute_device=SETTINGS.compute_device,
+                            cuda_device_id=SETTINGS.cuda_device_id,
+                            job_id=job_id,
+                            progress_callback=_diarization_progress if use_chunked_progress else None,
+                        )
+                    finally:
+                        if diarization_progress_stop is not None:
+                            diarization_progress_stop.set()
+                        if diarization_progress_thread is not None:
+                            diarization_progress_thread.join(timeout=0.2)
             write_json(job_dir / "diarization.json", diarization_result.to_json())
             JOB_STORE.set_artifact(job_id, "diarization", job_dir / "diarization.json")
             if diarization_result.chunk_plan:
@@ -339,6 +350,7 @@ class PipelineOrchestrator:
                 normalized_audio_path,
                 segments_by_speaker,
                 snippets,
+                diarization_result,
             )
             JOB_STORE.set_waiting_for_speaker_input(job_id, speaker_info)
             mapping_items = JOB_STORE.wait_for_mapping(job_id)
@@ -385,16 +397,26 @@ class PipelineOrchestrator:
                     snippet_actions,
                     segments_by_speaker,
                 )
+                profile_save_kwargs: dict[str, object] = {}
+                if diarization_model.location == "remote":
+                    embedding_result = self._remote_embedding_for_ranges(diarization_model, normalized_audio_path, segments)
+                    profile_save_kwargs = {
+                        "embedding_vector": embedding_result.vector,
+                        "library_version": embedding_result.library_version,
+                        "engine_kind": embedding_result.engine_kind,
+                        "threshold": embedding_result.threshold,
+                    }
                 profile = VOICE_PROFILE_MANAGER.save_profile_sample(
                     name=mapping.name,
                     source_audio_path=normalized_audio_path,
                     clip_ranges=segments,
-                    diarization_model_id=diarization_model.model_id,
+                    diarization_model_id=diarization_model.profile_model_ref or diarization_model.model_id,
                     embedding_model_ref=diarization_model.embedding_model_ref,
                     source_job_id=job_id,
                     source_speaker_id=mapping.speaker_id,
                     compute_device=SETTINGS.compute_device,
                     cuda_device_id=SETTINGS.cuda_device_id,
+                    **profile_save_kwargs,
                 )
                 action = "updated" if profile.sample_count > 1 else "saved"
                 JOB_STORE.append_log(
@@ -629,12 +651,12 @@ class PipelineOrchestrator:
             formatter = Formatter(
                 command_template=local_formatter_model.config.get("command_template", "") if use_legacy_formatter_command else "",
                 model_path=local_formatter_model.config.get("model_path", "") if use_legacy_formatter_command else "",
-                ollama_host=SETTINGS.ollama_host,
+                ollama_host=local_formatter_model.config.get("base_url", SETTINGS.ollama_host),
                 ollama_model="" if use_api_formatter or use_legacy_formatter_command else local_formatter_model.config.get("tag", ""),
                 openai_api_key=api_config.api_key if use_api_formatter else "",
                 openai_model=api_config.formatter_model if use_api_formatter else "",
                 job_id=job_id,
-                timeout_s=SETTINGS.formatter_timeout_s,
+                timeout_s=int(local_formatter_model.config.get("timeout_s", SETTINGS.formatter_timeout_s)) if not use_api_formatter else SETTINGS.formatter_timeout_s,
             )
             title = runtime.title or runtime.audio_path.stem
             speakers = transcript_payload["speakers"]
@@ -929,18 +951,31 @@ class PipelineOrchestrator:
             formatter_model = local_formatter_model.config.get("tag", "")
             formatter_compute_active = "unknown"
 
+        diarization_mode = "api" if diarization_api else (getattr(diarization_model, "location", "local") if diarization_model is not None else "local")
+        transcription_mode = "api" if transcription_api else (getattr(local_transcription_model, "location", "local") if local_transcription_model is not None else "local")
+        formatter_mode = "api" if formatter_api else (getattr(local_formatter_model, "location", "local") if local_formatter_model is not None else "local")
         return {
             "diarization": {
                 "mode": "api" if diarization_api else "local",
-                "model": api_config.diarization_model if diarization_api else diarization_model.pipeline_path,
+                "location": "cloud" if diarization_api else "lan-remote" if diarization_mode == "remote" else "same-machine",
+                "host": None if diarization_api or diarization_mode != "remote" else getattr(diarization_model, "base_url", ""),
+                "model": api_config.diarization_model if diarization_api else getattr(diarization_model, "base_url", "") or diarization_model.pipeline_path,
                 "model_id": None if diarization_api else diarization_model.model_id,
                 "embedding_model_ref": None if diarization_api else diarization_model.embedding_model_ref,
-                "backend": "openai" if diarization_api else SETTINGS.diarization_backend,
+                "backend": "openai" if diarization_api else diarization_model.runtime,
                 "compute_requested": "cloud" if diarization_api else SETTINGS.compute_device,
-                "compute_active": "cloud" if diarization_api else SETTINGS.compute_device,
+                "compute_active": (
+                    "cloud"
+                    if diarization_api
+                    else "remote"
+                    if diarization_mode == "remote"
+                    else SETTINGS.compute_device
+                ),
             },
             "transcription": {
                 "mode": "api" if transcription_api else "local",
+                "location": "cloud" if transcription_api else "lan-remote" if transcription_mode == "remote" else "same-machine",
+                "host": None if transcription_api or transcription_mode != "remote" else local_transcription_model.config.get("base_url", ""),
                 "model": (
                     api_config.transcription_model
                     if transcription_api
@@ -974,6 +1009,8 @@ class PipelineOrchestrator:
             },
             "formatter": {
                 "mode": "api" if formatter_api else "local",
+                "location": "cloud" if formatter_api else "lan-remote" if formatter_mode == "remote" else "same-machine",
+                "host": None if formatter_api or formatter_mode != "remote" else local_formatter_model.config.get("base_url", ""),
                 "model": formatter_model,
                 "model_id": None if formatter_api else local_formatter_model.model_id,
                 "backend": formatter_backend,
@@ -989,6 +1026,13 @@ class PipelineOrchestrator:
         @param model_record Value for model record.
         @return Result produced by the operation.
         """
+        if model_record.location == "remote" and model_record.runtime == "whisper.cpp":
+            return RemoteWhisperCppTranscriber(
+                base_url=model_record.config.get("base_url", ""),
+                model_name=model_record.config.get("model_name", ""),
+                auth_token=model_record.config.get("auth_token", ""),
+                timeout_s=int(model_record.config.get("timeout_s", "900") or "900"),
+            )
         if model_record.runtime == "whisper.cpp":
             return WhisperCppTranscriber(
                 model_record.config.get("binary_path", ""),
@@ -1007,7 +1051,63 @@ class PipelineOrchestrator:
                 cuda_device_id=SETTINGS.cuda_device_id,
                 compute_type=model_record.config.get("compute_type", "auto"),
             )
-        raise TranscriptionError(f"Unsupported local transcription runtime: {model_record.runtime}")
+        raise TranscriptionError(f"Unsupported transcription runtime: {model_record.runtime}")
+
+    @staticmethod
+    def _remote_worker_client(model_record) -> RemoteWorkerClient:
+        timeout_s = int(str(model_record.config.get("timeout_s", "900") or "900"))
+        return RemoteWorkerClient(
+            base_url=model_record.config.get("base_url", ""),
+            auth_token=model_record.config.get("auth_token", ""),
+            timeout_s=timeout_s,
+        )
+
+    def _diarize_with_remote_worker(
+        self,
+        *,
+        diarization_model,
+        normalized_audio_path: Path,
+        min_speakers: int | None,
+        max_speakers: int | None,
+    ) -> DiarizationResult:
+        model_record = LOCAL_MODEL_CATALOG.resolve_model("diarization", diarization_model.model_id)
+        client = self._remote_worker_client(model_record)
+        try:
+            payload = client.diarize(
+                audio_path=normalized_audio_path,
+                min_speakers=min_speakers,
+                max_speakers=max_speakers,
+            )
+        except RemoteWorkerError as exc:
+            raise RuntimeError(str(exc)) from exc
+        segments = [
+            DiarizationSegment(
+                speaker_id=str(item.get("speaker_id", "")),
+                start_s=float(item.get("start_s", 0.0)),
+                end_s=float(item.get("end_s", 0.0)),
+                confidence=float(item["confidence"]) if item.get("confidence") is not None else None,
+            )
+            for item in payload.get("segments", [])
+        ]
+        return DiarizationResult(
+            segments=segments,
+            speaker_count=int(payload.get("speaker_count", len({item.speaker_id for item in segments}))),
+            mode=str(payload.get("mode", "remote-pyannote")),
+            details=str(payload.get("details", model_record.config.get("base_url", diarization_model.base_url))),
+            speaker_embeddings={
+                str(key): [float(value) for value in values]
+                for key, values in dict(payload.get("speaker_embeddings", {})).items()
+            } or None,
+            profile_model_ref=str(payload.get("profile_model_ref", diarization_model.profile_model_ref or diarization_model.model_id)),
+            embedding_model_ref=str(payload.get("embedding_model_ref", diarization_model.embedding_model_ref)),
+            embedding_library_version=str(payload.get("library_version", "")) or None,
+            embedding_engine_kind=str(payload.get("engine_kind", "remote_pyannote")),
+        )
+
+    def _remote_embedding_for_ranges(self, diarization_model, normalized_audio_path: Path, clip_ranges: list[tuple[float, float]]):
+        model_record = LOCAL_MODEL_CATALOG.resolve_model("diarization", diarization_model.model_id)
+        client = self._remote_worker_client(model_record)
+        return client.embed(audio_path=normalized_audio_path, clip_ranges=clip_ranges)
 
     @staticmethod
     def _render_full_meeting_transcript(
@@ -1425,6 +1525,7 @@ class PipelineOrchestrator:
         normalized_audio_path: Path,
         segments_by_speaker: dict[str, list[tuple[float, float]]],
         snippets,
+        diarization_result: DiarizationResult | None = None,
     ) -> JobSpeakerInfo:
         """! @brief Build speaker info.
         @param runtime Value for runtime.
@@ -1467,15 +1568,21 @@ class PipelineOrchestrator:
         diarization_model = resolve_local_diarization_model(runtime.local_diarization_model_id)
         speakers: list[SpeakerState] = []
         for speaker_id in sorted(segments_by_speaker):
+            precomputed_embedding = None
+            if diarization_result is not None and diarization_result.speaker_embeddings is not None:
+                raw_embedding = diarization_result.speaker_embeddings.get(speaker_id)
+                if raw_embedding:
+                    precomputed_embedding = raw_embedding
             suggested_name, matched_profile = self._match_speaker_from_evidence(
                 job_id=job_id,
                 speaker_id=speaker_id,
                 normalized_audio_path=normalized_audio_path,
                 speaker_segments=segments_by_speaker[speaker_id],
                 speaker_snippets=snippet_by_speaker.get(speaker_id, []),
-                diarization_model_id=diarization_model.model_id,
+                diarization_model_id=getattr(diarization_model, "profile_model_ref", "") or diarization_model.model_id,
                 embedding_model_ref=diarization_model.embedding_model_ref,
                 profiles=profiles,
+                precomputed_embedding=precomputed_embedding,
             )
 
             speakers.append(
@@ -1684,6 +1791,7 @@ class PipelineOrchestrator:
         diarization_model_id: str,
         embedding_model_ref: str,
         profiles,
+        precomputed_embedding: list[float] | None = None,
     ) -> tuple[str | None, SpeakerProfileMatch | None]:
         """! @brief Match one diarized speaker against saved profiles using clip-level evidence.
         @return Suggested name and match metadata.
@@ -1700,14 +1808,17 @@ class PipelineOrchestrator:
         best_clear: tuple[float, object, str] | None = None
         best_ambiguous: tuple[float, object, str] | None = None
         for start_s, end_s, evidence_id in candidates:
-            embedding = VOICE_PROFILE_MANAGER.compute_embedding(
-                normalized_audio_path,
-                diarization_model_id=diarization_model_id,
-                embedding_model_ref=embedding_model_ref,
-                compute_device=SETTINGS.compute_device,
-                cuda_device_id=SETTINGS.cuda_device_id,
-                segments=[(start_s, end_s)],
-            )
+            if precomputed_embedding is not None:
+                embedding = precomputed_embedding
+            else:
+                embedding = VOICE_PROFILE_MANAGER.compute_embedding(
+                    normalized_audio_path,
+                    diarization_model_id=diarization_model_id,
+                    embedding_model_ref=embedding_model_ref,
+                    compute_device=SETTINGS.compute_device,
+                    cuda_device_id=SETTINGS.cuda_device_id,
+                    segments=[(start_s, end_s)],
+                )
             match = VOICE_PROFILE_MANAGER.match(
                 embedding,
                 diarization_model_id=diarization_model_id,
@@ -1743,6 +1854,8 @@ class PipelineOrchestrator:
                     best_ambiguous = (score, match, evidence_id)
             elif best_clear is None or score > best_clear[0]:
                 best_clear = (score, match, evidence_id)
+            if precomputed_embedding is not None:
+                break
 
         if best_clear is not None:
             _, match, evidence_id = best_clear

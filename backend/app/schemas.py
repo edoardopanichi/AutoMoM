@@ -19,6 +19,7 @@ PipelineStage = Literal[
 ]
 
 LocalModelStage = Literal["diarization", "transcription", "formatter"]
+LocalModelLocation = Literal["local", "remote"]
 LocalModelRuntime = Literal["pyannote", "whisper.cpp", "faster-whisper", "ollama", "command"]
 
 
@@ -55,6 +56,7 @@ class FormatterModelResponse(BaseModel):
 class LocalModelRecord(BaseModel):
     model_id: str
     stage: LocalModelStage
+    location: LocalModelLocation = "local"
     runtime: LocalModelRuntime
     name: str
     installed: bool
@@ -77,6 +79,7 @@ class LocalStageModelResponse(BaseModel):
 
 class LocalModelRegistrationRequest(BaseModel):
     stage: LocalModelStage
+    location: LocalModelLocation = "local"
     runtime: LocalModelRuntime
     model_id: str | None = None
     name: str
@@ -102,6 +105,7 @@ class LocalModelFieldDescriptor(BaseModel):
 
 class LocalModelRuntimeDescriptor(BaseModel):
     stage: LocalModelStage
+    location: LocalModelLocation = "local"
     runtime: LocalModelRuntime
     label: str
     description: str = ""
@@ -272,7 +276,7 @@ class VoiceProfileClipRange(BaseModel):
 
 class VoiceProfileEmbedding(BaseModel):
     embedding_id: str
-    engine_kind: Literal["local_pyannote"]
+    engine_kind: Literal["local_pyannote", "remote_pyannote"]
     diarization_model_id: str
     embedding_model_ref: str
     library_version: str
@@ -314,8 +318,12 @@ class MatchResponse(BaseModel):
 class DiarizationLocalModel(BaseModel):
     model_id: str
     name: str
-    pipeline_path: str
-    embedding_model_ref: str
+    location: LocalModelLocation = "local"
+    runtime: LocalModelRuntime = "pyannote"
+    pipeline_path: str = ""
+    base_url: str = ""
+    profile_model_ref: str = ""
+    embedding_model_ref: str = ""
 
 
 class DiarizationLocalModelResponse(BaseModel):
@@ -324,7 +332,7 @@ class DiarizationLocalModelResponse(BaseModel):
 
 
 class ProfileRefreshRequest(BaseModel):
-    diarization_execution: Literal["local", "api"] = "local"
+    diarization_execution: Literal["local", "remote", "api"] = "local"
     local_diarization_model_id: str | None = None
     openai_diarization_model: str | None = None
 
@@ -332,7 +340,7 @@ class ProfileRefreshRequest(BaseModel):
 class ProfileRefreshTask(BaseModel):
     task_id: str
     status: Literal["queued", "running", "completed", "failed"]
-    diarization_execution: Literal["local", "api"]
+    diarization_execution: Literal["local", "remote", "api"]
     local_diarization_model_id: str | None = None
     openai_diarization_model: str | None = None
     total_samples: int = 0

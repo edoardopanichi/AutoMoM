@@ -20,6 +20,7 @@ from backend.app.schemas import (
     LocalModelFieldDescriptor,
     LocalModelInstallRequest,
     LocalModelInstallTask,
+    LocalModelLocation,
     LocalModelRecord,
     LocalModelRegistrationRequest,
     LocalModelRuntime,
@@ -31,10 +32,13 @@ from backend.pipeline.transcription import _probe_asr_binary
 
 
 STAGES: tuple[LocalModelStage, ...] = ("diarization", "transcription", "formatter")
-RUNTIMES_BY_STAGE: dict[LocalModelStage, tuple[LocalModelRuntime, ...]] = {
-    "diarization": ("pyannote",),
-    "transcription": ("whisper.cpp", "faster-whisper"),
-    "formatter": ("ollama", "command"),
+RUNTIMES_BY_STAGE_LOCATION: dict[tuple[LocalModelStage, LocalModelLocation], tuple[LocalModelRuntime, ...]] = {
+    ("diarization", "local"): ("pyannote",),
+    ("diarization", "remote"): ("pyannote",),
+    ("transcription", "local"): ("whisper.cpp", "faster-whisper"),
+    ("transcription", "remote"): ("whisper.cpp",),
+    ("formatter", "local"): ("ollama", "command"),
+    ("formatter", "remote"): ("ollama",),
 }
 
 
@@ -115,7 +119,7 @@ class LocalModelCatalog:
         @param request Request payload for the operation.
         @return Result produced by the operation.
         """
-        self._validate_stage_runtime(request.stage, request.runtime)
+        self._validate_stage_runtime(request.stage, request.location, request.runtime)
         payload = self._load_payload()
         candidate_id = self._normalize_model_id(
             request.model_id or self._suggest_model_id(request.stage, request.runtime, request.name)
@@ -126,6 +130,7 @@ class LocalModelCatalog:
         record = LocalModelRecord(
             model_id=candidate_id,
             stage=request.stage,
+            location=request.location,
             runtime=request.runtime,
             name=request.name.strip(),
             installed=False,
@@ -180,6 +185,7 @@ class LocalModelCatalog:
         return [
             LocalModelRuntimeDescriptor(
                 stage="diarization",
+                location="local",
                 runtime="pyannote",
                 label="pyannote",
                 description=(
@@ -203,6 +209,7 @@ class LocalModelCatalog:
             ),
             LocalModelRuntimeDescriptor(
                 stage="transcription",
+                location="local",
                 runtime="whisper.cpp",
                 label="whisper.cpp",
                 description="Use a whisper.cpp CLI binary with a local GGUF transcription model.",
@@ -223,6 +230,7 @@ class LocalModelCatalog:
             ),
             LocalModelRuntimeDescriptor(
                 stage="transcription",
+                location="local",
                 runtime="faster-whisper",
                 label="faster-whisper",
                 description="Use an existing CTranslate2 faster-whisper model directory.",
@@ -244,6 +252,7 @@ class LocalModelCatalog:
             ),
             LocalModelRuntimeDescriptor(
                 stage="formatter",
+                location="local",
                 runtime="ollama",
                 label="Ollama",
                 description="Use a locally installed Ollama tag, or pull a new tag through Ollama.",
@@ -259,6 +268,7 @@ class LocalModelCatalog:
             ),
             LocalModelRuntimeDescriptor(
                 stage="formatter",
+                location="local",
                 runtime="command",
                 label="Command",
                 description="Advanced formatter runtime for a custom local command template.",
@@ -278,15 +288,142 @@ class LocalModelCatalog:
                     ),
                 ],
             ),
+            LocalModelRuntimeDescriptor(
+                stage="diarization",
+                location="remote",
+                runtime="pyannote",
+                label="pyannote worker",
+                description="Use a remote LAN worker that exposes pyannote diarization over HTTP.",
+                fields=[
+                    LocalModelFieldDescriptor(
+                        key="base_url",
+                        label="Worker base URL",
+                        placeholder="http://office-gpu:8010",
+                        help="Base URL of the remote diarization worker.",
+                    ),
+                    LocalModelFieldDescriptor(
+                        key="model_name",
+                        label="Worker model name",
+                        placeholder="pyannote-community-1",
+                        help="Model identifier reported by the remote worker health endpoint.",
+                    ),
+                    LocalModelFieldDescriptor(
+                        key="profile_model_ref",
+                        label="Profile model ref",
+                        placeholder="pyannote-community-1",
+                        help="Compatibility id used for local voice-profile matching across local and remote workers.",
+                    ),
+                    LocalModelFieldDescriptor(
+                        key="embedding_model_ref",
+                        label="Embedding model ref",
+                        placeholder="pyannote/wespeaker-voxceleb-resnet34-LM",
+                        help="Embedding model reference reported by the remote worker.",
+                    ),
+                    LocalModelFieldDescriptor(
+                        key="auth_token",
+                        label="Bearer token",
+                        required=False,
+                        placeholder="optional",
+                        help="Optional bearer token sent to the remote worker.",
+                        input_type="password",
+                    ),
+                    LocalModelFieldDescriptor(
+                        key="timeout_s",
+                        label="Timeout (seconds)",
+                        required=False,
+                        placeholder="900",
+                        help="Optional request timeout for the remote worker.",
+                    ),
+                ],
+            ),
+            LocalModelRuntimeDescriptor(
+                stage="transcription",
+                location="remote",
+                runtime="whisper.cpp",
+                label="whisper.cpp worker",
+                description="Use a remote LAN worker that exposes whisper.cpp transcription over HTTP.",
+                fields=[
+                    LocalModelFieldDescriptor(
+                        key="base_url",
+                        label="Worker base URL",
+                        placeholder="http://office-gpu:8011",
+                        help="Base URL of the remote transcription worker.",
+                    ),
+                    LocalModelFieldDescriptor(
+                        key="model_name",
+                        label="Worker model name",
+                        placeholder="large-v3",
+                        help="Model identifier reported by the remote worker health endpoint.",
+                    ),
+                    LocalModelFieldDescriptor(
+                        key="auth_token",
+                        label="Bearer token",
+                        required=False,
+                        placeholder="optional",
+                        help="Optional bearer token sent to the remote worker.",
+                        input_type="password",
+                    ),
+                    LocalModelFieldDescriptor(
+                        key="timeout_s",
+                        label="Timeout (seconds)",
+                        required=False,
+                        placeholder="900",
+                        help="Optional request timeout for the remote worker.",
+                    ),
+                ],
+            ),
+            LocalModelRuntimeDescriptor(
+                stage="formatter",
+                location="remote",
+                runtime="ollama",
+                label="Remote Ollama",
+                description="Use an Ollama server reachable over your LAN.",
+                fields=[
+                    LocalModelFieldDescriptor(
+                        key="base_url",
+                        label="Ollama base URL",
+                        placeholder="http://office-gpu:11434",
+                        help="Base URL of the remote Ollama host.",
+                    ),
+                    LocalModelFieldDescriptor(
+                        key="tag",
+                        label="Ollama tag",
+                        placeholder="qwen2.5:3b-instruct-q5_K_M",
+                        help="The exact Ollama model tag to use for MoM generation.",
+                    ),
+                    LocalModelFieldDescriptor(
+                        key="auth_token",
+                        label="Bearer token",
+                        required=False,
+                        placeholder="optional",
+                        help="Optional bearer token sent to the remote Ollama host.",
+                        input_type="password",
+                    ),
+                    LocalModelFieldDescriptor(
+                        key="timeout_s",
+                        label="Timeout (seconds)",
+                        required=False,
+                        placeholder="300",
+                        help="Optional request timeout for the remote Ollama host.",
+                    ),
+                ],
+            ),
         ]
 
-    def discover(self, stage: LocalModelStage, runtime: LocalModelRuntime) -> LocalModelDiscoveryResponse:
+    def discover(
+        self,
+        stage: LocalModelStage,
+        location: LocalModelLocation,
+        runtime: LocalModelRuntime,
+    ) -> LocalModelDiscoveryResponse:
         """! @brief Discover likely local models for a supported runtime.
         @param stage Value for stage.
         @param runtime Value for runtime.
         @return Suggestions found in known safe locations.
         """
-        self._validate_stage_runtime(stage, runtime)
+        self._validate_stage_runtime(stage, location, runtime)
+        if location != "local":
+            return LocalModelDiscoveryResponse(stage=stage, runtime=runtime, suggestions=[])
         suggestions = {
             "pyannote": self._discover_pyannote,
             "whisper.cpp": self._discover_whisper_cpp,
@@ -301,9 +438,11 @@ class LocalModelCatalog:
         @param request Request payload for the operation.
         @return Install task record.
         """
-        self._validate_stage_runtime(request.stage, request.runtime)
+        self._validate_stage_runtime(request.stage, request.location, request.runtime)
         if request.runtime != "ollama":
             raise ValueError(f"Auto-install is not available for runtime '{request.runtime}'")
+        if request.location != "local":
+            raise ValueError("Auto-install is only available for local Ollama models")
         tag = request.config.get("tag", "").strip()
         if not tag:
             raise ValueError("Ollama install requires tag")
@@ -447,6 +586,7 @@ class LocalModelCatalog:
             LocalModelRecord(
                 model_id="pyannote-community-1",
                 stage="diarization",
+                location="local",
                 runtime="pyannote",
                 name="Pyannote Community-1",
                 installed=False,
@@ -459,6 +599,7 @@ class LocalModelCatalog:
             LocalModelRecord(
                 model_id="whispercpp-local",
                 stage="transcription",
+                location="local",
                 runtime="whisper.cpp",
                 name="whisper.cpp local ASR",
                 installed=False,
@@ -471,6 +612,7 @@ class LocalModelCatalog:
             LocalModelRecord(
                 model_id=formatter_model_id,
                 stage="formatter",
+                location="local",
                 runtime=formatter_runtime,
                 name="Current local formatter",
                 installed=False,
@@ -500,12 +642,22 @@ class LocalModelCatalog:
         @return Result produced by the operation.
         """
         validator = {
-            "pyannote": self._validate_pyannote,
-            "whisper.cpp": self._validate_whisper_cpp,
-            "faster-whisper": self._validate_faster_whisper,
-            "ollama": self._validate_ollama,
-            "command": self._validate_command,
-        }[record.runtime]
+            ("local", "pyannote"): self._validate_pyannote,
+            ("local", "whisper.cpp"): self._validate_whisper_cpp,
+            ("local", "faster-whisper"): self._validate_faster_whisper,
+            ("local", "ollama"): self._validate_ollama,
+            ("local", "command"): self._validate_command,
+            ("remote", "pyannote"): self._validate_remote_pyannote,
+            ("remote", "whisper.cpp"): self._validate_remote_whisper_cpp,
+            ("remote", "ollama"): self._validate_remote_ollama,
+        }.get((record.location, record.runtime))
+        if validator is None:
+            return record.model_copy(
+                update={
+                    "installed": False,
+                    "validation_error": f"Unsupported {record.location} runtime for {record.stage}: {record.runtime}",
+                }
+            )
         installed, validation_error = validator(record.config)
         return record.model_copy(update={"installed": installed, "validation_error": validation_error})
 
@@ -519,11 +671,11 @@ class LocalModelCatalog:
         for item in models:
             record = LocalModelRecord.model_validate(item)
             updated_config = dict(record.config)
-            if record.model_id == "pyannote-community-1" and record.runtime == "pyannote":
+            if record.model_id == "pyannote-community-1" and record.location == "local" and record.runtime == "pyannote":
                 candidate = SETTINGS.diarization_pipeline_path or SETTINGS.diarization_model_path
                 if self._should_repair_path(updated_config.get("pipeline_path", ""), candidate):
                     updated_config["pipeline_path"] = candidate
-            elif record.model_id == "whispercpp-local" and record.runtime == "whisper.cpp":
+            elif record.model_id == "whispercpp-local" and record.location == "local" and record.runtime == "whisper.cpp":
                 if self._should_repair_path(updated_config.get("binary_path", ""), SETTINGS.transcription_binary):
                     updated_config["binary_path"] = SETTINGS.transcription_binary
                 if self._should_repair_path(updated_config.get("model_path", ""), SETTINGS.transcription_model_path):
@@ -562,6 +714,27 @@ class LocalModelCatalog:
             return False, "Pyannote model requires embedding_model_ref"
         return True, None
 
+    def _validate_remote_pyannote(self, config: dict[str, str]) -> tuple[bool, str | None]:
+        base_url = config.get("base_url", "").strip()
+        model_name = config.get("model_name", "").strip()
+        profile_model_ref = config.get("profile_model_ref", "").strip()
+        embedding_ref = config.get("embedding_model_ref", "").strip()
+        if not base_url:
+            return False, "Remote pyannote model requires base_url"
+        if not model_name:
+            return False, "Remote pyannote model requires model_name"
+        if not profile_model_ref:
+            return False, "Remote pyannote model requires profile_model_ref"
+        if not embedding_ref:
+            return False, "Remote pyannote model requires embedding_model_ref"
+        health, error = self._remote_worker_health(base_url, config.get("auth_token", ""), config.get("timeout_s", ""), "diarization")
+        if error:
+            return False, error
+        remote_name = str((health or {}).get("diarization", {}).get("model_name", "")).strip()
+        if remote_name and remote_name != model_name:
+            return False, f"Remote diarization worker model mismatch: expected '{model_name}', got '{remote_name}'"
+        return True, None
+
     def _validate_whisper_cpp(self, config: dict[str, str]) -> tuple[bool, str | None]:
         """! @brief Validate whisper cpp.
         @param config Value for config.
@@ -579,6 +752,25 @@ class LocalModelCatalog:
         capabilities = _probe_asr_binary(resolved_binary)
         if not capabilities.is_whisper_cli:
             return False, f"Binary is not a whisper.cpp CLI: {resolved_binary}"
+        return True, None
+
+    def _validate_remote_whisper_cpp(self, config: dict[str, str]) -> tuple[bool, str | None]:
+        base_url = config.get("base_url", "").strip()
+        model_name = config.get("model_name", "").strip()
+        if not base_url:
+            return False, "Remote whisper.cpp model requires base_url"
+        if not model_name:
+            return False, "Remote whisper.cpp model requires model_name"
+        health, error = self._remote_worker_health(base_url, config.get("auth_token", ""), config.get("timeout_s", ""), "transcription")
+        if error:
+            return False, error
+        transcription_payload = (health or {}).get("transcription", {})
+        runtime_name = str(transcription_payload.get("runtime", "")).strip().lower()
+        remote_name = str(transcription_payload.get("model_name", "")).strip()
+        if runtime_name and runtime_name != "whisper.cpp":
+            return False, f"Remote transcription worker runtime mismatch: expected 'whisper.cpp', got '{runtime_name}'"
+        if remote_name and remote_name != model_name:
+            return False, f"Remote transcription worker model mismatch: expected '{model_name}', got '{remote_name}'"
         return True, None
 
     def _validate_faster_whisper(self, config: dict[str, str]) -> tuple[bool, str | None]:
@@ -607,6 +799,17 @@ class LocalModelCatalog:
             return False, "Ollama model requires tag"
         if not self._ollama_has_model(tag):
             return False, f"Ollama tag is not installed locally: {tag}"
+        return True, None
+
+    def _validate_remote_ollama(self, config: dict[str, str]) -> tuple[bool, str | None]:
+        tag = config.get("tag", "").strip()
+        base_url = config.get("base_url", "").strip()
+        if not base_url:
+            return False, "Remote Ollama model requires base_url"
+        if not tag:
+            return False, "Remote Ollama model requires tag"
+        if not self._ollama_has_model(tag, base_url=base_url, auth_token=config.get("auth_token", ""), timeout_s=config.get("timeout_s", "")):
+            return False, f"Remote Ollama tag is not available on {base_url}: {tag}"
         return True, None
 
     def _validate_command(self, config: dict[str, str]) -> tuple[bool, str | None]:
@@ -777,6 +980,7 @@ class LocalModelCatalog:
             record = self.register(
                 LocalModelRegistrationRequest(
                     stage=request.stage,
+                    location="local",
                     runtime=request.runtime,
                     name=request.name.strip() or tag,
                     languages=request.languages,
@@ -835,11 +1039,20 @@ class LocalModelCatalog:
                 update={**updates, "updated_at": self._now()}
             )
 
-    def _ollama_tags(self) -> list[str]:
+    def _ollama_tags(
+        self,
+        *,
+        base_url: str | None = None,
+        auth_token: str = "",
+        timeout_s: str = "",
+    ) -> list[str]:
         """! @brief List local Ollama tags."""
-        request = urllib.request.Request(url=f"{SETTINGS.ollama_host.rstrip('/')}/api/tags", method="GET")
+        headers = self._auth_headers(auth_token)
+        timeout = self._parse_timeout(timeout_s, default=5)
+        host = (base_url or SETTINGS.ollama_host).rstrip("/")
+        request = urllib.request.Request(url=f"{host}/api/tags", method="GET", headers=headers)
         try:
-            with urllib.request.urlopen(request, timeout=5) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 payload = json.loads(response.read().decode("utf-8", errors="replace"))
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError):
             return []
@@ -849,16 +1062,65 @@ class LocalModelCatalog:
             if str(item.get("name", "")).strip()
         ]
 
-    def _ollama_has_model(self, model_tag: str) -> bool:
+    def _ollama_has_model(
+        self,
+        model_tag: str,
+        *,
+        base_url: str | None = None,
+        auth_token: str = "",
+        timeout_s: str = "",
+    ) -> bool:
         """! @brief Ollama has model.
         @param model_tag Value for model tag.
         @return True when the requested condition is satisfied; otherwise False.
         """
         wanted = model_tag.strip().lower()
-        for tag in self._ollama_tags():
+        for tag in self._ollama_tags(base_url=base_url, auth_token=auth_token, timeout_s=timeout_s):
             if tag.strip().lower() == wanted:
                 return True
         return False
+
+    def _remote_worker_health(
+        self,
+        base_url: str,
+        auth_token: str,
+        timeout_s: str,
+        required_stage: str,
+    ) -> tuple[dict[str, object] | None, str | None]:
+        request = urllib.request.Request(
+            url=f"{base_url.rstrip('/')}/health",
+            method="GET",
+            headers=self._auth_headers(auth_token),
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self._parse_timeout(timeout_s, default=10)) as response:
+                payload = json.loads(response.read().decode("utf-8", errors="replace"))
+        except urllib.error.HTTPError as exc:
+            if exc.code in {401, 403}:
+                return None, f"Remote worker auth failed: {base_url}"
+            return None, f"Remote worker request failed ({exc.code}): {base_url}"
+        except (urllib.error.URLError, TimeoutError):
+            return None, f"Remote worker unreachable: {base_url}"
+        except json.JSONDecodeError:
+            return None, f"Remote worker returned invalid health payload: {base_url}"
+
+        if required_stage not in set(payload.get("enabled_stages", [])):
+            return None, f"Remote worker does not support {required_stage}: {base_url}"
+        return payload, None
+
+    @staticmethod
+    def _parse_timeout(raw_timeout: str, *, default: int) -> int:
+        try:
+            return max(1, int(float(raw_timeout.strip()))) if raw_timeout.strip() else default
+        except (TypeError, ValueError, AttributeError):
+            return default
+
+    @staticmethod
+    def _auth_headers(auth_token: str) -> dict[str, str]:
+        token = auth_token.strip()
+        if not token:
+            return {}
+        return {"Authorization": f"Bearer {token}"}
 
     @staticmethod
     def _iter_known_files(roots: list[Path], pattern: str, limit: int = 25) -> list[Path]:
@@ -954,14 +1216,21 @@ class LocalModelCatalog:
             return str(candidate)
         return shutil.which(binary_path)
 
-    def _validate_stage_runtime(self, stage: LocalModelStage, runtime: LocalModelRuntime) -> None:
+    def _validate_stage_runtime(
+        self,
+        stage: LocalModelStage,
+        location: LocalModelLocation,
+        runtime: LocalModelRuntime,
+    ) -> None:
         """! @brief Validate stage runtime.
         @param stage Value for stage.
+        @param location Value for location.
         @param runtime Value for runtime.
         """
         self._validate_stage_name(stage)
-        if runtime not in RUNTIMES_BY_STAGE[stage]:
-            raise ValueError(f"Runtime '{runtime}' is not supported for stage '{stage}'")
+        allowed = RUNTIMES_BY_STAGE_LOCATION.get((stage, location), ())
+        if runtime not in allowed:
+            raise ValueError(f"Runtime '{runtime}' is not supported for stage '{stage}' with location '{location}'")
 
     @staticmethod
     def _validate_stage_name(stage: str) -> None:

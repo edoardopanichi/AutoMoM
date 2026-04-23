@@ -48,7 +48,7 @@ from backend.profiles.manager import VOICE_PROFILE_MANAGER
 
 ensure_directories()
 
-OPENAI_STEP_CHOICES = {"local", "api"}
+OPENAI_STEP_CHOICES = {"local", "remote", "api"}
 
 CORS_ORIGINS = [
     item.strip()
@@ -143,15 +143,15 @@ def get_local_model_runtimes() -> list[LocalModelRuntimeDescriptor]:
     return LOCAL_MODEL_CATALOG.runtime_descriptors()
 
 
-@app.get("/api/models/local/discovery/{stage}/{runtime}", response_model=LocalModelDiscoveryResponse)
-def discover_local_models(stage: str, runtime: str) -> LocalModelDiscoveryResponse:
+@app.get("/api/models/local/discovery/{stage}/{location}/{runtime}", response_model=LocalModelDiscoveryResponse)
+def discover_local_models(stage: str, location: str, runtime: str) -> LocalModelDiscoveryResponse:
     """! @brief Discover local models for a stage/runtime pair.
     @param stage Value for stage.
     @param runtime Value for runtime.
     @return Discovery suggestions.
     """
     try:
-        return LOCAL_MODEL_CATALOG.discover(stage.strip().lower(), runtime.strip())  # type: ignore[arg-type]
+        return LOCAL_MODEL_CATALOG.discover(stage.strip().lower(), location.strip().lower(), runtime.strip())  # type: ignore[arg-type]
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Unknown stage") from exc
     except ValueError as exc:
@@ -411,19 +411,26 @@ def rebuild_profiles(request: ProfileRefreshRequest) -> ProfileRefreshTask:
         raise HTTPException(status_code=400, detail="Invalid execution mode for diarization")
 
     local_model = None
-    if execution == "local":
+    if execution in {"local", "remote"}:
         try:
             local_model = resolve_local_diarization_model(request.local_diarization_model_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if local_model.location != execution:
+            raise HTTPException(status_code=400, detail=f"Selected diarization model is not configured for {execution} execution")
 
     task = VOICE_PROFILE_MANAGER.start_refresh_task(
         diarization_execution=execution,
-        local_diarization_model_id=local_model.model_id if local_model is not None else None,
+        local_diarization_model_id=(local_model.profile_model_ref or local_model.model_id) if local_model is not None else None,
         openai_diarization_model=(request.openai_diarization_model or "").strip() or None,
         embedding_model_ref=local_model.embedding_model_ref if local_model is not None else None,
         compute_device=SETTINGS.compute_device,
         cuda_device_id=SETTINGS.cuda_device_id,
+        remote_model_config=(
+            LOCAL_MODEL_CATALOG.resolve_model("diarization", local_model.model_id).config
+            if local_model is not None and local_model.location == "remote"
+            else None
+        ),
     )
     return task
 
@@ -499,7 +506,7 @@ async def create_job(
     required_local_selections = {
         stage: model_id
         for stage, model_id in selected_local_models.items()
-        if execution_values[f"{stage}_execution"] == "local"
+        if execution_values[f"{stage}_execution"] in {"local", "remote"}
     }
     validation_ok, message = LOCAL_MODEL_CATALOG.validate_selection(required_local_selections)  # type: ignore[arg-type]
     if not validation_ok:
@@ -508,25 +515,43 @@ async def create_job(
     selected_local_diarization_model_id = None
     selected_local_transcription_model_id = None
     selected_local_formatter_model_id = None
-    if execution_values["diarization_execution"] == "local":
+    if execution_values["diarization_execution"] in {"local", "remote"}:
         try:
-            selected_local_diarization_model_id = resolve_local_diarization_model(local_diarization_model_id).model_id
+            selected_diarization_model = resolve_local_diarization_model(local_diarization_model_id)
+            if selected_diarization_model.location != execution_values["diarization_execution"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Selected diarization model is not configured for {execution_values['diarization_execution']} execution",
+                )
+            selected_local_diarization_model_id = selected_diarization_model.model_id
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if execution_values["transcription_execution"] == "local":
+    if execution_values["transcription_execution"] in {"local", "remote"}:
         try:
-            selected_local_transcription_model_id = LOCAL_MODEL_CATALOG.resolve_model(
+            transcription_model = LOCAL_MODEL_CATALOG.resolve_model(
                 "transcription",
                 local_transcription_model_id,
-            ).model_id
+            )
+            if transcription_model.location != execution_values["transcription_execution"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Selected transcription model is not configured for {execution_values['transcription_execution']} execution",
+                )
+            selected_local_transcription_model_id = transcription_model.model_id
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if execution_values["formatter_execution"] == "local":
+    if execution_values["formatter_execution"] in {"local", "remote"}:
         try:
-            selected_local_formatter_model_id = LOCAL_MODEL_CATALOG.resolve_model(
+            formatter_model = LOCAL_MODEL_CATALOG.resolve_model(
                 "formatter",
                 local_formatter_model_id,
-            ).model_id
+            )
+            if formatter_model.location != execution_values["formatter_execution"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Selected formatter model is not configured for {execution_values['formatter_execution']} execution",
+                )
+            selected_local_formatter_model_id = formatter_model.model_id
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
