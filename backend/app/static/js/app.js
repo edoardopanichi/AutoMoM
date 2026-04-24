@@ -608,7 +608,26 @@ function renderTemplates(templates) {
     meta.className = "card-meta";
     meta.textContent = `Version ${template.version}${template.description ? ` | ${template.description}` : ""}`;
 
-    card.append(eyebrow, title, meta);
+    const actionRow = document.createElement("div");
+    actionRow.className = "model-action-row";
+
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "small-btn";
+    editBtn.textContent = "Edit";
+    editBtn.addEventListener("click", () => editTemplateInline(template.template_id));
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "small-btn danger-btn";
+    deleteBtn.textContent = "Delete";
+    const isDefaultTemplate = template.template_id === "default";
+    deleteBtn.disabled = isDefaultTemplate;
+    deleteBtn.title = isDefaultTemplate ? "Default template cannot be deleted." : "Delete template";
+    deleteBtn.addEventListener("click", () => deleteTemplate(template));
+
+    actionRow.append(editBtn, deleteBtn);
+    card.append(eyebrow, title, meta, actionRow);
     container.appendChild(card);
   });
 }
@@ -782,7 +801,17 @@ function renderProfiles(profiles) {
     meta.className = "card-meta";
     meta.textContent = modelSummary.length ? `Embeddings: ${modelSummary.join(", ")}` : "No embeddings stored yet.";
 
-    card.append(eyebrow, title, meta);
+    const actionRow = document.createElement("div");
+    actionRow.className = "model-action-row";
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "small-btn danger-btn";
+    deleteBtn.textContent = "Delete";
+    deleteBtn.addEventListener("click", () => deleteProfile(profile));
+
+    actionRow.append(deleteBtn);
+    card.append(eyebrow, title, meta, actionRow);
     container.appendChild(card);
   });
 }
@@ -1629,6 +1658,44 @@ async function deleteJob(jobId) {
     await loadJobs();
   } catch (error) {
     alert(`Unable to delete job: ${error.message}`);
+  }
+}
+
+/**
+ * @brief Delete Template.
+ * @param {*} template Template summary record.
+ */
+async function deleteTemplate(template) {
+  if (!template?.template_id || template.template_id === "default") return;
+  const confirmed = window.confirm(
+    `Delete template "${template.name}" (${template.template_id}) from stored data?`,
+  );
+  if (!confirmed) return;
+  try {
+    await fetchJSON(`/api/templates/${encodeURIComponent(template.template_id)}`, { method: "DELETE" });
+    await refreshSettings();
+    const editor = qs("#template-creator");
+    if (editor?.dataset.mode === "edit" && qs("#new-template-id")?.value === template.template_id) {
+      toggleTemplateCreator(false);
+    }
+  } catch (error) {
+    alert(`Unable to delete template: ${error.message}`);
+  }
+}
+
+/**
+ * @brief Delete Profile.
+ * @param {*} profile Voice profile summary record.
+ */
+async function deleteProfile(profile) {
+  if (!profile?.profile_id) return;
+  const confirmed = window.confirm(`Delete voice profile "${profile.name}" from stored data?`);
+  if (!confirmed) return;
+  try {
+    await fetchJSON(`/api/profiles/${encodeURIComponent(profile.profile_id)}`, { method: "DELETE" });
+    await refreshSettings();
+  } catch (error) {
+    alert(`Unable to delete voice profile: ${error.message}`);
   }
 }
 
