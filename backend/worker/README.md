@@ -43,6 +43,8 @@ For diarization:
 - `AUTOMOM_REMOTE_PROFILE_MODEL_REF`: profile compatibility id. Keep this stable across machines if you want saved voice profiles to match.
 - `AUTOMOM_REMOTE_DIARIZATION_EMBEDDING_MODEL`: embedding model reference used for speaker/profile matching.
 
+Important: set `AUTOMOM_REMOTE_DIARIZATION_PIPELINE` as a single-line value. Do not split the path across lines. A wrapped value can inject a newline and lead to pyannote/Hugging Face validation failures (for example `HFValidationError`).
+
 For transcription:
 
 - `AUTOMOM_REMOTE_TRANSCRIPTION_BIN`: path to `whisper-cli` on the worker machine.
@@ -68,6 +70,8 @@ AUTOMOM_REMOTE_WORKER_HOST=127.0.0.1 \
 AUTOMOM_REMOTE_DIARIZATION_PIPELINE="data/models/diarization/pyannote-speaker-diarization-community-1/config.yaml" \
 backend/worker/run_diarization_service.sh
 ```
+
+Keep the `AUTOMOM_REMOTE_DIARIZATION_PIPELINE="..."` assignment on one line exactly as above.
 
 Terminal 3:
 
