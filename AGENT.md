@@ -18,6 +18,7 @@ Use this file for operational guidance. Use `README.md` only when you need the c
 
 - `backend/app/main.py` - FastAPI routes, validation, static frontend mount
 - `backend/app/config.py` - environment settings and built-in model specs
+- `backend/app/job_defaults.py` - persisted New Job form defaults
 - `backend/app/job_store.py` - in-memory job runtime plus persisted job state
 - `backend/app/schemas.py` - API and persisted payload schemas
 - `backend/pipeline/orchestrator.py` - nine-stage job flow and artifact writes
@@ -45,6 +46,7 @@ Use this file for operational guidance. Use `README.md` only when you need the c
 | --- | --- | --- |
 | Job stage order, progress, cancellation, artifacts | `backend/pipeline/orchestrator.py` | `backend/tests/unit/test_orchestrator.py`, integration tests |
 | API validation or endpoint payload | `backend/app/main.py`, `backend/app/schemas.py` | `backend/app/static/js/app.js` |
+| New Job default persistence | `backend/app/job_defaults.py` | `backend/app/static/js/app.js`, `backend/tests/unit/test_job_defaults.py` |
 | Local model registration/defaults/discovery | `backend/models/local_catalog.py` | model routes, settings UI |
 | Built-in required model specs or env defaults | `backend/app/config.py` | model manager tests, README config |
 | Speaker profile matching or refresh | `backend/profiles/manager.py` | snippets, diarization model ids |
@@ -69,6 +71,7 @@ Use this file for operational guidance. Use `README.md` only when you need the c
 - Artifact keys are API/UI contracts. Before renaming or removing one, search for `set_artifact`, `artifact_paths`, and frontend URL builders.
 - Common artifact keys include `audio_normalized`, `vad_regions`, `diarization`, `diarization_chunks`, `diarization_stitching`, `snippets`, `speaker_mapping`, `segments_transcript`, `transcript`, `transcription_runtime`, `full_meeting_transcript`, `mom_markdown`, `mom_structured`, `formatter_system_prompt`, `formatter_user_prompt`, `formatter_stdout`, `formatter_stderr`, `formatter_raw_output`, `formatter_validation`, `formatter_reduced_notes`, `openai_audio_chunks`, `export_markdown`, and `job_summary`.
 - The frontend expects tabs named `new-job`, `progress`, `result`, and `settings`, plus SSE events from `/api/jobs/{job_id}/events`.
+- New Job defaults are persisted by `/api/job-defaults`; do not store meeting titles, uploaded file paths, or OpenAI API keys there.
 
 ## Code Patterns
 

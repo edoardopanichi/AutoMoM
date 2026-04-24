@@ -711,6 +711,17 @@ textarea {
   white-space: nowrap;
 }
 
+.secondary-btn {
+  background: rgba(255, 252, 247, 0.72);
+  color: var(--accent-alt);
+  border: 1px solid rgba(13, 92, 99, 0.24);
+  box-shadow: none;
+}
+
+.secondary-btn:hover:not(:disabled) {
+  background: rgba(226, 244, 241, 0.78);
+}
+
 .template-creator {
   margin-top: 0.1rem;
   border-radius: 8px;
@@ -934,11 +945,40 @@ textarea {
   border-top: 1px dashed rgba(53, 37, 27, 0.18);
 }
 
+.submit-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.submit-actions button[type="submit"] {
+  background: linear-gradient(180deg, #eaffd9 0%, #c8f4aa 100%);
+  border-color: rgba(71, 132, 43, 0.28);
+  color: #214f18;
+  box-shadow: 0 10px 22px rgba(72, 128, 43, 0.12);
+}
+
+.submit-actions button[type="submit"]:hover:not(:disabled) {
+  border-color: rgba(71, 132, 43, 0.42);
+  box-shadow: 0 14px 28px rgba(72, 128, 43, 0.16);
+}
+
 .submit-note {
   margin: 0;
   max-width: 34rem;
   color: var(--muted);
   line-height: 1.5;
+}
+
+.submit-note.status-ok {
+  color: var(--ok);
+  font-weight: 800;
+}
+
+.submit-note.status-error {
+  color: var(--danger);
+  font-weight: 800;
 }
 
 .alert {
@@ -1429,6 +1469,7 @@ textarea {
   .template-creator-actions,
   .model-action-row,
   .model-manager-row,
+  .submit-actions,
   .form-submit-row {
     align-items: stretch;
   }
@@ -1436,6 +1477,7 @@ textarea {
   .template-inline-row,
   .template-creator-actions,
   .model-action-row,
+  .submit-actions,
   .form-submit-row {
     flex-direction: column;
   }

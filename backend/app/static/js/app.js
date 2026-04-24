@@ -13,6 +13,7 @@ const state = {
   transcriptionModels: [],
   formatterModels: [],
   jobs: [],
+  jobDefaults: null,
 };
 
 const LAST_JOB_STORAGE_KEY = "automom:lastJobId";
@@ -181,14 +182,16 @@ function formatDateTime(value) {
  * @brief Load Startup Data.
  */
 async function loadStartupData() {
-  const [templates, models, profiles, downloads, localModelCatalog, localRuntimeDescriptors] = await Promise.all([
+  const [templates, models, profiles, downloads, localModelCatalog, localRuntimeDescriptors, jobDefaults] = await Promise.all([
     fetchJSON("/api/templates"),
     fetchJSON("/api/models"),
     fetchJSON("/api/profiles"),
     fetchJSON("/api/models/downloads"),
     fetchJSON("/api/models/local"),
     fetchJSON("/api/models/local/runtimes"),
+    fetchJSON("/api/job-defaults"),
   ]);
+  state.jobDefaults = jobDefaults;
   state.localModelCatalog = localModelCatalog;
   state.localRuntimeDescriptors = localRuntimeDescriptors || [];
   state.diarizationModels = (localModelCatalog.models || []).filter((item) => item.stage === "diarization");
@@ -204,6 +207,7 @@ async function loadStartupData() {
   renderTemplates(templates);
   renderModels(models);
   renderProfiles(profiles);
+  applyNewJobDefaults(jobDefaults);
   startModelDownloadPolling();
 }
 
@@ -333,6 +337,83 @@ function renderExecutionModelLabels() {
   renderDiarizationModels();
   renderTranscriptionModels();
   renderFormatterModels();
+}
+
+/**
+ * @brief Set a select value when the option is still available.
+ * @param {*} selector Select element selector.
+ * @param {*} value Candidate option value.
+ */
+function setSelectValueIfPresent(selector, value) {
+  const select = qs(selector);
+  if (!select || !value) return;
+  if (Array.from(select.options).some((option) => option.value === value && !option.disabled)) {
+    select.value = value;
+  }
+}
+
+/**
+ * @brief Apply persisted New Job defaults to the form.
+ * @param {*} defaults Defaults returned by the API.
+ */
+function applyNewJobDefaults(defaults) {
+  if (!defaults) return;
+  setSelectValueIfPresent("#template-select", defaults.template_id);
+  ["diarization", "transcription", "formatter"].forEach((stage) => {
+    setExecutionMode(stage, defaults[`${stage}_execution`] || "local");
+  });
+  syncCloudExecutionControls();
+  setSelectValueIfPresent("#local-diarization-model", defaults.local_diarization_model_id);
+  setSelectValueIfPresent("#local-transcription-model", defaults.local_transcription_model_id);
+  setSelectValueIfPresent("#local-formatter-model", defaults.local_formatter_model_id);
+  setSelectValueIfPresent("#openai-diarization-model", defaults.openai_diarization_model);
+  setSelectValueIfPresent("#openai-transcription-model", defaults.openai_transcription_model);
+  setSelectValueIfPresent("#openai-formatter-model", defaults.openai_formatter_model);
+}
+
+/**
+ * @brief Build New Job defaults payload from safe form fields.
+ * @return Payload suitable for persistence.
+ */
+function buildNewJobDefaultsPayload() {
+  return {
+    template_id: qs("#template-select").value,
+    diarization_execution: qs("#diarization-execution").value,
+    transcription_execution: qs("#transcription-execution").value,
+    formatter_execution: qs("#formatter-execution").value,
+    local_diarization_model_id: qs("#local-diarization-model").value,
+    local_transcription_model_id: qs("#local-transcription-model").value,
+    local_formatter_model_id: qs("#local-formatter-model").value,
+    openai_diarization_model: qs("#openai-diarization-model").value,
+    openai_transcription_model: qs("#openai-transcription-model").value,
+    openai_formatter_model: qs("#openai-formatter-model").value,
+  };
+}
+
+/**
+ * @brief Save current New Job settings as defaults.
+ */
+async function saveNewJobDefaults() {
+  const status = qs("#job-defaults-status");
+  const button = qs("#save-job-defaults");
+  status.textContent = "Saving New Job defaults...";
+  status.classList.remove("status-ok", "status-error");
+  button.disabled = true;
+  try {
+    const payload = await fetchJSON("/api/job-defaults", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildNewJobDefaultsPayload()),
+    });
+    state.jobDefaults = payload.defaults;
+    status.textContent = "Defaults saved. Meeting title, audio file, and API key are not stored.";
+    status.classList.add("status-ok");
+  } catch (error) {
+    status.textContent = `Unable to save defaults: ${error.message}`;
+    status.classList.add("status-error");
+  } finally {
+    button.disabled = false;
+  }
 }
 
 /**
@@ -1780,6 +1861,7 @@ function bindEvents() {
     button.addEventListener("click", () => switchTab(button.dataset.tab));
   });
   qs("#job-form").addEventListener("submit", startJob);
+  qs("#save-job-defaults").addEventListener("click", saveNewJobDefaults);
   qs("#cancel-job").addEventListener("click", cancelJob);
   qs("#refresh-jobs").addEventListener("click", loadJobs);
   qs("#refresh-profiles-btn").addEventListener("click", refreshProfilesForSelectedModel);

@@ -32,12 +32,15 @@ from backend.app.schemas import (
     LocalStageModelResponse,
     ModelConsentRequest,
     ModelDownloadRequest,
+    NewJobDefaults,
+    NewJobDefaultsSaveResponse,
     ProfileRefreshRequest,
     ProfileRefreshTask,
     SubmitSpeakerMappingRequest,
     TemplateDefinition,
     TemplateDefaultRequest,
 )
+from backend.app.job_defaults import NewJobDefaultsManager
 from backend.models.diarization_registry import list_local_diarization_models, resolve_local_diarization_model
 from backend.models.local_catalog import LOCAL_MODEL_CATALOG
 from backend.models.manager import MODEL_MANAGER
@@ -49,6 +52,7 @@ from backend.profiles.manager import VOICE_PROFILE_MANAGER
 ensure_directories()
 
 OPENAI_STEP_CHOICES = {"local", "remote", "api"}
+NEW_JOB_DEFAULTS = NewJobDefaultsManager(LOCAL_MODEL_CATALOG, TEMPLATE_MANAGER)
 
 CORS_ORIGINS = [
     item.strip()
@@ -88,6 +92,27 @@ def health() -> dict[str, str]:
     @return Dictionary produced by the operation.
     """
     return {"status": "ok"}
+
+
+@app.get("/api/job-defaults", response_model=NewJobDefaults)
+def get_job_defaults() -> NewJobDefaults:
+    """! @brief Get saved New Job defaults.
+    @return Defaults safe for the New Job form.
+    """
+    return NEW_JOB_DEFAULTS.load()
+
+
+@app.post("/api/job-defaults", response_model=NewJobDefaultsSaveResponse)
+def save_job_defaults(defaults: NewJobDefaults) -> NewJobDefaultsSaveResponse:
+    """! @brief Save New Job defaults.
+    @param defaults Defaults submitted by the New Job form.
+    @return Save response.
+    """
+    try:
+        saved = NEW_JOB_DEFAULTS.save(defaults)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return NewJobDefaultsSaveResponse(status="ok", defaults=saved)
 
 
 @app.get("/api/models")

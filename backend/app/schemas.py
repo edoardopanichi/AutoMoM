@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 PipelineStage = Literal[
@@ -178,6 +178,26 @@ class TemplateSummary(BaseModel):
 
 class TemplateDefaultRequest(BaseModel):
     template_id: str
+
+
+class NewJobDefaults(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    template_id: str = "default"
+    diarization_execution: Literal["local", "remote", "api"] = "local"
+    transcription_execution: Literal["local", "remote", "api"] = "local"
+    formatter_execution: Literal["local", "remote", "api"] = "local"
+    local_diarization_model_id: str = ""
+    local_transcription_model_id: str = ""
+    local_formatter_model_id: str = ""
+    openai_diarization_model: str = "gpt-4o-transcribe-diarize"
+    openai_transcription_model: str = "gpt-4o-transcribe"
+    openai_formatter_model: str = "gpt-5-mini"
+
+
+class NewJobDefaultsSaveResponse(BaseModel):
+    status: str
+    defaults: NewJobDefaults
 
 
 class SpeakerSnippet(BaseModel):

@@ -19,6 +19,7 @@ The items below were verified against the current source tree and test suite.
 - Local-first browser UI with:
   - audio upload
   - template selection and inline template creation
+  - persisted New Job defaults for template, routing, and model selectors
   - per-stage local/OpenAI execution toggles
   - OpenAI API key field shown only when needed
   - progress KPIs, progress bars, logs, and SSE updates
@@ -74,6 +75,7 @@ The items below were verified against the current source tree and test suite.
   - formatter model pull via Ollama `/api/pull`
 - API features:
   - health and startup readiness endpoints
+  - New Job default get/save endpoints
   - job creation/listing/status/SSE/cancel
   - artifact and snippet download endpoints
   - template CRUD endpoints
@@ -183,6 +185,8 @@ Artifact keys are exposed through the job API and are part of the runtime contra
   - frontend entrypoint
 - `GET /api/health`
 - `GET /api/system/startup-check`
+- `GET /api/job-defaults`
+- `POST /api/job-defaults`
 - `GET /api/models`
 - `GET /api/models/local`
 - `GET /api/models/local/{stage}`

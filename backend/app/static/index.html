@@ -132,8 +132,15 @@
               <input type="text" id="meeting-title" placeholder="Optional" />
             </label>
             <div class="form-submit-row">
-              <button type="submit">Start Job</button>
-              <p class="submit-note">Starts streaming status updates into the Progress panel immediately.</p>
+              <div class="submit-actions">
+                <button type="submit">Start Job</button>
+                <button type="button" id="save-job-defaults" class="small-btn secondary-btn">
+                  Save current settings as default
+                </button>
+              </div>
+              <p id="job-defaults-status" class="submit-note">
+                Starts streaming status updates into the Progress panel immediately.
+              </p>
             </div>
           </div>
 

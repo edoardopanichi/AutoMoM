@@ -25,7 +25,7 @@ from backend.pipeline.vad import detect_speech_regions
 APP_VERSION = "0.1.0"
 AUTH_TOKEN = os.getenv("AUTOMOM_REMOTE_AUTH_TOKEN", "").strip()
 ENABLED_STAGES = {
-    item.strip()
+    item.strip().lower()
     for item in os.getenv("AUTOMOM_REMOTE_WORKER_ENABLED_STAGES", "diarization,transcription").split(",")
     if item.strip()
 }
@@ -68,7 +68,12 @@ def _save_upload(upload: UploadFile) -> Path:
 def _load_normalized_audio(upload: UploadFile) -> tuple[Path, Path]:
     uploaded_path = _save_upload(upload)
     normalized_path = uploaded_path.with_name(f"{uploaded_path.stem}-normalized.wav")
-    normalize_audio(uploaded_path, normalized_path, ffmpeg_bin=SETTINGS.ffmpeg_bin)
+    try:
+        normalize_audio(uploaded_path, normalized_path, ffmpeg_bin=SETTINGS.ffmpeg_bin)
+    except Exception:
+        uploaded_path.unlink(missing_ok=True)
+        normalized_path.unlink(missing_ok=True)
+        raise
     return uploaded_path, normalized_path
 
 
