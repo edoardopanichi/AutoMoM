@@ -121,7 +121,7 @@ def diarize_audio(
         raise HTTPException(status_code=404, detail="Diarization is disabled")
     uploaded_path, normalized_path = _load_normalized_audio(audio_file)
     try:
-        speech_regions = detect_speech_regions(normalized_path, ffmpeg_bin=SETTINGS.ffmpeg_bin)
+        speech_regions = detect_speech_regions(normalized_path)
         result = diarize(
             normalized_path,
             speech_regions,
