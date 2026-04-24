@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from backend.app.config import SETTINGS
-from backend.app.schemas import LocalModelDefaultRequest, LocalModelRegistrationRequest
+from backend.app.schemas import LocalModelRegistrationRequest
 from backend.models.local_catalog import LocalModelCatalog
 
 
@@ -30,14 +32,16 @@ def test_local_catalog_seeds_from_settings(isolated_settings, tmp_path: Path) ->
     catalog = LocalModelCatalog()
     payload = catalog.list_all()
 
-    assert payload.defaults["diarization"] == "pyannote-community-1"
-    assert payload.defaults["transcription"] == "whispercpp-local"
-    assert payload.defaults["formatter"] == "formatter-ollama-default"
+    assert {item.model_id for item in payload.models} >= {
+        "pyannote-community-1",
+        "whispercpp-local",
+        "formatter-ollama-default",
+    }
     assert any(item.model_id == "whispercpp-local" for item in payload.models)
 
 
-def test_register_ollama_model_updates_default(isolated_settings, monkeypatch) -> None:
-    """! @brief Test register ollama model updates default.
+def test_register_ollama_model_makes_it_selectable(isolated_settings, monkeypatch) -> None:
+    """! @brief Test register ollama model makes it selectable.
     @param isolated_settings Value for isolated settings.
     @param monkeypatch Value for monkeypatch.
     """
@@ -51,12 +55,11 @@ def test_register_ollama_model_updates_default(isolated_settings, monkeypatch) -
             runtime="ollama",
             name="Phi-4 Mini",
             config={"tag": "phi4-mini"},
-            set_as_default=True,
         )
     )
 
     stage_payload = catalog.list_stage("formatter")
-    assert record.model_id == stage_payload.selected_model_id
+    assert record.model_id in {item.model_id for item in stage_payload.models}
     assert any(item.config.get("tag") == "phi4-mini" for item in stage_payload.models)
 
 
@@ -85,35 +88,47 @@ def test_register_whisper_cpp_requires_existing_paths(isolated_settings, tmp_pat
         raise AssertionError("Expected whisper.cpp registration to fail for missing model_path")
 
 
-def test_set_default_rejects_uninstalled_model(isolated_settings, monkeypatch) -> None:
-    """! @brief Test set default rejects uninstalled model.
+def test_delete_model_is_not_blocked_by_legacy_defaults(isolated_settings, monkeypatch) -> None:
+    """! @brief Test delete model is not blocked by legacy defaults.
     @param isolated_settings Value for isolated settings.
     @param monkeypatch Value for monkeypatch.
     """
     catalog = LocalModelCatalog()
-    monkeypatch.setattr(catalog, "_ollama_has_model", lambda _tag: False)
-    payload = catalog._seed_payload()
-    payload["models"].append(
-        {
-            "model_id": "formatter-phi4",
-            "stage": "formatter",
-            "runtime": "ollama",
-            "name": "Phi-4 Mini",
-            "installed": False,
-            "languages": ["english"],
-            "notes": "",
-            "config": {"tag": "phi4-mini"},
-            "validation_error": "Ollama tag is not installed locally: phi4-mini",
-        }
+    monkeypatch.setattr(catalog, "_ollama_has_model", lambda tag: tag == "phi4-mini")
+    record = catalog.register(
+        LocalModelRegistrationRequest(
+            stage="formatter",
+            location="local",
+            runtime="ollama",
+            name="Phi-4 Mini",
+            config={"tag": "phi4-mini"},
+        )
     )
-    catalog._write_payload(payload)
 
+    catalog.delete(record.model_id)
+
+    assert all(item.model_id != record.model_id for item in catalog.list_all().models)
+
+
+def test_registration_rejects_set_as_default(isolated_settings) -> None:
+    """! @brief Test registration rejects legacy default flag.
+    @param isolated_settings Value for isolated settings.
+    """
     try:
-        catalog.set_default(LocalModelDefaultRequest(stage="formatter", model_id="formatter-phi4"))
-    except ValueError as exc:
-        assert "not installed locally" in str(exc)
+        LocalModelRegistrationRequest.model_validate(
+            {
+                "stage": "formatter",
+                "location": "local",
+                "runtime": "ollama",
+                "name": "Phi-4 Mini",
+                "config": {"tag": "phi4-mini"},
+                "set_as_default": True,
+            }
+        )
+    except ValidationError as exc:
+        assert "Extra inputs are not permitted" in str(exc)
     else:  # pragma: no cover
-        raise AssertionError("Expected set_default to reject an uninstalled model")
+        raise AssertionError("Expected set_as_default to be rejected")
 
 
 def test_local_catalog_repairs_seeded_default_paths(isolated_settings, tmp_path: Path, monkeypatch) -> None:

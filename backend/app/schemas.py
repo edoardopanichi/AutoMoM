@@ -45,14 +45,6 @@ class ModelDownloadRequest(BaseModel):
     model_id: str
 
 
-class FormatterModelRequest(BaseModel):
-    model_tag: str
-
-
-class FormatterModelResponse(BaseModel):
-    model_tag: str
-
-
 class LocalModelRecord(BaseModel):
     model_id: str
     stage: LocalModelStage
@@ -67,7 +59,6 @@ class LocalModelRecord(BaseModel):
 
 
 class LocalModelCatalogResponse(BaseModel):
-    defaults: dict[LocalModelStage, str]
     models: list[LocalModelRecord]
 
 
@@ -78,6 +69,8 @@ class LocalStageModelResponse(BaseModel):
 
 
 class LocalModelRegistrationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     stage: LocalModelStage
     location: LocalModelLocation = "local"
     runtime: LocalModelRuntime
@@ -86,12 +79,6 @@ class LocalModelRegistrationRequest(BaseModel):
     languages: list[str] = Field(default_factory=list)
     notes: str = ""
     config: dict[str, str] = Field(default_factory=dict)
-    set_as_default: bool = False
-
-
-class LocalModelDefaultRequest(BaseModel):
-    stage: LocalModelStage
-    model_id: str
 
 
 class LocalModelFieldDescriptor(BaseModel):
@@ -130,13 +117,15 @@ class LocalModelDiscoveryResponse(BaseModel):
 
 
 class LocalModelInstallRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     stage: LocalModelStage
+    location: LocalModelLocation = "local"
     runtime: LocalModelRuntime
     name: str
     languages: list[str] = Field(default_factory=list)
     notes: str = ""
     config: dict[str, str] = Field(default_factory=dict)
-    set_as_default: bool = False
 
 
 class LocalModelInstallTask(BaseModel):
@@ -173,11 +162,6 @@ class TemplateSummary(BaseModel):
     name: str
     version: str
     description: str
-    is_default: bool = False
-
-
-class TemplateDefaultRequest(BaseModel):
-    template_id: str
 
 
 class NewJobDefaults(BaseModel):

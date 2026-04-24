@@ -61,11 +61,6 @@ class TemplateManager:
         safe_id = TemplateManager._validate_template_id(template_id)
         return SETTINGS.templates_dir / f"{safe_id}.json"
 
-    @staticmethod
-    def _default_template_path() -> Path:
-        """! @brief Default template selection path."""
-        return SETTINGS.templates_dir / "selected_template.txt"
-
     def _ensure_default_template(self) -> None:
         """! @brief Ensure default template.
         """
@@ -87,7 +82,6 @@ class TemplateManager:
         @return List produced by the operation.
         """
         result: list[TemplateSummary] = []
-        default_template_id = self.get_default_template_id()
         for path in sorted(SETTINGS.templates_dir.glob("*.json")):
             payload = json.loads(path.read_text(encoding="utf-8"))
             result.append(
@@ -96,36 +90,9 @@ class TemplateManager:
                     name=payload["name"],
                     version=payload["version"],
                     description=payload.get("description", ""),
-                    is_default=payload["template_id"] == default_template_id,
                 )
             )
         return result
-
-    def get_default_template_id(self) -> str:
-        """! @brief Get selected default template id.
-        @return Template id.
-        """
-        path = self._default_template_path()
-        if path.exists():
-            selected = path.read_text(encoding="utf-8").strip()
-            if selected:
-                try:
-                    self.load(selected)
-                    return selected
-                except (FileNotFoundError, ValueError):
-                    pass
-        return DEFAULT_TEMPLATE_ID
-
-    def set_default_template_id(self, template_id: str) -> str:
-        """! @brief Set selected default template id.
-        @param template_id Identifier of the template.
-        @return Template id.
-        """
-        selected = self._validate_template_id(template_id)
-        self.load(selected)
-        SETTINGS.templates_dir.mkdir(parents=True, exist_ok=True)
-        self._default_template_path().write_text(selected, encoding="utf-8")
-        return selected
 
     def load(self, template_id: str) -> TemplateDefinition:
         """! @brief Load operation.
@@ -152,13 +119,10 @@ class TemplateManager:
         """
         if template_id == DEFAULT_TEMPLATE_ID:
             raise ValueError("Default template cannot be deleted")
-        was_default = self.get_default_template_id() == template_id
         meta_path = self._template_meta_path(template_id)
         if not meta_path.exists():
             raise FileNotFoundError(template_id)
         meta_path.unlink(missing_ok=True)
-        if was_default:
-            self.set_default_template_id(DEFAULT_TEMPLATE_ID)
 
     def build_formatter_prompt(
         self,

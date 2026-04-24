@@ -12,10 +12,6 @@ class FakeTemplateManager:
     def __init__(self, templates: set[str] | None = None) -> None:
         self.templates = templates or {"default", "board_sync"}
 
-    def get_default_template_id(self) -> str:
-        """! @brief Return fake default template id."""
-        return "default"
-
     def load(self, template_id: str) -> object:
         """! @brief Load fake template."""
         if template_id not in self.templates:
@@ -42,6 +38,14 @@ class FakeLocalCatalog:
                 name="Remote transcription",
                 installed=True,
             ),
+            "transcription-local": LocalModelRecord(
+                model_id="transcription-local",
+                stage="transcription",
+                location="local",
+                runtime="whisper.cpp",
+                name="Local transcription",
+                installed=True,
+            ),
             "formatter-local": LocalModelRecord(
                 model_id="formatter-local",
                 stage="formatter",
@@ -62,15 +66,8 @@ class FakeLocalCatalog:
         }
 
     def list_all(self) -> object:
-        """! @brief Return fake catalog defaults."""
-        return SimpleNamespace(
-            defaults={
-                "diarization": "diarization-local",
-                "transcription": "transcription-remote",
-                "formatter": "formatter-local",
-            },
-            models=list(self.records.values()),
-        )
+        """! @brief Return fake catalog records."""
+        return SimpleNamespace(models=list(self.records.values()))
 
     def resolve_model(self, stage: str, model_id: str | None = None) -> LocalModelRecord:
         """! @brief Resolve a fake model by id."""
@@ -107,6 +104,51 @@ def test_new_job_defaults_persist_across_manager_instances(isolated_settings) ->
     assert reloaded.template_id == "board_sync"
     assert reloaded.transcription_execution == "remote"
     assert reloaded.openai_formatter_model == "gpt-4.1"
+
+
+def test_new_job_defaults_initial_fallback_uses_first_installed_local_models(isolated_settings) -> None:
+    """! @brief Test initial defaults use built-in local choices.
+    @param isolated_settings Value for isolated settings.
+    """
+    defaults = NewJobDefaultsManager(FakeLocalCatalog(), FakeTemplateManager()).load()
+
+    assert defaults.template_id == "default"
+    assert defaults.diarization_execution == "local"
+    assert defaults.transcription_execution == "local"
+    assert defaults.formatter_execution == "local"
+    assert defaults.local_diarization_model_id == "diarization-local"
+    assert defaults.local_transcription_model_id == "transcription-local"
+    assert defaults.local_formatter_model_id == "formatter-local"
+
+
+def test_new_job_defaults_repairs_stale_saved_model(isolated_settings) -> None:
+    """! @brief Test stale saved model selections repair to built-in local choices.
+    @param isolated_settings Value for isolated settings.
+    """
+    catalog = FakeLocalCatalog()
+    manager = NewJobDefaultsManager(catalog, FakeTemplateManager())
+    manager.save(
+        NewJobDefaults(
+            diarization_execution="api",
+            transcription_execution="api",
+            formatter_execution="local",
+            local_formatter_model_id="formatter-local",
+        )
+    )
+    del catalog.records["formatter-local"]
+    catalog.records["formatter-replacement"] = LocalModelRecord(
+        model_id="formatter-replacement",
+        stage="formatter",
+        location="local",
+        runtime="ollama",
+        name="Replacement formatter",
+        installed=True,
+    )
+
+    repaired = manager.load()
+
+    assert repaired.formatter_execution == "local"
+    assert repaired.local_formatter_model_id == "formatter-replacement"
 
 
 def test_new_job_defaults_reject_invalid_template(isolated_settings) -> None:

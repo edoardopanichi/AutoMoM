@@ -1,0 +1,12 @@
+{
+  "template_id": "xlab_MoM",
+  "diarization_execution": "local",
+  "transcription_execution": "local",
+  "formatter_execution": "local",
+  "local_diarization_model_id": "pyannote-community-1",
+  "local_transcription_model_id": "whispercpp-local",
+  "local_formatter_model_id": "formatter-ollama-default",
+  "openai_diarization_model": "gpt-4o-transcribe-diarize",
+  "openai_transcription_model": "gpt-4o-transcribe",
+  "openai_formatter_model": "gpt-5-mini"
+}

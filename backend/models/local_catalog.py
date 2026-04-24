@@ -14,7 +14,6 @@ from uuid import uuid4
 from backend.app.config import SETTINGS
 from backend.app.schemas import (
     LocalModelCatalogResponse,
-    LocalModelDefaultRequest,
     LocalModelDiscoveryResponse,
     LocalModelDiscoverySuggestion,
     LocalModelFieldDescriptor,
@@ -54,25 +53,12 @@ class LocalModelCatalog:
         """
         return SETTINGS.models_dir / "catalog.json"
 
-    def _defaults_path(self) -> Path:
-        """! @brief Defaults path.
-        @return Path result produced by the operation.
-        """
-        return SETTINGS.models_dir / "defaults.json"
-
-    def _legacy_formatter_selection_path(self) -> Path:
-        """! @brief Legacy formatter selection path.
-        @return Path result produced by the operation.
-        """
-        return SETTINGS.models_dir / "formatter" / "selected_model.txt"
-
     def list_all(self) -> LocalModelCatalogResponse:
         """! @brief List all operation.
         @return Result produced by the operation.
         """
         payload = self._load_payload()
         return LocalModelCatalogResponse(
-            defaults=payload["defaults"],
             models=[self._validate_record(LocalModelRecord.model_validate(item)) for item in payload["models"]],
         )
 
@@ -88,7 +74,7 @@ class LocalModelCatalog:
             for item in payload["models"]
             if item.get("stage") == stage
         ]
-        selected = payload["defaults"].get(stage) or (models[0].model_id if models else "")
+        selected = next((item.model_id for item in models if item.installed), models[0].model_id if models else "")
         return LocalStageModelResponse(stage=stage, selected_model_id=selected, models=models)
 
     def resolve_model(self, stage: LocalModelStage, model_id: str | None = None) -> LocalModelRecord:
@@ -98,8 +84,10 @@ class LocalModelCatalog:
         @return Result produced by the operation.
         """
         self._validate_stage_name(stage)
+        wanted = (model_id or "").strip()
+        if not wanted:
+            raise ValueError(f"Local {stage} model id is required")
         payload = self._load_payload()
-        wanted = (model_id or payload["defaults"].get(stage) or "").strip()
         models = [
             self._validate_record(LocalModelRecord.model_validate(item))
             for item in payload["models"]
@@ -107,8 +95,6 @@ class LocalModelCatalog:
         ]
         if not models:
             raise ValueError(f"No local models are registered for stage '{stage}'")
-        if not wanted:
-            return models[0]
         for item in models:
             if item.model_id == wanted:
                 return item
@@ -144,10 +130,7 @@ class LocalModelCatalog:
             raise ValueError(validated.validation_error or "Model validation failed")
 
         payload["models"].append(validated.model_dump())
-        if request.set_as_default or not payload["defaults"].get(request.stage):
-            payload["defaults"][request.stage] = validated.model_id
         self._write_payload(payload)
-        self._sync_legacy_settings()
         return validated
 
     def delete(self, model_id: str) -> None:
@@ -155,28 +138,11 @@ class LocalModelCatalog:
         @param model_id Identifier of the target model.
         """
         payload = self._load_payload()
-        for stage, selected_model_id in payload["defaults"].items():
-            if selected_model_id == model_id:
-                raise ValueError("Cannot delete the selected default model for a stage")
         next_models = [item for item in payload["models"] if item.get("model_id") != model_id]
         if len(next_models) == len(payload["models"]):
             raise ValueError(f"Unknown local model: {model_id}")
         payload["models"] = next_models
         self._write_payload(payload)
-
-    def set_default(self, request: LocalModelDefaultRequest) -> LocalStageModelResponse:
-        """! @brief Set default operation.
-        @param request Request payload for the operation.
-        @return Result produced by the operation.
-        """
-        payload = self._load_payload()
-        selected = self.resolve_model(request.stage, request.model_id)
-        if not selected.installed:
-            raise ValueError(selected.validation_error or "Selected model is not ready")
-        payload["defaults"][request.stage] = selected.model_id
-        self._write_payload(payload)
-        self._sync_legacy_settings()
-        return self.list_stage(request.stage)
 
     def runtime_descriptors(self) -> list[LocalModelRuntimeDescriptor]:
         """! @brief Describe model runtime forms supported by the catalog.
@@ -494,43 +460,6 @@ class LocalModelCatalog:
                 return False, record.validation_error or f"Local {stage} model '{record.name}' is not installed"
         return True, None
 
-    def get_formatter_tag(self) -> str:
-        """! @brief Get formatter tag.
-        @return str result produced by the operation.
-        """
-        try:
-            selected = self.resolve_model("formatter")
-        except ValueError:
-            return ""
-        if selected.runtime != "ollama":
-            return ""
-        return selected.config.get("tag", "")
-
-    def set_formatter_tag(self, model_tag: str) -> str:
-        """! @brief Set formatter tag.
-        @param model_tag Value for model tag.
-        @return str result produced by the operation.
-        """
-        normalized = model_tag.strip()
-        if not normalized:
-            raise ValueError("Formatter model tag cannot be empty")
-        stage_models = self.list_stage("formatter")
-        for item in stage_models.models:
-            if item.runtime == "ollama" and item.config.get("tag") == normalized:
-                self.set_default(LocalModelDefaultRequest(stage="formatter", model_id=item.model_id))
-                return normalized
-
-        record = self.register(
-            LocalModelRegistrationRequest(
-                stage="formatter",
-                runtime="ollama",
-                name=normalized,
-                config={"tag": normalized},
-                set_as_default=True,
-            )
-        )
-        return record.config.get("tag", normalized)
-
     def _load_payload(self) -> dict[str, object]:
         """! @brief Load payload.
         @return Dictionary produced by the operation.
@@ -540,24 +469,15 @@ class LocalModelCatalog:
             models = json.loads(self._catalog_path().read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"Invalid local model catalog JSON: {exc}") from exc
-        try:
-            defaults = json.loads(self._defaults_path().read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"Invalid local model defaults JSON: {exc}") from exc
 
-        normalized_defaults = {stage: str(defaults.get(stage, "")).strip() for stage in STAGES}
         normalized_models = [
             LocalModelRecord.model_validate(item).model_dump(mode="json")
             for item in models
         ]
         normalized_models, repaired = self._repair_seeded_default_paths(normalized_models)
-        if any(stage not in normalized_defaults for stage in STAGES):
-            for stage in STAGES:
-                normalized_defaults.setdefault(stage, "")
-            repaired = True
         if repaired:
-            self._write_payload({"models": normalized_models, "defaults": normalized_defaults})
-        return {"models": normalized_models, "defaults": normalized_defaults}
+            self._write_payload({"models": normalized_models})
+        return {"models": normalized_models}
 
     def _write_payload(self, payload: dict[str, object]) -> None:
         """! @brief Write payload.
@@ -565,12 +485,11 @@ class LocalModelCatalog:
         """
         self._catalog_path().parent.mkdir(parents=True, exist_ok=True)
         self._catalog_path().write_text(json.dumps(payload["models"], indent=2), encoding="utf-8")
-        self._defaults_path().write_text(json.dumps(payload["defaults"], indent=2), encoding="utf-8")
 
     def _ensure_seeded(self) -> None:
         """! @brief Ensure seeded.
         """
-        if self._catalog_path().exists() and self._defaults_path().exists():
+        if self._catalog_path().exists():
             return
         seeded = self._seed_payload()
         self._write_payload(seeded)
@@ -581,7 +500,7 @@ class LocalModelCatalog:
         """
         formatter_runtime: LocalModelRuntime = "command" if SETTINGS.formatter_backend == "command" else "ollama"
         formatter_model_id = "formatter-command-default" if formatter_runtime == "command" else "formatter-ollama-default"
-        formatter_tag = self._legacy_formatter_tag() or SETTINGS.formatter_ollama_model
+        formatter_tag = SETTINGS.formatter_ollama_model
         models = [
             LocalModelRecord(
                 model_id="pyannote-community-1",
@@ -627,14 +546,7 @@ class LocalModelCatalog:
                 ),
             ),
         ]
-        return {
-            "models": [self._validate_record(item).model_dump(mode="json") for item in models],
-            "defaults": {
-                "diarization": "pyannote-community-1",
-                "transcription": "whispercpp-local",
-                "formatter": formatter_model_id,
-            },
-        }
+        return {"models": [self._validate_record(item).model_dump(mode="json") for item in models]}
 
     def _validate_record(self, record: LocalModelRecord) -> LocalModelRecord:
         """! @brief Validate record.
@@ -986,7 +898,6 @@ class LocalModelCatalog:
                     languages=request.languages,
                     notes=request.notes,
                     config={"tag": tag},
-                    set_as_default=request.set_as_default,
                 )
             )
             self._update_install_task(
@@ -1179,32 +1090,6 @@ class LocalModelCatalog:
     def _now() -> datetime:
         """! @brief Current UTC time."""
         return datetime.now(timezone.utc)
-
-    def _legacy_formatter_tag(self) -> str:
-        """! @brief Legacy formatter tag.
-        @return str result produced by the operation.
-        """
-        path = self._legacy_formatter_selection_path()
-        if not path.exists():
-            return ""
-        return path.read_text(encoding="utf-8").strip()
-
-    def _sync_legacy_settings(self) -> None:
-        """! @brief Sync legacy settings.
-        """
-        try:
-            formatter = self.resolve_model("formatter")
-        except ValueError:
-            return
-        if formatter.runtime == "ollama":
-            tag = formatter.config.get("tag", "").strip()
-            if tag:
-                self._legacy_formatter_selection_path().parent.mkdir(parents=True, exist_ok=True)
-                self._legacy_formatter_selection_path().write_text(tag, encoding="utf-8")
-                object.__setattr__(SETTINGS, "formatter_ollama_model", tag)
-        elif formatter.runtime == "command":
-            object.__setattr__(SETTINGS, "formatter_command", formatter.config.get("command_template", ""))
-            object.__setattr__(SETTINGS, "formatter_model_path", formatter.config.get("model_path", ""))
 
     def _resolve_binary(self, binary_path: str) -> str | None:
         """! @brief Resolve binary.

@@ -6,7 +6,7 @@ const state = {
   modelDownloadPoller: null,
   profileRefreshPoller: null,
   speakerFormFingerprint: null,
-  localModelCatalog: { defaults: {}, models: [] },
+  localModelCatalog: { models: [] },
   localRuntimeDescriptors: [],
   localModelInstallPoller: null,
   diarizationModels: [],
@@ -227,7 +227,7 @@ function renderDiarizationModels() {
     option.disabled = !model.installed;
     select.appendChild(option);
   });
-  select.value = state.localModelCatalog.defaults.diarization || select.options[0]?.value || "";
+  select.value = select.options[0]?.value || "";
 }
 
 /**
@@ -247,7 +247,7 @@ function renderTranscriptionModels() {
     option.disabled = !model.installed;
     select.appendChild(option);
   });
-  select.value = state.localModelCatalog.defaults.transcription || select.options[0]?.value || "";
+  select.value = select.options[0]?.value || "";
 }
 
 /**
@@ -307,7 +307,7 @@ function renderFormatterModels() {
     option.disabled = !model.installed;
     select.appendChild(option);
   });
-  select.value = state.localModelCatalog.defaults.formatter || select.options[0]?.value || "";
+  select.value = select.options[0]?.value || "";
 }
 
 /**
@@ -317,17 +317,16 @@ function renderFormatterModels() {
 function renderTemplateSelect(templates) {
   const select = qs("#template-select");
   const currentValue = select.value;
-  const defaultTemplate = templates.find((template) => template.is_default) || templates[0];
   select.innerHTML = "";
   templates.forEach((template) => {
     const option = document.createElement("option");
     option.value = template.template_id;
-    option.textContent = `${template.name} (${template.version})${template.is_default ? " - default" : ""}`;
+    option.textContent = `${template.name} (${template.version})`;
     select.appendChild(option);
   });
   select.value = templates.some((template) => template.template_id === currentValue)
     ? currentValue
-    : defaultTemplate?.template_id || "";
+    : templates[0]?.template_id || "";
 }
 
 /**
@@ -607,31 +606,9 @@ function renderTemplates(templates) {
 
     const meta = document.createElement("div");
     meta.className = "card-meta";
-    meta.textContent = `Version ${template.version}${template.is_default ? " | Default" : ""}${template.description ? ` | ${template.description}` : ""}`;
+    meta.textContent = `Version ${template.version}${template.description ? ` | ${template.description}` : ""}`;
 
-    const actions = document.createElement("div");
-    actions.className = "model-action-row";
-
-    const defaultBtn = document.createElement("button");
-    defaultBtn.type = "button";
-    defaultBtn.className = "small-btn";
-    defaultBtn.textContent = template.is_default ? "Default" : "Set default";
-    defaultBtn.disabled = Boolean(template.is_default);
-    defaultBtn.addEventListener("click", async () => {
-      try {
-        await fetchJSON("/api/templates/default", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ template_id: template.template_id }),
-        });
-        await refreshSettings();
-      } catch (error) {
-        alert(`Unable to set default template: ${error.message}`);
-      }
-    });
-    actions.append(defaultBtn);
-
-    card.append(eyebrow, title, meta, actions);
+    card.append(eyebrow, title, meta);
     container.appendChild(card);
   });
 }
@@ -667,8 +644,7 @@ function renderModels(models) {
 
       const info = document.createElement("div");
       info.className = "card-meta";
-      const defaultForStage = state.localModelCatalog.defaults[model.stage] === model.model_id ? " | Default" : "";
-      info.textContent = `Installed: ${model.installed ? "yes" : "no"} | Stage: ${model.stage}${defaultForStage}`;
+      info.textContent = `Installed: ${model.installed ? "yes" : "no"} | Stage: ${model.stage}`;
 
       const details = document.createElement("div");
       details.className = "card-meta";
@@ -677,28 +653,9 @@ function renderModels(models) {
       const actionRow = document.createElement("div");
       actionRow.className = "model-action-row";
 
-      const defaultBtn = document.createElement("button");
-      defaultBtn.className = "download-btn";
-      defaultBtn.textContent = "Set default";
-      defaultBtn.disabled = !model.installed || state.localModelCatalog.defaults[model.stage] === model.model_id;
-      defaultBtn.addEventListener("click", async () => {
-        try {
-          await fetchJSON("/api/models/local/defaults", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ stage: model.stage, model_id: model.model_id }),
-          });
-          await refreshSettings();
-        } catch (error) {
-          alert(`Unable to set default: ${error.message}`);
-        }
-      });
-      actionRow.append(defaultBtn);
-
       const deleteBtn = document.createElement("button");
       deleteBtn.className = "download-btn";
       deleteBtn.textContent = "Delete";
-      deleteBtn.disabled = state.localModelCatalog.defaults[model.stage] === model.model_id;
       deleteBtn.addEventListener("click", async () => {
         try {
           await fetchJSON(`/api/models/local/${encodeURIComponent(model.model_id)}`, { method: "DELETE" });
@@ -1053,7 +1010,6 @@ function buildLocalModelPayload() {
       .map((item) => item.trim())
       .filter(Boolean),
     notes: qs("#local-model-notes").value.trim(),
-    set_as_default: qs("#local-model-default").checked,
     config,
   };
 }

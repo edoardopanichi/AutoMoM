@@ -18,11 +18,8 @@ from backend.app.job_store import OpenAIJobConfig
 from backend.app.schemas import (
     CreateVoiceProfileRequest,
     DiarizationLocalModelResponse,
-    FormatterModelRequest,
-    FormatterModelResponse,
     JobListResponse,
     LocalModelCatalogResponse,
-    LocalModelDefaultRequest,
     LocalModelDiscoveryResponse,
     LocalModelInstallRequest,
     LocalModelInstallTask,
@@ -38,7 +35,6 @@ from backend.app.schemas import (
     ProfileRefreshTask,
     SubmitSpeakerMappingRequest,
     TemplateDefinition,
-    TemplateDefaultRequest,
 )
 from backend.app.job_defaults import NewJobDefaultsManager
 from backend.models.diarization_registry import list_local_diarization_models, resolve_local_diarization_model
@@ -121,26 +117,6 @@ def models() -> list[dict[str, object]]:
     @return List produced by the operation.
     """
     return [item.model_dump() for item in MODEL_MANAGER.statuses()]
-
-
-@app.get("/api/models/formatter", response_model=FormatterModelResponse)
-def get_formatter_model() -> FormatterModelResponse:
-    """! @brief Get formatter model.
-    @return Result produced by the operation.
-    """
-    return FormatterModelResponse(model_tag=LOCAL_MODEL_CATALOG.get_formatter_tag())
-
-
-@app.post("/api/models/formatter", response_model=FormatterModelResponse)
-def set_formatter_model(request: FormatterModelRequest) -> FormatterModelResponse:
-    """! @brief Set formatter model.
-    @param request Request payload for the operation.
-    """
-    try:
-        model_tag = LOCAL_MODEL_CATALOG.set_formatter_tag(request.model_tag)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return FormatterModelResponse(model_tag=model_tag)
 
 
 @app.get("/api/models/diarization", response_model=DiarizationLocalModelResponse)
@@ -252,18 +228,6 @@ def delete_local_model(model_id: str) -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/api/models/local/defaults", response_model=LocalStageModelResponse)
-def set_local_model_default(request: LocalModelDefaultRequest) -> LocalStageModelResponse:
-    """! @brief Set local model default.
-    @param request Request payload for the operation.
-    @return Result produced by the operation.
-    """
-    try:
-        return LOCAL_MODEL_CATALOG.set_default(request)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
 @app.post("/api/models/consent")
 def model_consent(request: ModelConsentRequest) -> dict[str, str]:
     """! @brief Model consent.
@@ -346,21 +310,6 @@ def save_template(template: TemplateDefinition) -> dict[str, str]:
     """
     TEMPLATE_MANAGER.save(template)
     return {"status": "ok"}
-
-
-@app.post("/api/templates/default")
-def set_default_template(request: TemplateDefaultRequest) -> dict[str, str]:
-    """! @brief Set default template.
-    @param request Request payload used by the operation.
-    @return Dictionary produced by the operation.
-    """
-    try:
-        template_id = TEMPLATE_MANAGER.set_default_template_id(request.template_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Template not found") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"status": "ok", "template_id": template_id}
 
 
 @app.delete("/api/templates/{template_id}")

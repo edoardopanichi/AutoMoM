@@ -11,16 +11,13 @@ from backend.app.schemas import LocalModelRecord, NewJobDefaults
 
 
 class TemplateResolver(Protocol):
-    def get_default_template_id(self) -> str:
-        """! @brief Return the selected default template id."""
-
     def load(self, template_id: str) -> object:
         """! @brief Load a template by id."""
 
 
 class LocalModelResolver(Protocol):
     def list_all(self) -> object:
-        """! @brief Return catalog models and defaults."""
+        """! @brief Return catalog models."""
 
     def resolve_model(self, stage: str, model_id: str | None = None) -> LocalModelRecord:
         """! @brief Resolve a model by stage and id."""
@@ -80,15 +77,12 @@ class NewJobDefaultsManager:
         return payload if isinstance(payload, dict) else self._fallback_defaults().model_dump()
 
     def _fallback_defaults(self) -> NewJobDefaults:
-        """! @brief Build defaults from current template/model defaults."""
-        template_id = self._template_manager.get_default_template_id()
-        catalog = self._local_catalog.list_all()
-        defaults = getattr(catalog, "defaults", {})
+        """! @brief Build deterministic initial defaults for the New Job form."""
         return NewJobDefaults(
-            template_id=template_id,
-            local_diarization_model_id=str(defaults.get("diarization", "")),
-            local_transcription_model_id=str(defaults.get("transcription", "")),
-            local_formatter_model_id=str(defaults.get("formatter", "")),
+            template_id="default",
+            local_diarization_model_id=self._fallback_model_id("diarization", "local"),
+            local_transcription_model_id=self._fallback_model_id("transcription", "local"),
+            local_formatter_model_id=self._fallback_model_id("formatter", "local"),
         )
 
     def _repair(self, defaults: NewJobDefaults) -> NewJobDefaults:
@@ -147,10 +141,6 @@ class NewJobDefaultsManager:
     def _fallback_model_id(self, stage: str, execution: str) -> str:
         """! @brief Return an installed fallback model id for the requested stage/location."""
         catalog = self._local_catalog.list_all()
-        defaults = getattr(catalog, "defaults", {})
-        default_id = str(defaults.get(stage, ""))
-        if self._model_is_usable(stage, default_id, execution):
-            return default_id
         for record in getattr(catalog, "models", []):
             if record.stage == stage and record.location == execution and record.installed:
                 return record.model_id

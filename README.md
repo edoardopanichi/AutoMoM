@@ -48,7 +48,7 @@ The items below were verified against the current source tree and test suite.
 - Transcription runtime behavior:
   - whisper.cpp binary probing and preferred binary selection
   - multiple local transcription runtimes via persisted model catalog
-  - per-job local transcription model override with stage default persistence
+  - per-job local transcription model override
   - optional GPU enablement based on available backend support
   - one-shot GPU fallback to CPU if runtime invocation fails
   - transcription chunk planning merges adjacent same-speaker spans within configured limits
@@ -58,7 +58,7 @@ The items below were verified against the current source tree and test suite.
 - Formatter behavior:
   - prompt assembly from template definitions
   - multiple local formatter runtimes via persisted model catalog
-  - per-job local formatter override with stage default persistence
+  - per-job local formatter override
   - template heading/order validation
   - retry loop with corrective feedback when structured output is invalid
   - long-input rolling chunk summaries when strict templates exceed the token budget
@@ -68,7 +68,7 @@ The items below were verified against the current source tree and test suite.
 - Model management:
   - local model presence checks before job start
   - register existing local stage models and make them selectable immediately
-  - persisted local model catalog and per-stage default selection
+  - persisted local model catalog
   - resumable file downloads for non-formatter models when URLs are configured
   - checksum verification when SHA256 is configured
   - Ollama tag selection for formatter models
@@ -80,7 +80,7 @@ The items below were verified against the current source tree and test suite.
   - artifact and snippet download endpoints
   - template CRUD endpoints
   - profile CRUD plus embedding refresh task endpoints
-  - model status/download plus local model catalog/default-selection endpoints
+  - model status/download plus local model catalog endpoints
 - Utility scripts:
   - `scripts/run_automom.sh`
   - `scripts/prepare_mock_models.sh`
@@ -192,9 +192,6 @@ Artifact keys are exposed through the job API and are part of the runtime contra
 - `GET /api/models/local/{stage}`
 - `POST /api/models/local`
 - `DELETE /api/models/local/{model_id}`
-- `POST /api/models/local/defaults`
-- `GET /api/models/formatter`
-- `POST /api/models/formatter`
 - `GET /api/models/diarization`
 - `POST /api/models/consent`
 - `POST /api/models/download`

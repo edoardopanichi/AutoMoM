@@ -23,7 +23,7 @@ Use this file for operational guidance. Use `README.md` only when you need the c
 - `backend/app/schemas.py` - API and persisted payload schemas
 - `backend/pipeline/orchestrator.py` - nine-stage job flow and artifact writes
 - `backend/pipeline/` - audio, VAD, diarization, snippets, transcription, formatter helpers
-- `backend/models/local_catalog.py` - user-registered local model catalog and defaults
+- `backend/models/local_catalog.py` - user-registered local model catalog
 - `backend/profiles/manager.py` - voice profiles, embeddings, matching, refresh tasks
 - `backend/app/static/` - single-page frontend
 - `backend/tests/` - unit and integration coverage
@@ -106,7 +106,7 @@ JOB_STORE.set_artifact(job_id, "transcript", job_dir / "transcript.json")
 ## Gotchas
 
 - Do not add warning-only rules. When documenting a prohibition, include the replacement pattern.
-- Do not instantiate new ad hoc local model stores. Use `LOCAL_MODEL_CATALOG` for user-registered model runtimes and defaults.
+- Do not instantiate new ad hoc local model stores. Use `LOCAL_MODEL_CATALOG` for user-registered model runtimes.
 - Do not bypass `JOB_STORE` when a generated file should appear in job state. Write the file, then call `JOB_STORE.set_artifact`.
 - Do not require OpenAI credentials for fully local jobs. Require them only when at least one execution selector is `api`.
 - Do not treat README endpoint/config lists as automatically current. If code changes them, update the README in the same change.

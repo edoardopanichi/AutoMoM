@@ -61,7 +61,9 @@ def resolve_local_diarization_model(model_id: str | None) -> DiarizationLocalMod
     @param model_id Identifier of the target model.
     @return Result produced by the operation.
     """
-    normalized = (model_id or "").strip() or LOCAL_MODEL_CATALOG.list_stage("diarization").selected_model_id
+    normalized = (model_id or "").strip()
+    if not normalized:
+        raise ValueError("Local diarization model id is required")
     for item in list_local_diarization_models():
         if item.model_id == normalized:
             return item
