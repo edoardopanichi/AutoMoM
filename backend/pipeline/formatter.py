@@ -352,6 +352,9 @@ class Formatter:
                 + "; ".join(validation_result["errors"])
             )
 
+        # Participants are known upstream from speaker mapping; keep this section deterministic
+        # instead of relying on model compliance.
+        markdown = _rewrite_participants_section(markdown, speakers, active_bundle.strict_sections)
         structured = self._heuristic_structuring(transcript, speakers, title)
         output_path.write_text(markdown, encoding="utf-8")
         validation_payload = {
@@ -557,6 +560,45 @@ def _markdown_heading_blocks(markdown: str) -> list[tuple[str, str]]:
         end = matches[index + 1].start() if index + 1 < len(matches) else len(markdown)
         blocks.append((match.group(1), markdown[start:end]))
     return blocks
+
+
+def _rewrite_participants_section(markdown: str, speakers: list[str], sections: list[TemplateSection]) -> str:
+    """! @brief Override the Participants section with deterministic speaker names.
+    @param markdown Formatter-produced markdown.
+    @param speakers Named speakers resolved before formatting.
+    @param sections Template sections used for validation.
+    @return Markdown with rewritten Participants section when present.
+    """
+    if not sections:
+        return markdown
+    if not any(section.heading == "#### Participants:" for section in sections):
+        return markdown
+
+    matches = list(re.finditer(r"(?m)^(#{2,4}\s+.+)$", markdown))
+    if not matches:
+        return markdown
+
+    participants_index = -1
+    for index, match in enumerate(matches):
+        if match.group(1).strip() == "#### Participants:":
+            participants_index = index
+            break
+    if participants_index == -1:
+        return markdown
+
+    body_start = matches[participants_index].end()
+    body_end = matches[participants_index + 1].start() if participants_index + 1 < len(matches) else len(markdown)
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for speaker in speakers:
+        name = str(speaker).strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        normalized.append(name)
+    replacement_body = "None\n" if not normalized else "".join(f"- {name}\n" for name in normalized)
+    return f"{markdown[:body_start]}\n{replacement_body}{markdown[body_end:]}"
 
 
 def _estimate_tokens(text: str) -> int:

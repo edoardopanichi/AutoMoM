@@ -251,6 +251,54 @@ def test_formatter_single_chunk_long_input_omits_multi_chunk_synthesis_rules(
     assert "Important synthesis rules:" not in result.user_prompt
 
 
+def test_formatter_rewrites_participants_from_known_speakers(tmp_path: Path) -> None:
+    """! @brief Test Participants section is deterministic from known speakers."""
+
+    class FakeFormatter(Formatter):
+        def __init__(self) -> None:
+            super().__init__(ollama_model="fake-model")
+
+        def run_model(self, prompt: str, *, system_prompt: str = "") -> dict[str, object] | None:
+            markdown = (
+                "### Title: Sync\n"
+                "#### Participants:\n"
+                "None\n"
+                "#### Concise Overview:\n"
+                "Overview.\n"
+                "#### TODO's:\n"
+                "None\n"
+                "#### CONCLUSIONS:\n"
+                "None\n"
+                "#### DECISION/OPEN POINTS:\n"
+                "None\n"
+                "#### RISKS:\n"
+                "None\n"
+            )
+            self.last_mode = "model_markdown"
+            self.last_raw_output = markdown
+            return {"_raw_markdown_text": markdown}
+
+    formatter = FakeFormatter()
+    output_path = tmp_path / "mom.md"
+    formatter.write_model_output_to_mom(
+        transcript=[
+            {
+                "speaker_name": "Alice",
+                "start_s": 0.0,
+                "end_s": 1.0,
+                "text": "Hello",
+            }
+        ],
+        speakers=["Alice", "Bob", "Alice"],
+        title="Sync",
+        template_id="default",
+        output_path=output_path,
+    )
+
+    markdown = output_path.read_text(encoding="utf-8")
+    assert "#### Participants:\n- Alice\n- Bob\n#### Concise Overview:\n" in markdown
+
+
 def test_formatter_uses_ollama_response(monkeypatch) -> None:
     """! @brief Test formatter uses ollama response.
     @param monkeypatch Value for monkeypatch.
