@@ -922,6 +922,12 @@ textarea {
   margin-top: 0.8rem;
 }
 
+.engine-maintenance-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
 .api-key-panel {
   margin-top: 1rem;
   padding-top: 1rem;

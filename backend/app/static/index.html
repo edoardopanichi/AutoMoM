@@ -180,9 +180,16 @@
                   </select>
                 </label>
                 <div class="engine-maintenance">
-                  <button type="button" id="refresh-profiles-btn" class="small-btn">Refresh Saved Profiles</button>
+                  <div class="engine-maintenance-head">
+                    <button type="button" id="refresh-profiles-btn" class="small-btn">Refresh Saved Profiles</button>
+                    <span
+                      class="field-info"
+                      title="Updates stored voice-profile embeddings in memory for the currently selected diarization model. Run this when you switch to a diarization model different from the one used when those profiles were saved."
+                      aria-label="Updates stored voice-profile embeddings in memory for the currently selected diarization model. Run this when you switch to a diarization model different from the one used when those profiles were saved."
+                    >?</span>
+                  </div>
                   <p id="refresh-profiles-status" class="cloud-note">
-                    Creates missing profile representations for the currently selected diarization engine/model.
+                    No refresh in progress.
                   </p>
                 </div>
               </article>
