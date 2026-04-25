@@ -37,11 +37,7 @@ def _default_transcription_model_path() -> str:
     """! @brief Default transcription model path.
     @return Path string for the local transcription model.
     """
-    current_path = DATA_DIR / "models" / "transcription" / "model.gguf"
-    legacy_path = DATA_DIR / "models" / "voxtral" / "model.gguf"
-    if not current_path.exists() and legacy_path.exists():
-        return str(legacy_path)
-    return str(current_path)
+    return str(DATA_DIR / "models" / "transcription" / "model.gguf")
 
 
 @dataclass(frozen=True)
@@ -88,29 +84,22 @@ class Settings:
     diarization_pyannote_chunk_s: float = float(
         os.getenv("AUTOMOM_DIARIZATION_PYANNOTE_CHUNK_S", str(20.0 * 60.0))
     )
-    transcription_binary: str = _env_first("AUTOMOM_TRANSCRIPTION_BIN", "AUTOMOM_VOXTRAL_BIN")
-    transcription_model_path: str = _env_first(
-        "AUTOMOM_TRANSCRIPTION_MODEL",
-        "AUTOMOM_VOXTRAL_MODEL",
-        default=_default_transcription_model_path(),
-    )
+    transcription_binary: str = os.getenv("AUTOMOM_TRANSCRIPTION_BIN", "")
+    transcription_model_path: str = os.getenv("AUTOMOM_TRANSCRIPTION_MODEL", _default_transcription_model_path())
     transcription_threads: int = max(
         1,
         int(
-            _env_first(
+            os.getenv(
                 "AUTOMOM_TRANSCRIPTION_THREADS",
-                "AUTOMOM_VOXTRAL_THREADS",
-                default=str(min(os.cpu_count() or 4, 8)),
+                str(min(os.cpu_count() or 4, 8)),
             )
         ),
     )
     transcription_processors: int = max(
         1,
-        int(_env_first("AUTOMOM_TRANSCRIPTION_PROCESSORS", "AUTOMOM_VOXTRAL_PROCESSORS", default="1")),
+        int(os.getenv("AUTOMOM_TRANSCRIPTION_PROCESSORS", "1")),
     )
-    transcription_gpu_layers: int = int(
-        _env_first("AUTOMOM_TRANSCRIPTION_GPU_LAYERS", "AUTOMOM_VOXTRAL_GPU_LAYERS", default="99")
-    )
+    transcription_gpu_layers: int = int(os.getenv("AUTOMOM_TRANSCRIPTION_GPU_LAYERS", "99"))
     formatter_backend: str = os.getenv("AUTOMOM_FORMATTER_BACKEND", "ollama").strip().lower()
     formatter_command: str = os.getenv("AUTOMOM_FORMATTER_COMMAND", "")
     formatter_model_path: str = os.getenv(
@@ -175,8 +164,8 @@ def required_models() -> list[ModelSpec]:
             source="Local whisper.cpp-compatible ASR model",
             required_disk_mb=4200,
             file_path=_resolve_model_path(SETTINGS.transcription_model_path),
-            download_url=_env_first("AUTOMOM_TRANSCRIPTION_URL", "AUTOMOM_VOXTRAL_URL") or None,
-            checksum_sha256=_env_first("AUTOMOM_TRANSCRIPTION_SHA256", "AUTOMOM_VOXTRAL_SHA256") or None,
+            download_url=os.getenv("AUTOMOM_TRANSCRIPTION_URL") or None,
+            checksum_sha256=os.getenv("AUTOMOM_TRANSCRIPTION_SHA256") or None,
         ),
         ModelSpec(
             model_id="formatter",

@@ -187,6 +187,38 @@ def test_globalize_openai_chunk_segments_uses_overlap_for_speaker_stitching() ->
     assert owned[0].start_s == 10.0
 
 
+def test_build_local_transcriber_uses_faster_whisper_runtime(monkeypatch) -> None:
+    """! @brief Test local transcriber builder selects faster-whisper runtime.
+    @param monkeypatch Value for monkeypatch.
+    """
+    orchestrator = PipelineOrchestrator()
+    calls: dict[str, object] = {}
+
+    class FakeFasterWhisperTranscriber:
+        def __init__(self, model_path, *, compute_device, cuda_device_id, compute_type) -> None:
+            calls["model_path"] = model_path
+            calls["compute_device"] = compute_device
+            calls["cuda_device_id"] = cuda_device_id
+            calls["compute_type"] = compute_type
+
+    monkeypatch.setattr("backend.pipeline.orchestrator.FasterWhisperTranscriber", FakeFasterWhisperTranscriber)
+    record = type(
+        "ModelRecord",
+        (),
+        {
+            "location": "local",
+            "runtime": "faster-whisper",
+            "config": {"model_path": "/tmp/fw-model", "compute_type": "int8_float16"},
+        },
+    )()
+
+    result = orchestrator._build_local_transcriber("job-1", record)
+
+    assert isinstance(result, FakeFasterWhisperTranscriber)
+    assert calls["model_path"] == "/tmp/fw-model"
+    assert calls["compute_type"] == "int8_float16"
+
+
 def test_run_job_marks_failed_when_summary_generation_fails(isolated_settings, monkeypatch, tmp_path: Path) -> None:
     """! @brief Test run job marks failed when summary generation fails.
     @param isolated_settings Value for isolated settings.

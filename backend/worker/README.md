@@ -115,6 +115,6 @@ The model paths in the worker variables are paths on the worker machine, not pat
 
 ## Notes
 
-- The scripts provide practical defaults for container/server deployments, such as `/models/...`; override those paths for laptop testing.
+- The scripts now default to repo-relative model paths and `whisper-cli` from `PATH`. Override with env vars when your worker layout differs.
 - The values registered in the main app must match what `/health` reports. For example, if `/health` reports transcription model name `large-v3`, register `large-v3`.
 - Use `AUTOMOM_REMOTE_AUTH_TOKEN` on real LANs where other users or machines can reach the worker port.

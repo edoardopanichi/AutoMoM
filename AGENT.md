@@ -5,6 +5,7 @@
 AutoMoM is a local-first FastAPI app with a static browser UI that turns meeting audio into English Minutes of Meeting (MoM). Diarization, transcription, and formatting can run locally or through OpenAI independently per job.
 
 Use this file for operational guidance. Use `README.md` only when you need the complete API/config/artifact inventory, and use `auto_MoM_specification.md` only when changing product behavior or checking original intent.
+For Linux public setup steps (CPU and CUDA), use `INSTALL.md`.
 
 ## Common Commands
 

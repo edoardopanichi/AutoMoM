@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from pydantic import ValidationError
 
 from backend.app.config import SETTINGS
@@ -86,6 +87,76 @@ def test_register_whisper_cpp_requires_existing_paths(isolated_settings, tmp_pat
         assert "does not exist" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("Expected whisper.cpp registration to fail for missing model_path")
+
+
+def test_register_faster_whisper_requires_valid_model_directory(isolated_settings, tmp_path: Path) -> None:
+    """! @brief Test faster-whisper registration validates model directory layout.
+    @param isolated_settings Value for isolated settings.
+    @param tmp_path Value for tmp path.
+    """
+    catalog = LocalModelCatalog()
+    broken_dir = tmp_path / "broken-ct2"
+    broken_dir.mkdir()
+    (broken_dir / "model.bin").write_bytes(b"x")
+
+    with pytest.raises(ValueError, match="missing config.json"):
+        catalog.register(
+            LocalModelRegistrationRequest(
+                stage="transcription",
+                location="local",
+                runtime="faster-whisper",
+                name="Broken faster-whisper",
+                config={"model_path": str(broken_dir), "compute_type": "auto"},
+            )
+        )
+
+
+def test_register_faster_whisper_rejects_unknown_compute_type(isolated_settings, tmp_path: Path) -> None:
+    """! @brief Test faster-whisper registration rejects invalid compute type.
+    @param isolated_settings Value for isolated settings.
+    @param tmp_path Value for tmp path.
+    """
+    catalog = LocalModelCatalog()
+    model_dir = tmp_path / "ct2-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text("{}", encoding="utf-8")
+    (model_dir / "model.bin").write_bytes(b"x")
+
+    with pytest.raises(ValueError, match="Invalid faster-whisper compute_type"):
+        catalog.register(
+            LocalModelRegistrationRequest(
+                stage="transcription",
+                location="local",
+                runtime="faster-whisper",
+                name="Invalid compute type",
+                config={"model_path": str(model_dir), "compute_type": "fp64"},
+            )
+        )
+
+
+def test_register_faster_whisper_accepts_valid_model_directory(isolated_settings, tmp_path: Path) -> None:
+    """! @brief Test faster-whisper registration accepts valid CTranslate2 model directory.
+    @param isolated_settings Value for isolated settings.
+    @param tmp_path Value for tmp path.
+    """
+    catalog = LocalModelCatalog()
+    model_dir = tmp_path / "ct2-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text("{}", encoding="utf-8")
+    (model_dir / "model.bin").write_bytes(b"x")
+
+    record = catalog.register(
+        LocalModelRegistrationRequest(
+            stage="transcription",
+            location="local",
+            runtime="faster-whisper",
+            name="Valid faster-whisper",
+            config={"model_path": str(model_dir), "compute_type": "int8"},
+        )
+    )
+
+    assert record.runtime == "faster-whisper"
+    assert record.installed is True
 
 
 def test_delete_model_is_not_blocked_by_legacy_defaults(isolated_settings, monkeypatch) -> None:

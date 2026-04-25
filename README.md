@@ -2,6 +2,15 @@
 
 AutoMoM is a local-first FastAPI web application that turns meeting audio into English Minutes of Meeting (MoM) in Markdown. The pipeline can run fully local, or switch diarization, transcription, and MoM generation independently to OpenAI on a per-job basis.
 
+## Installation
+
+- Linux step-by-step install guide (CPU and CUDA): `INSTALL.md`
+- Quick start after setup:
+
+```bash
+./scripts/run_automom.sh
+```
+
 ## Verified Feature Set
 
 The items below were verified against the current source tree and test suite.
@@ -86,6 +95,7 @@ The items below were verified against the current source tree and test suite.
   - `scripts/prepare_mock_models.sh`
   - `scripts/benchmark_local_transcription.py`
   - `scripts/run_long_audio_test.py`
+  - `scripts/check_faster_whisper_env.py`
 
 ## Repository Layout
 
@@ -152,6 +162,8 @@ Artifact keys are exposed through the job API and are part of the runtime contra
 - Transcription:
   - `AUTOMOM_TRANSCRIPTION_BIN`
   - `AUTOMOM_TRANSCRIPTION_MODEL`
+  - `AUTOMOM_TRANSCRIPTION_URL`
+  - `AUTOMOM_TRANSCRIPTION_SHA256`
   - `AUTOMOM_TRANSCRIPTION_THREADS`
   - `AUTOMOM_TRANSCRIPTION_PROCESSORS`
   - `AUTOMOM_TRANSCRIPTION_GPU_LAYERS`
@@ -159,7 +171,6 @@ Artifact keys are exposed through the job API and are part of the runtime contra
   - `AUTOMOM_TRANSCRIPTION_MAX_CHUNK_S`
   - `AUTOMOM_TRANSCRIPTION_MAX_SEGMENTS`
   - `AUTOMOM_TRANSCRIPTION_KEEP_SEGMENT_AUDIO`
-  - Legacy `AUTOMOM_VOXTRAL_*` aliases are still accepted for existing deployments.
 - Formatter:
   - `AUTOMOM_FORMATTER_BACKEND=ollama|command`
   - `AUTOMOM_FORMATTER_COMMAND`
