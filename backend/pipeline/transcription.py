@@ -18,7 +18,7 @@ from backend.pipeline.subprocess_utils import run_cancellable_subprocess
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 TIMESTAMP_RANGE_PATTERN = re.compile(
-    r"\[\s*\d{1,2}:\d{2}:\d{2}(?:[.,]\d{1,3})?\s*-->\s*\d{1,2}:\d{2}:\d{2}(?:[.,]\d{1,3})?\s*\]"
+    r"(?:\[\s*)?\d{1,2}:\d{2}:\d{2}(?:[.,]\d{1,3})?\s*-->\s*\d{1,2}:\d{2}:\d{2}(?:[.,]\d{1,3})?(?:\s*\])?"
 )
 TIMESTAMP_BRACKET_PATTERN = re.compile(r"\[\s*\d{1,2}:\d{2}:\d{2}(?:[.,]\d{1,3})?\s*\]")
 TIMESTAMP_TOKEN_PATTERN = re.compile(r"\b\d{1,2}:\d{2}:\d{2}(?:[.,]\d{1,3})?\b")
@@ -583,7 +583,6 @@ def clean_transcript_text(raw_text: str) -> str:
         line = TIMESTAMP_RANGE_PATTERN.sub(" ", line)
         line = TIMESTAMP_BRACKET_PATTERN.sub(" ", line)
         line = TIMESTAMP_TOKEN_PATTERN.sub(" ", line)
-        line = line.replace("-->", " ")
         line = re.sub(r"\s+", " ", line).strip(" -")
         if line:
             lines.append(line)

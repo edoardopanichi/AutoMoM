@@ -115,13 +115,24 @@ def test_clean_transcript_text_removes_timestamp_noise() -> None:
     """
     raw = """
     [00:00:00.000 --> 00:00:01.200] Hello everyone
+    00:00:02.000 --> 00:00:03.200 this is unbracketed
     <|0.00|><|0.42|> this is a test
     [00:00:03] 01:02:03
     """
 
     cleaned = clean_transcript_text(raw)
 
-    assert cleaned == "Hello everyone this is a test"
+    assert cleaned == "Hello everyone this is unbracketed this is a test"
+
+
+def test_clean_transcript_text_preserves_literal_arrows() -> None:
+    """! @brief Test clean transcript text preserves literal arrows.
+    """
+    raw = "step A --> step B"
+
+    cleaned = clean_transcript_text(raw)
+
+    assert cleaned == "step A --> step B"
 
 
 def test_transcribe_segments_merges_consecutive_same_speaker_without_gap_limit(tmp_path: Path) -> None:
