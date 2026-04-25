@@ -20,6 +20,7 @@ __pycache__/
 .codex
 
 # Local runtime artifacts
+data/job_defaults.json
 data/models/
 data/jobs/
 data/profiles/

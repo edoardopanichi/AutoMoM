@@ -21,6 +21,7 @@ python -m pip install -r requirements.txt -r requirements-dev.txt >/dev/null
 
 OLLAMA_HOST="${AUTOMOM_OLLAMA_HOST:-http://127.0.0.1:11434}"
 OLLAMA_AUTOSTART="${AUTOMOM_OLLAMA_AUTOSTART:-1}"
+FORMATTER_BACKEND="${AUTOMOM_FORMATTER_BACKEND:-ollama}"
 OLLAMA_STARTED_BY_SCRIPT=0
 OLLAMA_LOG_PATH="${ROOT_DIR}/data/ollama.log"
 
@@ -71,6 +72,8 @@ start_ollama_if_needed() {
   exit 1
 }
 
-start_ollama_if_needed
+if [[ "${FORMATTER_BACKEND,,}" == "ollama" ]]; then
+  start_ollama_if_needed
+fi
 
 exec uvicorn backend.app.main:app --host "${AUTOMOM_HOST:-127.0.0.1}" --port "${AUTOMOM_PORT:-8000}"

@@ -7,6 +7,7 @@ import pytest
 
 from backend.pipeline.transcription import (
     ASRBinaryCapabilities,
+    FasterWhisperTranscriber,
     TranscriptionError,
     WhisperCppTranscriber,
     _gpu_verified_active,
@@ -461,3 +462,147 @@ def test_binary_selection_falls_back_to_configured_cpu_binary_when_no_gpu_binary
     resolved = WhisperCppTranscriber._resolve_preferred_binary_path(str(configured))
 
     assert resolved == str(configured)
+
+
+def test_faster_whisper_cuda_mode_fails_fast_when_cuda_is_unavailable(monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test faster-whisper fails fast when cuda is requested and unavailable.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Value for tmp path.
+    """
+    model_dir = tmp_path / "ct2-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text("{}", encoding="utf-8")
+    (model_dir / "model.bin").write_bytes(b"x")
+    segment = tmp_path / "segment.wav"
+    segment.write_bytes(b"audio")
+
+    monkeypatch.setattr("backend.pipeline.transcription.native_cuda_available", lambda *_: False)
+    monkeypatch.setattr("backend.pipeline.transcription.should_enable_native_gpu", lambda *_: False)
+    monkeypatch.setattr("backend.pipeline.transcription._faster_whisper_available", lambda: True)
+
+    transcriber = FasterWhisperTranscriber(str(model_dir), compute_device="cuda")
+
+    assert transcriber.available() is False
+    assert transcriber.runtime_summary() == "compute=fallback (CUDA requested but no CUDA device is available)"
+    with pytest.raises(TranscriptionError, match="compute_device=cuda was requested"):
+        transcriber.transcribe(segment)
+
+
+def test_faster_whisper_auto_mode_reports_cpu_fallback_when_cuda_unavailable(monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test faster-whisper auto mode reports CPU fallback when cuda unavailable.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Value for tmp path.
+    """
+    model_dir = tmp_path / "ct2-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text("{}", encoding="utf-8")
+    (model_dir / "model.bin").write_bytes(b"x")
+
+    monkeypatch.setattr("backend.pipeline.transcription.native_cuda_available", lambda *_: False)
+    monkeypatch.setattr("backend.pipeline.transcription.should_enable_native_gpu", lambda *_: False)
+    monkeypatch.setattr("backend.pipeline.transcription._faster_whisper_available", lambda: True)
+
+    transcriber = FasterWhisperTranscriber(str(model_dir), compute_device="auto")
+
+    assert transcriber.available() is True
+    assert transcriber.runtime_summary() == "compute=cpu (CUDA unavailable; auto fallback)"
+
+
+def test_faster_whisper_uses_provided_compute_type(monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test faster-whisper passes configured compute type into model loader.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Value for tmp path.
+    """
+    model_dir = tmp_path / "ct2-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text("{}", encoding="utf-8")
+    (model_dir / "model.bin").write_bytes(b"x")
+    segment = tmp_path / "segment.wav"
+    segment.write_bytes(b"audio")
+    calls: list[dict[str, object]] = []
+
+    class FakeWhisperModel:
+        def __init__(self, model_path, **kwargs):
+            calls.append({"model_path": model_path, "kwargs": kwargs})
+
+        def transcribe(self, _path, **kwargs):
+            _ = kwargs
+            return [SimpleNamespace(text=" hello ")], None
+
+    monkeypatch.setattr("backend.pipeline.transcription.native_cuda_available", lambda *_: False)
+    monkeypatch.setattr("backend.pipeline.transcription.should_enable_native_gpu", lambda *_: False)
+    monkeypatch.setattr("backend.pipeline.transcription._faster_whisper_available", lambda: True)
+    monkeypatch.setattr("backend.pipeline.transcription._get_faster_whisper_model_class", lambda: FakeWhisperModel)
+
+    transcriber = FasterWhisperTranscriber(str(model_dir), compute_device="cpu", compute_type="int8_float16")
+    assert transcriber.transcribe(segment) == "hello"
+    assert calls
+    assert calls[0]["model_path"] == str(model_dir)
+    assert calls[0]["kwargs"] == {"device": "cpu", "compute_type": "int8_float16"}
+
+
+def test_faster_whisper_retries_with_beam5_when_beam1_is_empty(monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test faster-whisper retries with beam 5 when beam 1 returns empty output.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Value for tmp path.
+    """
+    model_dir = tmp_path / "ct2-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text("{}", encoding="utf-8")
+    (model_dir / "model.bin").write_bytes(b"x")
+    segment = tmp_path / "segment.wav"
+    segment.write_bytes(b"audio")
+    calls: list[dict[str, object]] = []
+
+    class FakeWhisperModel:
+        def __init__(self, model_path, **kwargs):
+            _ = model_path
+            _ = kwargs
+
+        def transcribe(self, _path, **kwargs):
+            calls.append(dict(kwargs))
+            if kwargs.get("beam_size") == 1:
+                return [], None
+            return [SimpleNamespace(text="Hello from retry")], None
+
+    monkeypatch.setattr("backend.pipeline.transcription.native_cuda_available", lambda *_: False)
+    monkeypatch.setattr("backend.pipeline.transcription.should_enable_native_gpu", lambda *_: False)
+    monkeypatch.setattr("backend.pipeline.transcription._faster_whisper_available", lambda: True)
+    monkeypatch.setattr("backend.pipeline.transcription._get_faster_whisper_model_class", lambda: FakeWhisperModel)
+
+    transcriber = FasterWhisperTranscriber(str(model_dir), compute_device="cpu", compute_type="int8")
+    assert transcriber.transcribe(segment) == "Hello from retry"
+    assert len(calls) == 2
+    assert calls[0]["beam_size"] == 1
+    assert calls[1]["beam_size"] == 5
+
+
+def test_faster_whisper_returns_blank_audio_marker_when_decode_is_empty(monkeypatch, tmp_path: Path) -> None:
+    """! @brief Test faster-whisper maps empty decode to blank-audio marker.
+    @param monkeypatch Value for monkeypatch.
+    @param tmp_path Value for tmp path.
+    """
+    model_dir = tmp_path / "ct2-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text("{}", encoding="utf-8")
+    (model_dir / "model.bin").write_bytes(b"x")
+    segment = tmp_path / "segment.wav"
+    segment.write_bytes(b"audio")
+
+    class FakeWhisperModel:
+        def __init__(self, model_path, **kwargs):
+            _ = model_path
+            _ = kwargs
+
+        def transcribe(self, _path, **kwargs):
+            _ = kwargs
+            return [], None
+
+    monkeypatch.setattr("backend.pipeline.transcription.native_cuda_available", lambda *_: False)
+    monkeypatch.setattr("backend.pipeline.transcription.should_enable_native_gpu", lambda *_: False)
+    monkeypatch.setattr("backend.pipeline.transcription._faster_whisper_available", lambda: True)
+    monkeypatch.setattr("backend.pipeline.transcription._get_faster_whisper_model_class", lambda: FakeWhisperModel)
+
+    transcriber = FasterWhisperTranscriber(str(model_dir), compute_device="cpu", compute_type="int8")
+    assert transcriber.transcribe(segment) == "[BLANK_AUDIO]"
+    assert transcriber.runtime_report()["last_error"] == "blank_audio_segment"

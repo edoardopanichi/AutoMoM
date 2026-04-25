@@ -9,7 +9,7 @@ import shutil
 from typing import Callable, Protocol
 from functools import lru_cache
 
-from backend.pipeline.compute import should_enable_native_gpu
+from backend.pipeline.compute import native_cuda_available, should_enable_native_gpu
 from backend.pipeline.diarization import merge_transcript_segments
 from backend.pipeline.openai_client import OpenAIAPIError, OpenAIClient
 from backend.pipeline.remote_worker_client import RemoteWorkerClient, RemoteWorkerError
@@ -374,25 +374,35 @@ class FasterWhisperTranscriber:
         """
         self.model_path = model_path or ""
         self._requested_mode = (compute_device or "auto").strip().lower() or "auto"
-        self._gpu_requested = should_enable_native_gpu(compute_device, cuda_device_id)
         self._cuda_device_id = max(0, int(cuda_device_id))
+        self._gpu_requested = self._requested_mode != "cpu"
+        self._cuda_available = native_cuda_available(self._cuda_device_id)
+        self._gpu_enabled = should_enable_native_gpu(compute_device, self._cuda_device_id)
+        self._cuda_required_unavailable = self._requested_mode == "cuda" and not self._cuda_available
         self._compute_type = (compute_type or "auto").strip() or "auto"
-        self._runtime_available = bool(self.model_path and Path(self.model_path).exists() and _faster_whisper_available())
-        self._device = "cuda" if self._gpu_requested else "cpu"
+        self._runtime_available = bool(
+            self.model_path
+            and Path(self.model_path).exists()
+            and _faster_whisper_available()
+            and not self._cuda_required_unavailable
+        )
+        self._device = "cuda" if self._gpu_enabled else "cpu"
+        initial_error = "cuda_unavailable" if self._cuda_required_unavailable else ""
         self._model = None
         self._runtime_report = ASRRuntimeReport(
             binary_path="faster-whisper",
             model_path=self.model_path,
             requested_mode=self._requested_mode,
-            available_mode="cuda" if self._gpu_requested and self._runtime_available else ("cpu" if self._runtime_available else "fallback"),
+            available_mode="cuda" if self._gpu_enabled and self._runtime_available else ("cpu" if self._runtime_available else "fallback"),
             active_mode="cpu" if self._runtime_available else "fallback",
             gpu_requested=self._gpu_requested,
-            gpu_backend_available=self._gpu_requested,
+            gpu_backend_available=self._cuda_available,
             gpu_verified_active=False,
             supported_flags=[],
-            linked_backends=["cuda"] if self._gpu_requested else ["cpu"],
+            linked_backends=["cuda", "cpu"] if self._cuda_available else ["cpu"],
             thread_count=0,
             processor_count=0,
+            last_error=initial_error,
         )
 
     def available(self) -> bool:
@@ -417,9 +427,21 @@ class FasterWhisperTranscriber:
 
         text = clean_transcript_text(" ".join(segment.text for segment in segments))
         if not text:
-            raise TranscriptionError(
-                f"faster-whisper produced empty output for '{segment_path.name}'. Verify the model directory."
-            )
+            # Short segments can occasionally return empty output with beam_size=1.
+            # Retry once with a more robust decode setup before failing the job.
+            try:
+                fallback_segments, _info = model.transcribe(str(segment_path), beam_size=5, vad_filter=False)
+            except Exception as exc:
+                self._runtime_report.last_error = str(exc)
+                raise TranscriptionError(f"faster-whisper transcription failed for '{segment_path.name}': {exc}") from exc
+            text = clean_transcript_text(" ".join(segment.text for segment in fallback_segments))
+        if not text:
+            self._runtime_report.last_error = "blank_audio_segment"
+            self._runtime_report.active_mode = self._device
+            self._runtime_report.gpu_verified_active = self._device == "cuda"
+            # Keep pipeline behavior aligned with whisper.cpp, which surfaces short
+            # no-speech chunks as [BLANK_AUDIO] instead of failing the whole job.
+            return "[BLANK_AUDIO]"
         self._runtime_report.active_mode = self._device
         self._runtime_report.gpu_verified_active = self._device == "cuda"
         self._runtime_report.last_error = ""
@@ -437,10 +459,14 @@ class FasterWhisperTranscriber:
         """
         if self._runtime_report.gpu_verified_active:
             return "compute=cuda (verified active)"
-        if self._requested_mode == "cpu" or not self._runtime_report.gpu_requested:
+        if self._requested_mode == "cpu":
             return "compute=cpu (GPU disabled by config)"
+        if self._cuda_required_unavailable:
+            return "compute=fallback (CUDA requested but no CUDA device is available)"
         if not self._runtime_available:
             return "compute=fallback (faster-whisper runtime unavailable)"
+        if not self._runtime_report.gpu_backend_available:
+            return "compute=cpu (CUDA unavailable; auto fallback)"
         return f"compute={self._runtime_report.active_mode} (GPU requested but not verified active)"
 
     def _load_model(self):
@@ -465,6 +491,11 @@ class FasterWhisperTranscriber:
         """! @brief Missing runtime message.
         @return str result produced by the operation.
         """
+        if self._cuda_required_unavailable:
+            return (
+                "compute_device=cuda was requested but no CUDA device is available. "
+                "Use AUTOMOM_COMPUTE_DEVICE=auto|cpu or fix CUDA visibility."
+            )
         if not self.model_path or not Path(self.model_path).exists():
             return "faster-whisper model path is missing. Register a valid local model directory."
         return "faster-whisper runtime is unavailable. Fix: install the faster-whisper package."

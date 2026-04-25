@@ -40,6 +40,40 @@ RUNTIMES_BY_STAGE_LOCATION: dict[tuple[LocalModelStage, LocalModelLocation], tup
     ("formatter", "remote"): ("ollama",),
 }
 
+VALID_FASTER_WHISPER_COMPUTE_TYPES: set[str] = {
+    "auto",
+    "int8",
+    "int8_float32",
+    "int8_float16",
+    "int16",
+    "float16",
+    "float32",
+    "bfloat16",
+}
+FASTER_WHISPER_REQUIRED_MODEL_FILES: tuple[str, ...] = (
+    "model.bin",
+    "model.safetensors",
+    "model.bin.index.json",
+    "model.safetensors.index.json",
+)
+
+
+def validate_faster_whisper_model_directory(model_path: Path) -> tuple[bool, str | None]:
+    """! @brief Validate a faster-whisper/CTranslate2 model directory."""
+    expanded = model_path.expanduser()
+    if not expanded.exists():
+        return False, f"faster-whisper model path does not exist: {model_path}"
+    if not expanded.is_dir():
+        return False, f"faster-whisper model path is not a directory: {model_path}"
+    if not (expanded / "config.json").is_file():
+        return False, f"faster-whisper model directory is missing config.json: {model_path}"
+    if not any((expanded / name).is_file() for name in FASTER_WHISPER_REQUIRED_MODEL_FILES):
+        required = ", ".join(FASTER_WHISPER_REQUIRED_MODEL_FILES)
+        return False, (
+            f"faster-whisper model directory is missing weight files ({required}): {model_path}"
+        )
+    return True, None
+
 
 class LocalModelCatalog:
     def __init__(self) -> None:
@@ -211,8 +245,8 @@ class LocalModelCatalog:
                         key="compute_type",
                         label="Compute type",
                         required=False,
-                        placeholder="auto | float16 | int8",
-                        help="Optional faster-whisper compute type. Leave empty for automatic selection.",
+                        placeholder="auto | float16 | int8 | int8_float16",
+                        help="Optional CTranslate2 compute type. Leave empty for automatic selection.",
                     ),
                 ],
             ),
@@ -693,8 +727,14 @@ class LocalModelCatalog:
         model_path = config.get("model_path", "").strip()
         if not model_path:
             return False, "faster-whisper model requires model_path"
-        if not Path(model_path).expanduser().exists():
-            return False, f"faster-whisper model path does not exist: {model_path}"
+        valid_model_dir, model_dir_error = validate_faster_whisper_model_directory(Path(model_path))
+        if not valid_model_dir:
+            return False, model_dir_error
+        compute_type = config.get("compute_type", "").strip()
+        normalized_compute_type = compute_type.lower() if compute_type else "auto"
+        if normalized_compute_type not in VALID_FASTER_WHISPER_COMPUTE_TYPES:
+            allowed = ", ".join(sorted(VALID_FASTER_WHISPER_COMPUTE_TYPES))
+            return False, f"Invalid faster-whisper compute_type '{compute_type}'. Allowed values: {allowed}"
         try:
             import faster_whisper  # noqa: F401
         except Exception as exc:
