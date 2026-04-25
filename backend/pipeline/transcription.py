@@ -436,10 +436,12 @@ class FasterWhisperTranscriber:
                 raise TranscriptionError(f"faster-whisper transcription failed for '{segment_path.name}': {exc}") from exc
             text = clean_transcript_text(" ".join(segment.text for segment in fallback_segments))
         if not text:
-            raise TranscriptionError(
-                f"faster-whisper produced empty output for '{segment_path.name}' "
-                f"(beam_size=1 and retry beam_size=5)."
-            )
+            self._runtime_report.last_error = "blank_audio_segment"
+            self._runtime_report.active_mode = self._device
+            self._runtime_report.gpu_verified_active = self._device == "cuda"
+            # Keep pipeline behavior aligned with whisper.cpp, which surfaces short
+            # no-speech chunks as [BLANK_AUDIO] instead of failing the whole job.
+            return "[BLANK_AUDIO]"
         self._runtime_report.active_mode = self._device
         self._runtime_report.gpu_verified_active = self._device == "cuda"
         self._runtime_report.last_error = ""
