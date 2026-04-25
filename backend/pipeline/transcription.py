@@ -427,8 +427,18 @@ class FasterWhisperTranscriber:
 
         text = clean_transcript_text(" ".join(segment.text for segment in segments))
         if not text:
+            # Short segments can occasionally return empty output with beam_size=1.
+            # Retry once with a more robust decode setup before failing the job.
+            try:
+                fallback_segments, _info = model.transcribe(str(segment_path), beam_size=5, vad_filter=False)
+            except Exception as exc:
+                self._runtime_report.last_error = str(exc)
+                raise TranscriptionError(f"faster-whisper transcription failed for '{segment_path.name}': {exc}") from exc
+            text = clean_transcript_text(" ".join(segment.text for segment in fallback_segments))
+        if not text:
             raise TranscriptionError(
-                f"faster-whisper produced empty output for '{segment_path.name}'. Verify the model directory."
+                f"faster-whisper produced empty output for '{segment_path.name}' "
+                f"(beam_size=1 and retry beam_size=5)."
             )
         self._runtime_report.active_mode = self._device
         self._runtime_report.gpu_verified_active = self._device == "cuda"
