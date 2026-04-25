@@ -93,9 +93,11 @@ The items below were verified against the current source tree and test suite.
 - Utility scripts:
   - `scripts/run_automom.sh`
   - `scripts/prepare_mock_models.sh`
-  - `scripts/benchmark_local_transcription.py`
-  - `scripts/run_long_audio_test.py`
   - `scripts/check_faster_whisper_env.py`
+- Experiment and comparison scripts:
+  - `scripts/experiments/benchmark_local_transcription.py`
+  - `scripts/experiments/benchmark_transcription_runtime_compare.py`
+  - `scripts/experiments/run_long_audio_test.py`
 
 ## Repository Layout
 
@@ -110,7 +112,9 @@ The items below were verified against the current source tree and test suite.
 - `backend/tests`
   - unit and integration coverage
 - `scripts`
-  - local validation and benchmark helpers
+  - day-to-day developer helpers
+- `scripts/experiments`
+  - experiments, benchmarks, and comparison scripts
 - `data`
   - runtime jobs, uploads, templates, models, profiles
 
