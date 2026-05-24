@@ -4,8 +4,182 @@ AutoMoM is a local-first FastAPI web application that turns meeting audio into E
 
 ## Installation
 
-- Cross-platform install guide (Linux/Windows; CPU and CUDA notes): `INSTALL.md`
-- Quick start after setup:
+AutoMoM runs on Windows and Ubuntu. The app can use local models for every stage, or use OpenAI per job for diarization, transcription, and/or formatting.
+
+### What You Need
+
+- Python 3.10+ with `venv`. Python 3.11 or 3.12 is the safest choice if a newer Python has missing ML wheels.
+- FFmpeg in `PATH`, or set `AUTOMOM_FFMPEG_BIN`.
+- Git.
+- A shell launcher:
+  - Windows: PowerShell is enough; Git Bash is also supported.
+  - Ubuntu: Bash.
+- Local formatter path:
+  - Default: Ollama plus the `qwen2.5:3b-instruct-q5_K_M` tag.
+  - Alternative: a custom command backend via `AUTOMOM_FORMATTER_BACKEND=command`.
+- Local transcription path:
+  - Default catalog entry: `whisper.cpp` with a `whisper-cli` binary and a `.gguf` model.
+  - Alternative catalog entry: `faster-whisper` with a CTranslate2 model directory.
+- Local diarization path:
+  - A local pyannote pipeline directory containing `config.yaml`.
+  - The default expected path is `data/models/diarization/pyannote-speaker-diarization-community-1/config.yaml`.
+  - The speaker-profile embedding default is `pyannote/wespeaker-voxceleb-resnet34-LM`.
+- Optional CUDA:
+  - NVIDIA driver and a CUDA-capable PyTorch/whisper.cpp/faster-whisper stack.
+  - Use `AUTOMOM_COMPUTE_DEVICE=cpu` if CUDA wheels or GPU memory are not suitable.
+- Optional OpenAI API key:
+  - Only needed when a job uses `api` for diarization, transcription, or formatter.
+  - The UI asks for the key per job; there is no required `.env` key for the OpenAI path.
+
+### Windows Setup
+
+Install prerequisites. With `winget`, the usual commands are:
+
+```powershell
+winget install Git.Git
+winget install Gyan.FFmpeg
+winget install Ollama.Ollama
+winget install Python.Python.3.12
+```
+
+Restart the terminal after installing PATH-based tools, then verify:
+
+```powershell
+git --version
+ffmpeg -version
+ollama --version
+py -3.12 --version
+```
+
+Create and populate the virtual environment:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-dev.txt
+```
+
+Create local configuration:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Edit `.env` and set at least the paths for local diarization and local transcription if you are not using only OpenAI/remote stages:
+
+```dotenv
+AUTOMOM_COMPUTE_DEVICE="cpu"
+AUTOMOM_DIARIZATION_PIPELINE="C:\absolute\path\to\pyannote-speaker-diarization-community-1\config.yaml"
+AUTOMOM_TRANSCRIPTION_BIN="C:\absolute\path\to\whisper-cli.exe"
+AUTOMOM_TRANSCRIPTION_MODEL="C:\absolute\path\to\model.gguf"
+AUTOMOM_FORMATTER_OLLAMA_MODEL="qwen2.5:3b-instruct-q5_K_M"
+```
+
+If the Python ML stack and local binaries support CUDA, switch compute back to:
+
+```dotenv
+AUTOMOM_COMPUTE_DEVICE="auto"
+```
+
+Install the formatter model:
+
+```powershell
+ollama serve
+ollama pull qwen2.5:3b-instruct-q5_K_M
+```
+
+Install transcription assets:
+
+- Download or build `whisper.cpp`.
+- Put the directory containing `whisper-cli.exe` in `PATH`, or set `AUTOMOM_TRANSCRIPTION_BIN`.
+- Download a whisper.cpp-compatible `.gguf` model and set `AUTOMOM_TRANSCRIPTION_MODEL`.
+
+Install diarization assets:
+
+- Download or otherwise prepare a pyannote pipeline locally.
+- Set `AUTOMOM_DIARIZATION_PIPELINE` or `AUTOMOM_DIARIZATION_MODEL` to that pipeline's `config.yaml`.
+- If the selected pyannote model or embedding model is gated, authenticate/download it with Hugging Face and set `HF_TOKEN` or `HUGGINGFACE_TOKEN` as needed.
+
+Start AutoMoM:
+
+```powershell
+.\.venv\Scripts\python.exe run_automom.py
+```
+
+The launcher delegates to `scripts/run_automom.ps1` when Git Bash is not available. It installs Python requirements, starts Ollama when `AUTOMOM_FORMATTER_BACKEND=ollama`, and serves the UI at `http://127.0.0.1:8000`.
+
+### Ubuntu Setup
+
+Install system packages:
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip ffmpeg curl git build-essential
+```
+
+Install Ollama:
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull qwen2.5:3b-instruct-q5_K_M
+```
+
+Create and populate the virtual environment:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt -r requirements-dev.txt
+```
+
+Create local configuration:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and set at least:
+
+```dotenv
+AUTOMOM_COMPUTE_DEVICE="cpu"
+AUTOMOM_DIARIZATION_PIPELINE="/absolute/path/to/pyannote-speaker-diarization-community-1/config.yaml"
+AUTOMOM_TRANSCRIPTION_BIN="/absolute/path/to/whisper-cli"
+AUTOMOM_TRANSCRIPTION_MODEL="/absolute/path/to/model.gguf"
+AUTOMOM_FORMATTER_OLLAMA_MODEL="qwen2.5:3b-instruct-q5_K_M"
+```
+
+For CUDA, install a compatible NVIDIA driver and CUDA-capable Python/binary stack, verify `nvidia-smi`, then use:
+
+```dotenv
+AUTOMOM_COMPUTE_DEVICE="auto"
+```
+
+Start AutoMoM:
+
+```bash
+python run_automom.py
+```
+
+### Verification
+
+After startup, open:
+
+- `http://127.0.0.1:8000`
+- `http://127.0.0.1:8000/api/health`
+- `http://127.0.0.1:8000/api/system/startup-check`
+
+In the UI, open Settings and verify that each selected local model is installed. Register local or remote model entries if your paths differ from `.env`.
+
+Run tests:
+
+```bash
+pytest backend/tests -q
+```
+
+For the longer cross-platform guide and troubleshooting notes, see `INSTALL.md`.
+
+Quick start after setup:
 
 ```bash
 python run_automom.py
