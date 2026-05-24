@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import re
 import socket
-import shlex
 import urllib.error
 import urllib.request
 from collections import Counter
@@ -14,6 +13,7 @@ from pathlib import Path
 from backend.app.config import SETTINGS
 from backend.app.schemas import TemplateSection
 from backend.pipeline.openai_client import OpenAIAPIError, OpenAIClient
+from backend.pipeline.platform_utils import parse_command_args
 from backend.pipeline.subprocess_utils import run_cancellable_subprocess
 from backend.pipeline.template_manager import TEMPLATE_MANAGER, FormatterPromptBundle
 
@@ -228,7 +228,7 @@ class Formatter:
         full_prompt = f"SYSTEM:\n{system_prompt}\n\nUSER:\n{prompt}" if system_prompt else prompt
         try:
             process = run_cancellable_subprocess(
-                shlex.split(command),
+                parse_command_args(command),
                 input_text=full_prompt,
                 job_id=self.job_id,
                 timeout=self.timeout_s,

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import os
-import signal
 import subprocess
 import time
 from typing import Any
 
 from backend.app.job_store import JOB_STORE
+from backend.pipeline.platform_utils import terminate_process_tree_platform
 
 
 class SubprocessCancelledError(RuntimeError):
@@ -87,28 +86,4 @@ def terminate_process_tree(process: subprocess.Popen[str], *, grace_timeout_s: f
     @param process Value for process.
     @param grace_timeout_s Value for grace timeout s.
     """
-    if process.poll() is not None:
-        return
-
-    try:
-        if os.name != "nt":
-            os.killpg(process.pid, signal.SIGTERM)
-        else:
-            process.terminate()
-    except Exception:
-        return
-
-    try:
-        process.wait(timeout=grace_timeout_s)
-        return
-    except Exception:
-        pass
-
-    try:
-        if os.name != "nt":
-            os.killpg(process.pid, signal.SIGKILL)
-        else:
-            process.kill()
-        process.wait(timeout=1.0)
-    except Exception:
-        pass
+    terminate_process_tree_platform(process, grace_timeout_s=grace_timeout_s)

@@ -1,7 +1,7 @@
 .PHONY: dev test
 
 dev:
-	./scripts/run_automom.sh
+	python run_automom.py
 
 test:
 	pytest backend/tests -q

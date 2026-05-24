@@ -1,6 +1,6 @@
-# AutoMoM Installation Guide (Linux)
+# AutoMoM Installation Guide (Linux + Windows)
 
-This guide is for Ubuntu/Debian-like Linux systems and covers both CPU-only and CUDA-enabled setups.
+This guide covers CPU-only and CUDA-enabled setups on Linux and Windows.
 
 ## 1. Install system dependencies
 
@@ -30,6 +30,13 @@ nvidia-smi
 ```
 
 If you do not have a compatible NVIDIA GPU, stay on the CPU path.
+
+### 1.3 Windows prerequisites
+
+- Install Python 3.10+ and add it to PATH.
+- Install FFmpeg and ensure `ffmpeg` is in PATH.
+- Install either Git Bash or PowerShell 7 (`pwsh`) for launcher compatibility.
+- Install Ollama for Windows when using local Ollama formatter backend.
 
 ## 2. Clone and enter the repository
 
@@ -84,12 +91,14 @@ If you change the tag, also update `AUTOMOM_FORMATTER_OLLAMA_MODEL`.
 ## 5. Start AutoMoM
 
 ```bash
-./scripts/run_automom.sh
+python run_automom.py
 ```
 
 Notes:
 
-- The script creates `.venv`, installs Python dependencies, and starts the API/UI.
+- The launcher auto-detects platform and delegates to `scripts/run_automom.sh` or `scripts/run_automom.ps1`.
+- On Windows it prefers Git Bash when available, then PowerShell.
+- The startup script creates `.venv`, installs Python dependencies, and starts the API/UI.
 - Ollama startup checks run only when `AUTOMOM_FORMATTER_BACKEND=ollama`.
 
 ## 6. Verify startup

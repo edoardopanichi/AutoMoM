@@ -4,11 +4,11 @@ AutoMoM is a local-first FastAPI web application that turns meeting audio into E
 
 ## Installation
 
-- Linux step-by-step install guide (CPU and CUDA): `INSTALL.md`
+- Cross-platform install guide (Linux/Windows; CPU and CUDA notes): `INSTALL.md`
 - Quick start after setup:
 
 ```bash
-./scripts/run_automom.sh
+python run_automom.py
 ```
 
 ## Verified Feature Set
@@ -91,8 +91,11 @@ The items below were verified against the current source tree and test suite.
   - profile CRUD plus embedding refresh task endpoints
   - model status/download plus local model catalog endpoints
 - Utility scripts:
+  - `run_automom.py`
   - `scripts/run_automom.sh`
+  - `scripts/run_automom.ps1`
   - `scripts/prepare_mock_models.sh`
+  - `scripts/prepare_mock_models.ps1`
   - `scripts/check_faster_whisper_env.py`
 - Experiment and comparison scripts:
   - `scripts/experiments/benchmark_local_transcription.py`
@@ -263,7 +266,7 @@ For long-input jobs, `formatter_reduced_notes.json` stores the rolling chunk sum
 ### One-command start
 
 ```bash
-./scripts/run_automom.sh
+python run_automom.py
 ```
 
 The helper checks Ollama, starts `ollama serve` automatically when needed, and then launches the app.
@@ -273,7 +276,7 @@ The helper checks Ollama, starts `ollama serve` automatically when needed, and t
 For local development only:
 
 ```bash
-./scripts/prepare_mock_models.sh
+python run_automom.py --prepare-mock-models
 ```
 
 ### Tests

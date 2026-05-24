@@ -12,6 +12,7 @@ from functools import lru_cache
 from backend.pipeline.compute import native_cuda_available, should_enable_native_gpu
 from backend.pipeline.diarization import merge_transcript_segments
 from backend.pipeline.openai_client import OpenAIAPIError, OpenAIClient
+from backend.pipeline.platform_utils import detect_linked_backends
 from backend.pipeline.remote_worker_client import RemoteWorkerClient, RemoteWorkerError
 from backend.pipeline.subprocess_utils import run_cancellable_subprocess
 
@@ -698,34 +699,7 @@ def _detect_linked_backends(binary_path: str) -> tuple[str, ...]:
     @param binary_path Value for binary path.
     @return Tuple produced by the operation.
     """
-    try:
-        process = subprocess.run(
-            ["ldd", binary_path],
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-    except Exception:
-        return tuple()
-
-    if process.returncode != 0:
-        return tuple()
-
-    lowered = process.stdout.lower()
-    backends: list[str] = []
-    if "libggml-cpu" in lowered:
-        backends.append("cpu")
-    if "cuda" in lowered or "cublas" in lowered:
-        backends.append("cuda")
-    if "vulkan" in lowered:
-        backends.append("vulkan")
-    if "opencl" in lowered:
-        backends.append("opencl")
-    if "metal" in lowered:
-        backends.append("metal")
-    if "sycl" in lowered:
-        backends.append("sycl")
-    return tuple(dict.fromkeys(backends))
+    return detect_linked_backends(binary_path)
 
 
 @lru_cache(maxsize=8)

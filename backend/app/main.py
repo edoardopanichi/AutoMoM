@@ -4,6 +4,8 @@ import asyncio
 import json
 import mimetypes
 import os
+import platform
+import shutil
 from pathlib import Path
 from uuid import uuid4
 
@@ -808,4 +810,19 @@ def startup_check() -> dict[str, object]:
     """
     statuses = [item.model_dump() for item in MODEL_MANAGER.statuses()]
     all_ready = all(item["installed"] for item in statuses)
-    return {"all_models_ready": all_ready, "models": statuses}
+    diagnostics = {
+        "os": platform.system(),
+        "python": platform.python_version(),
+        "executors": {
+            "bash": shutil.which("bash") is not None,
+            "pwsh": shutil.which("pwsh") is not None,
+            "powershell": shutil.which("powershell") is not None,
+        },
+        "runtimes": {
+            "ollama": shutil.which("ollama") is not None,
+            "ffmpeg": shutil.which("ffmpeg") is not None,
+            "uvicorn": shutil.which("uvicorn") is not None,
+            "whisper_cli": bool(shutil.which("whisper-cli") or SETTINGS.transcription_binary),
+        },
+    }
+    return {"all_models_ready": all_ready, "models": statuses, "diagnostics": diagnostics}

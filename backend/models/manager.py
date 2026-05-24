@@ -14,6 +14,7 @@ from typing import Callable
 
 from backend.app.config import SETTINGS, ModelSpec, required_models
 from backend.app.schemas import ModelStatus
+from backend.pipeline.platform_utils import file_url_to_path
 
 
 def _consent_path() -> Path:
@@ -273,7 +274,7 @@ class ModelManager:
         """
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme == "file":
-            src = Path(parsed.path)
+            src = file_url_to_path(url)
             total_size = src.stat().st_size
             existing_size = target_path.stat().st_size if target_path.exists() else 0
             if progress_callback:
