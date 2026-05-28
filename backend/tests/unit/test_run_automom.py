@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 import run_automom
@@ -10,7 +12,7 @@ def test_choose_launcher_non_windows_uses_sh(monkeypatch) -> None:
     kind, command = run_automom._choose_launcher("Linux")
     assert kind == "bash"
     assert command[0] == "/usr/bin/bash"
-    assert command[1].endswith("scripts/run_automom.sh")
+    assert Path(command[1]).parts[-2:] == ("scripts", "run_automom.sh")
 
 
 def test_choose_launcher_windows_prefers_bash(monkeypatch) -> None:
@@ -21,7 +23,7 @@ def test_choose_launcher_windows_prefers_bash(monkeypatch) -> None:
     )
     kind, command = run_automom._choose_launcher("Windows")
     assert kind == "bash"
-    assert command[1].endswith("scripts/run_automom.sh")
+    assert Path(command[1]).parts[-2:] == ("scripts", "run_automom.sh")
 
 
 def test_choose_launcher_windows_uses_powershell_without_bash(monkeypatch) -> None:
@@ -33,7 +35,7 @@ def test_choose_launcher_windows_uses_powershell_without_bash(monkeypatch) -> No
     kind, command = run_automom._choose_launcher("Windows")
     assert kind == "powershell"
     assert command[0] == "C:/pwsh.exe"
-    assert command[-1].endswith("scripts/run_automom.ps1")
+    assert Path(command[-1]).parts[-2:] == ("scripts", "run_automom.ps1")
 
 
 def test_choose_launcher_windows_without_executors_fails(monkeypatch) -> None:

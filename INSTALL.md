@@ -34,7 +34,8 @@ If you do not have a compatible NVIDIA GPU, stay on the CPU path.
 ### 1.3 Windows prerequisites
 
 - Install Python 3.10+ and add it to PATH.
-- Install FFmpeg and ensure `ffmpeg` is in PATH.
+- Use the `py` launcher when available; otherwise use `python` for venv commands.
+- Install a shared FFmpeg 4-7 build and ensure `ffmpeg` is in PATH. With `winget`, use `BtbN.FFmpeg.LGPL.Shared.7.1`.
 - Install either Git Bash or PowerShell 7 (`pwsh`) for launcher compatibility.
 - Install Ollama for Windows when using local Ollama formatter backend.
 
@@ -120,7 +121,7 @@ In Settings, verify local model entries are marked installed, then run a short t
 
 ```bash
 source .venv/bin/activate
-pytest backend/tests -q
+pytest backend/tests -q --basetemp .pytest-tmp
 ```
 
 ## 8. Optional: OpenAI execution path
@@ -140,3 +141,4 @@ For LAN workers (remote diarization/transcription), see:
 - `ASR model file is missing`: set `AUTOMOM_TRANSCRIPTION_MODEL` to an existing local model file.
 - `Ollama API unreachable`: start `ollama serve` manually, or keep `AUTOMOM_OLLAMA_AUTOSTART=1`.
 - CUDA requested but not active: verify driver/CUDA installation and your `whisper-cli` GPU-capable build.
+- Windows `torchcodec` cannot load FFmpeg: replace static/latest FFmpeg with a shared FFmpeg 4-7 build, then restart the terminal so PATH changes are visible.

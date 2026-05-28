@@ -126,7 +126,7 @@ class JobStore:
         @param title Meeting title associated with the request.
         @return str result produced by the operation.
         """
-        timestamp = now.strftime("%Y-%m-%d-%H:%M")
+        timestamp = now.strftime("%Y-%m-%d-%H-%M")
         if title and title.strip():
             base = f"{timestamp}-{self._slugify_title(title)}"
         else:

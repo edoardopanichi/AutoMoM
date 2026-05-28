@@ -9,7 +9,7 @@ AutoMoM runs on Windows and Ubuntu. The app can use local models for every stage
 ### What You Need
 
 - Python 3.10+ with `venv`. Python 3.11 or 3.12 is the safest choice if a newer Python has missing ML wheels.
-- FFmpeg in `PATH`, or set `AUTOMOM_FFMPEG_BIN`.
+- FFmpeg in `PATH`, or set `AUTOMOM_FFMPEG_BIN`. On Windows, use a shared FFmpeg 4-7 build so `torchcodec` can load FFmpeg DLLs.
 - Git.
 - A shell launcher:
   - Windows: PowerShell is enough; Git Bash is also supported.
@@ -37,7 +37,7 @@ Install prerequisites. With `winget`, the usual commands are:
 
 ```powershell
 winget install Git.Git
-winget install Gyan.FFmpeg
+winget install BtbN.FFmpeg.LGPL.Shared.7.1
 winget install Ollama.Ollama
 winget install Python.Python.3.12
 ```
@@ -49,12 +49,18 @@ git --version
 ffmpeg -version
 ollama --version
 py -3.12 --version
+# If the Python launcher is not installed:
+python --version
 ```
+
+The shared FFmpeg package matters on Windows. Generic static FFmpeg packages can provide `ffmpeg.exe` but still leave `torchcodec` unable to load because the FFmpeg DLLs are missing or too new.
 
 Create and populate the virtual environment:
 
 ```powershell
 py -3.12 -m venv .venv
+# Or, when the Python launcher is not installed:
+python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-dev.txt
 ```
@@ -174,7 +180,7 @@ In the UI, open Settings and verify that each selected local model is installed.
 Run tests:
 
 ```bash
-pytest backend/tests -q
+pytest backend/tests -q --basetemp .pytest-tmp
 ```
 
 For the longer cross-platform guide and troubleshooting notes, see `INSTALL.md`.
@@ -459,12 +465,12 @@ Run:
 
 ```bash
 source .venv/bin/activate
-pytest backend/tests -q
+pytest backend/tests -q --basetemp .pytest-tmp
 ```
 
-Verified on April 9, 2026:
+Verified on May 28, 2026:
 
-- `80` tests passed
+- `148` tests passed
 
 ## Dependency Notes
 

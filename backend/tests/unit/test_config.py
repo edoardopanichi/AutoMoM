@@ -15,7 +15,8 @@ def test_config_source_has_no_legacy_voxtral_env_names() -> None:
 
 def test_default_transcription_model_path_is_transcription_dir() -> None:
     """! @brief Test default transcription model path is in transcription dir."""
-    assert _default_transcription_model_path().endswith("data/models/transcription/model.gguf")
+    expected = Path("data") / "models" / "transcription" / "model.gguf"
+    assert Path(_default_transcription_model_path()).parts[-4:] == expected.parts
 
 
 def test_required_models_prefers_transcription_download_env(monkeypatch) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import platform
+import re
 import shlex
 import shutil
 import subprocess
@@ -16,11 +17,17 @@ def is_windows() -> bool:
 
 def parse_command_args(command: str) -> list[str]:
     """Parse a simple executable+args command string across platforms."""
+    if is_windows() and "'" in command:
+        try:
+            return shlex.split(command, posix=True)
+        except ValueError:
+            pass
+
     args = shlex.split(command, posix=not is_windows())
     if is_windows():
         normalized: list[str] = []
         for token in args:
-            if len(token) >= 2 and token.startswith('"') and token.endswith('"'):
+            if len(token) >= 2 and token[0] == token[-1] and token[0] in {"'", '"'}:
                 normalized.append(token[1:-1])
             else:
                 normalized.append(token)
@@ -128,6 +135,10 @@ def file_url_to_path(url: str) -> Path:
         raise ValueError(f"Unsupported URL scheme for local file: {parsed.scheme}")
     # Handles Windows drive letters and UNC shares via stdlib pathname conversion.
     raw_path = urllib.request.url2pathname(parsed.path or "")
+    if is_windows() and parsed.netloc and not parsed.path and re.match(r"^[a-zA-Z]:[\\/]", parsed.netloc):
+        return Path(parsed.netloc)
+    if is_windows() and re.match(r"^[a-zA-Z]:$", parsed.netloc):
+        return Path(f"{parsed.netloc}{raw_path}")
     if parsed.netloc and parsed.netloc not in {"", "localhost"}:
         raw_path = f"//{parsed.netloc}{raw_path}"
     return Path(raw_path)

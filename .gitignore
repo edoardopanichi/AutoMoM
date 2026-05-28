@@ -15,6 +15,7 @@ audio_trace_for_testing/
 __pycache__/
 *.pyc
 .pytest_cache/
+.pytest-tmp*/
 .ruff_cache/
 .env
 .codex

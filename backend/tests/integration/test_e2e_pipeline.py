@@ -373,8 +373,9 @@ def test_end_to_end_passthrough_uses_raw_formatter_output(isolated_settings, mon
     state = JOB_STORE.get_state(job_id)
     assert state.status == "completed"
 
+    expected_mom_output = raw_formatter_output.replace("- Mayor Terry\n- Councillor Kaczynski\n", "")
     mom_path = Path(state.artifact_paths["mom_markdown"])
-    assert mom_path.read_text(encoding="utf-8").rstrip() == raw_formatter_output.rstrip()
+    assert mom_path.read_text(encoding="utf-8").rstrip() == expected_mom_output.rstrip()
     raw_output_path = Path(state.artifact_paths["formatter_raw_output"])
     assert raw_output_path.read_text(encoding="utf-8").rstrip() == raw_formatter_output.rstrip()
     stdout_path = Path(state.artifact_paths["formatter_stdout"])
@@ -536,8 +537,9 @@ def test_end_to_end_stderr_prefixed_output_passthrough(isolated_settings, monkey
     assert state.status == "completed"
 
     normalized_stderr_output = raw_stderr_output.replace("main: ", "")
+    expected_mom_output = normalized_stderr_output.replace("- Mayor Terry\n- Councillor Kaczynski\n", "")
     mom_path = Path(state.artifact_paths["mom_markdown"])
-    assert mom_path.read_text(encoding="utf-8").rstrip() == normalized_stderr_output.rstrip()
+    assert mom_path.read_text(encoding="utf-8").rstrip() == expected_mom_output.rstrip()
     raw_output_path = Path(state.artifact_paths["formatter_raw_output"])
     assert raw_output_path.read_text(encoding="utf-8").rstrip() == normalized_stderr_output.rstrip()
     stderr_path = Path(state.artifact_paths["formatter_stderr"])

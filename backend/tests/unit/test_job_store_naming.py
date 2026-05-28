@@ -25,7 +25,7 @@ def test_job_id_uses_timestamp_and_title(isolated_settings, tmp_path: Path) -> N
     )
 
     assert "-weekly_sync" in runtime.state.job_id
-    assert (runtime.state.job_id[:16].count("-") == 3)  # YYYY-MM-DD-HH:MM
+    assert (runtime.state.job_id[:16].count("-") == 4)  # YYYY-MM-DD-HH-MM
 
 
 def test_job_id_falls_back_to_meeting_when_title_missing(isolated_settings, tmp_path: Path) -> None:

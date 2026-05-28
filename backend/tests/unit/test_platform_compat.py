@@ -23,6 +23,12 @@ def test_parse_command_args_handles_quoted_spaces_windows(monkeypatch) -> None:
     assert args[-1] == "C:\\My Models\\a.gguf"
 
 
+def test_parse_command_args_handles_posix_quoted_payload_windows(monkeypatch) -> None:
+    monkeypatch.setattr("backend.pipeline.platform_utils.is_windows", lambda: True)
+    args = parse_command_args(r"""python -c 'import sys; sys.stdout.write('"'"'ok'"'"')'""")
+    assert args == ["python", "-c", "import sys; sys.stdout.write('ok')"]
+
+
 def test_detect_linked_backends_returns_empty_when_no_probe_tools(monkeypatch) -> None:
     monkeypatch.setattr("backend.pipeline.platform_utils.platform.system", lambda: "Windows")
     monkeypatch.setattr("backend.pipeline.platform_utils.shutil.which", lambda _name: None)

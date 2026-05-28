@@ -10,7 +10,7 @@ For Linux public setup steps (CPU and CUDA), use `INSTALL.md`.
 ## Common Commands
 
 - Start app: `./scripts/run_automom.sh` or `make dev`
-- Run all tests: `pytest backend/tests -q` or `make test`
+- Run all tests: `pytest backend/tests -q --basetemp .pytest-tmp` or `make test`
 - Run one test file: `pytest backend/tests/unit/test_orchestrator.py -q`
 - Run one test by name: `pytest backend/tests -q -k "name_fragment"`
 - Install dev tooling: `pip install -r requirements.txt -r requirements-dev.txt`
@@ -69,6 +69,7 @@ For Linux public setup steps (CPU and CUDA), use `INSTALL.md`.
 - The orchestrator has nine user-visible stages: Validate/Normalize, VAD, Diarization, Snippet extraction, Speaker naming, Transcription, Transcript assembly, MoM formatting, Export.
 - Keep stage names, progress semantics, and cancellation checks stable unless the UI and tests are updated together.
 - Per-job files live under `data/jobs/<job_id>/`. Do not commit generated jobs, uploads, local models, profiles, or `.env` files.
+- Job ids use `YYYY-MM-DD-HH-MM` timestamps so job directories are valid on Windows.
 - Artifact keys are API/UI contracts. Before renaming or removing one, search for `set_artifact`, `artifact_paths`, and frontend URL builders.
 - Common artifact keys include `audio_normalized`, `vad_regions`, `diarization`, `diarization_chunks`, `diarization_stitching`, `snippets`, `speaker_mapping`, `segments_transcript`, `transcript`, `transcription_runtime`, `full_meeting_transcript`, `mom_markdown`, `mom_structured`, `formatter_system_prompt`, `formatter_user_prompt`, `formatter_stdout`, `formatter_stderr`, `formatter_raw_output`, `formatter_validation`, `formatter_reduced_notes`, `openai_audio_chunks`, `export_markdown`, and `job_summary`.
 - The frontend expects tabs named `new-job`, `progress`, `result`, and `settings`, plus SSE events from `/api/jobs/{job_id}/events`.
